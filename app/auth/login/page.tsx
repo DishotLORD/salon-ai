@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 
 export default function LoginPage() {
@@ -8,6 +8,111 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) {
+      return
+    }
+
+    const ctx = canvas.getContext('2d')
+    if (!ctx) {
+      return
+    }
+
+    const blobs = Array.from({ length: 8 }).map((_, index) => {
+      const colors = ['#4a0080', '#000428', '#8b0057', '#003366', '#6600cc', '#cc0066'] as const
+      const radius = 300 + Math.random() * 200
+      return {
+        x: Math.random(),
+        y: Math.random(),
+        baseRadius: radius,
+        pulse: Math.random() * Math.PI * 2,
+        speedX: (Math.random() - 0.5) * 0.00018,
+        speedY: (Math.random() - 0.5) * 0.00018,
+        pulseSpeed: 0.0007 + Math.random() * 0.00055,
+        color: colors[index % colors.length],
+      }
+    })
+
+    let rafId = 0
+    let width = 0
+    let height = 0
+    let dpr = 1
+    let lastTime = 0
+
+    const resize = () => {
+      width = window.innerWidth
+      height = window.innerHeight
+      dpr = Math.min(window.devicePixelRatio || 1, 2)
+      canvas.width = Math.floor(width * dpr)
+      canvas.height = Math.floor(height * dpr)
+      canvas.style.width = `${width}px`
+      canvas.style.height = `${height}px`
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      ctx.globalCompositeOperation = 'source-over'
+    }
+
+    const draw = (time: number) => {
+      const delta = lastTime ? Math.min(time - lastTime, 33) : 16
+      lastTime = time
+
+      ctx.clearRect(0, 0, width, height)
+
+      const gradient = ctx.createLinearGradient(0, 0, 0, height)
+      gradient.addColorStop(0, '#020010')
+      gradient.addColorStop(1, '#020010')
+      ctx.fillStyle = gradient
+      ctx.fillRect(0, 0, width, height)
+
+      ctx.globalCompositeOperation = 'screen'
+
+      for (const blob of blobs) {
+        blob.x += blob.speedX * delta
+        blob.y += blob.speedY * delta
+        if (blob.x < -0.2) blob.x = 1.2
+        if (blob.x > 1.2) blob.x = -0.2
+        if (blob.y < -0.2) blob.y = 1.2
+        if (blob.y > 1.2) blob.y = -0.2
+        blob.pulse += blob.pulseSpeed * delta
+
+        const px = blob.x * width
+        const py = blob.y * height
+        const radius = blob.baseRadius * (0.9 + Math.sin(blob.pulse) * 0.12)
+
+        const radial = ctx.createRadialGradient(px, py, radius * 0.25, px, py, radius)
+        radial.addColorStop(0, `${blob.color}88`)
+        radial.addColorStop(0.55, `${blob.color}44`)
+        radial.addColorStop(1, `${blob.color}00`)
+        ctx.fillStyle = radial
+        ctx.beginPath()
+        ctx.arc(px, py, radius, 0, Math.PI * 2)
+        ctx.fill()
+      }
+
+      // Subtle water reflection shimmer.
+      const shimmer = ctx.createLinearGradient(0, 0, width, height)
+      shimmer.addColorStop(0.1, 'rgba(255,255,255,0.02)')
+      shimmer.addColorStop(0.5, 'rgba(180,220,255,0.06)')
+      shimmer.addColorStop(0.9, 'rgba(255,255,255,0.015)')
+      ctx.fillStyle = shimmer
+      ctx.globalCompositeOperation = 'lighter'
+      ctx.fillRect(0, 0, width, height)
+
+      ctx.globalCompositeOperation = 'source-over'
+      rafId = requestAnimationFrame(draw)
+    }
+
+    resize()
+    rafId = requestAnimationFrame(draw)
+    window.addEventListener('resize', resize)
+
+    return () => {
+      cancelAnimationFrame(rafId)
+      window.removeEventListener('resize', resize)
+    }
+  }, [])
 
   const handleLogin = async () => {
     setLoading(true)
@@ -46,132 +151,14 @@ export default function LoginPage() {
         overflow: 'hidden',
       }}
     >
-      <div
+      <canvas
+        ref={canvasRef}
         style={{
           position: 'absolute',
-          width: 680,
-          height: 680,
-          borderRadius: '50%',
-          background: 'rgba(124, 58, 237, 0.36)',
-          filter: 'blur(88px)',
-          top: -220,
-          left: -200,
+          inset: 0,
+          width: '100%',
+          height: '100%',
           pointerEvents: 'none',
-          animation: 'blobPulseA 24s ease-in-out infinite',
-        }}
-      />
-      <div
-        style={{
-          position: 'absolute',
-          width: 620,
-          height: 620,
-          borderRadius: '50%',
-          background: 'rgba(236, 72, 153, 0.32)',
-          filter: 'blur(84px)',
-          top: '12%',
-          right: -210,
-          pointerEvents: 'none',
-          animation: 'blobPulseB 28s ease-in-out infinite',
-        }}
-      />
-      <div
-        style={{
-          position: 'absolute',
-          width: 560,
-          height: 560,
-          borderRadius: '50%',
-          background: 'rgba(79, 70, 229, 0.3)',
-          filter: 'blur(82px)',
-          bottom: -180,
-          left: '26%',
-          pointerEvents: 'none',
-          animation: 'blobPulseC 22s ease-in-out infinite',
-        }}
-      />
-      <div
-        style={{
-          position: 'absolute',
-          width: 500,
-          height: 500,
-          borderRadius: '50%',
-          background: 'rgba(6, 182, 212, 0.26)',
-          filter: 'blur(76px)',
-          bottom: -120,
-          right: '20%',
-          pointerEvents: 'none',
-          animation: 'blobPulseD 30s ease-in-out infinite',
-        }}
-      />
-      <div
-        style={{
-          position: 'absolute',
-          width: 620,
-          height: 620,
-          top: '4%',
-          left: '-5%',
-          backgroundImage: 'url(/salon.png)',
-          backgroundSize: 'contain',
-          backgroundPosition: 'center',
-          backgroundRepeat: 'no-repeat',
-          opacity: 0.2,
-          filter: 'invert(1) brightness(2)',
-          pointerEvents: 'none',
-          transformOrigin: 'center',
-          animation: 'sketchDriftA 26s ease-in-out infinite',
-        }}
-      />
-      <div
-        style={{
-          position: 'absolute',
-          width: 520,
-          height: 520,
-          top: '6%',
-          right: '-3%',
-          backgroundImage: 'url(/restaurant.png)',
-          backgroundSize: 'contain',
-          backgroundPosition: 'center',
-          backgroundRepeat: 'no-repeat',
-          opacity: 0.17,
-          filter: 'invert(1) brightness(2)',
-          pointerEvents: 'none',
-          transformOrigin: 'center',
-          animation: 'sketchDriftB 30s ease-in-out infinite',
-        }}
-      />
-      <div
-        style={{
-          position: 'absolute',
-          width: 500,
-          height: 500,
-          bottom: '8%',
-          left: '2%',
-          backgroundImage: 'url(/coffee.png)',
-          backgroundSize: 'contain',
-          backgroundPosition: 'center',
-          backgroundRepeat: 'no-repeat',
-          opacity: 0.15,
-          filter: 'invert(1) brightness(2)',
-          pointerEvents: 'none',
-          transformOrigin: 'center',
-          animation: 'sketchDriftC 24s ease-in-out infinite',
-        }}
-      />
-      <div
-        style={{
-          position: 'absolute',
-          width: 700,
-          height: 700,
-          bottom: '-2%',
-          right: '-7%',
-          backgroundImage: 'url(/dental.png)',
-          backgroundSize: 'contain',
-          backgroundPosition: 'center',
-          backgroundRepeat: 'no-repeat',
-          opacity: 0.18,
-          filter: 'invert(1) brightness(2)',
-          pointerEvents: 'none',
-          transformOrigin: 'center',
-          animation: 'sketchDriftD 28s ease-in-out infinite',
         }}
       />
       <div
@@ -196,10 +183,12 @@ export default function LoginPage() {
             width: '100%',
             maxWidth: 460,
             borderRadius: 20,
-            border: '1px solid #e5e7eb',
-            background: '#ffffff',
+            border: '1px solid rgba(255, 255, 255, 0.72)',
+            background: 'rgba(255, 255, 255, 0.88)',
             padding: '28px 28px 24px',
             boxShadow: '0 22px 42px rgba(15, 23, 42, 0.1)',
+            backdropFilter: 'blur(14px)',
+            WebkitBackdropFilter: 'blur(14px)',
           }}
         >
           <div
@@ -422,47 +411,6 @@ export default function LoginPage() {
           </a>
         </div>
       </footer>
-      <style>{`
-        @keyframes blobPulseA {
-          0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
-          50% { transform: translate3d(56px, -34px, 0) scale(1.12); }
-        }
-
-        @keyframes blobPulseB {
-          0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
-          50% { transform: translate3d(-42px, 28px, 0) scale(1.08); }
-        }
-
-        @keyframes blobPulseC {
-          0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
-          50% { transform: translate3d(40px, -26px, 0) scale(1.1); }
-        }
-
-        @keyframes blobPulseD {
-          0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
-          50% { transform: translate3d(-28px, -24px, 0) scale(1.09); }
-        }
-
-        @keyframes sketchDriftA {
-          0%, 100% { transform: translate3d(0, 0, 0) rotate(-3deg); }
-          50% { transform: translate3d(24px, -16px, 0) rotate(3deg); }
-        }
-
-        @keyframes sketchDriftB {
-          0%, 100% { transform: translate3d(0, 0, 0) rotate(4deg); }
-          50% { transform: translate3d(-22px, 18px, 0) rotate(-4deg); }
-        }
-
-        @keyframes sketchDriftC {
-          0%, 100% { transform: translate3d(0, 0, 0) rotate(-2deg); }
-          50% { transform: translate3d(18px, -20px, 0) rotate(4deg); }
-        }
-
-        @keyframes sketchDriftD {
-          0%, 100% { transform: translate3d(0, 0, 0) rotate(3deg); }
-          50% { transform: translate3d(-20px, -18px, 0) rotate(-3deg); }
-        }
-      `}</style>
     </div>
   )
 }
