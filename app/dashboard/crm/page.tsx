@@ -20,6 +20,14 @@ type Customer = {
 }
 
 const navItems = ['Dashboard', 'Chats', 'Calendar', 'Bookings', 'CRM', 'Settings']
+const navLinks: Record<string, string> = {
+  Dashboard: '/dashboard',
+  Chats: '/dashboard/chats',
+  Calendar: '/dashboard/bookings',
+  Bookings: '/dashboard/bookings',
+  CRM: '/dashboard/crm',
+  Settings: '/dashboard/settings',
+}
 
 const customers: Customer[] = [
   {
@@ -266,20 +274,10 @@ export default function CrmPage() {
           <nav style={{ display: 'grid', gap: 6 }}>
             {navItems.map((item) => {
               const isActive = item === 'CRM'
-              const href =
-                item === 'Dashboard'
-                  ? '/dashboard'
-                  : item === 'Chats'
-                    ? '/dashboard/chats'
-                    : item === 'Bookings'
-                      ? '/dashboard/bookings'
-                      : item === 'CRM'
-                        ? '/dashboard/crm'
-                        : '#'
               return (
                 <Link
                   key={item}
-                  href={href}
+                  href={navLinks[item] ?? '#'}
                   style={{
                     padding: '11px 13px',
                     borderRadius: 10,

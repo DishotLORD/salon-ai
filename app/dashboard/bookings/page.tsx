@@ -17,6 +17,14 @@ type WeekBooking = {
 }
 
 const navItems = ['Dashboard', 'Chats', 'Calendar', 'Bookings', 'CRM', 'Settings']
+const navLinks: Record<string, string> = {
+  Dashboard: '/dashboard',
+  Chats: '/dashboard/chats',
+  Calendar: '/dashboard/bookings',
+  Bookings: '/dashboard/bookings',
+  CRM: '/dashboard/crm',
+  Settings: '/dashboard/settings',
+}
 
 function startOfWeekMonday(date: Date) {
   const d = new Date(date)
@@ -205,18 +213,10 @@ export default function BookingsPage() {
           <nav style={{ display: 'grid', gap: 6 }}>
             {navItems.map((item) => {
               const isActive = item === 'Bookings'
-              const href =
-                item === 'Dashboard'
-                  ? '/dashboard'
-                  : item === 'Chats'
-                    ? '/dashboard/chats'
-                    : item === 'Bookings'
-                      ? '/dashboard/bookings'
-                      : '#'
               return (
                 <Link
                   key={item}
-                  href={href}
+                  href={navLinks[item] ?? '#'}
                   style={{
                     padding: '11px 13px',
                     borderRadius: 10,

@@ -22,7 +22,15 @@ type Conversation = {
   messages: Message[]
 }
 
-const navItems = ['Dashboard', 'Chats', 'Calendar', 'CRM', 'Settings']
+const navItems = ['Dashboard', 'Chats', 'Calendar', 'Bookings', 'CRM', 'Settings']
+const navLinks: Record<string, string> = {
+  Dashboard: '/dashboard',
+  Chats: '/dashboard/chats',
+  Calendar: '/dashboard/bookings',
+  Bookings: '/dashboard/bookings',
+  CRM: '/dashboard/crm',
+  Settings: '/dashboard/settings',
+}
 
 const initialConversations: Conversation[] = [
   {
@@ -233,7 +241,7 @@ export default function ChatsInboxPage() {
               return (
                 <Link
                   key={item}
-                  href={item === 'Dashboard' ? '/dashboard' : '#'}
+                  href={navLinks[item] ?? '#'}
                   style={{
                     padding: '11px 13px',
                     borderRadius: 10,

@@ -4,6 +4,14 @@ import Link from 'next/link'
 import { useMemo, useState } from 'react'
 
 const navItems = ['Dashboard', 'Chats', 'Calendar', 'Bookings', 'CRM', 'Settings']
+const navLinks: Record<string, string> = {
+  Dashboard: '/dashboard',
+  Chats: '/dashboard/chats',
+  Calendar: '/dashboard/bookings',
+  Bookings: '/dashboard/bookings',
+  CRM: '/dashboard/crm',
+  Settings: '/dashboard/settings',
+}
 
 type TabId = 'general' | 'ai' | 'notifications' | 'billing'
 
@@ -130,24 +138,10 @@ export default function SettingsPage() {
           <nav style={{ display: 'grid', gap: 6 }}>
             {navItems.map((item) => {
               const isActive = item === 'Settings'
-              const href =
-                item === 'Dashboard'
-                  ? '/dashboard'
-                  : item === 'Chats'
-                    ? '/dashboard/chats'
-                    : item === 'Calendar'
-                      ? '#'
-                    : item === 'Bookings'
-                      ? '/dashboard/bookings'
-                      : item === 'CRM'
-                        ? '/dashboard/crm'
-                        : item === 'Settings'
-                          ? '/dashboard/settings'
-                          : '#'
               return (
                 <Link
                   key={item}
-                  href={href}
+                  href={navLinks[item] ?? '#'}
                   style={{
                     padding: '11px 13px',
                     borderRadius: 10,

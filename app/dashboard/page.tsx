@@ -1,7 +1,16 @@
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase-server'
 import { redirect } from 'next/navigation'
 
-const navItems = ['Dashboard', 'Chats', 'Calendar', 'CRM', 'Settings']
+const navItems = ['Dashboard', 'Chats', 'Calendar', 'Bookings', 'CRM', 'Settings']
+const navLinks: Record<string, string> = {
+  Dashboard: '/dashboard',
+  Chats: '/dashboard/chats',
+  Calendar: '/dashboard/bookings',
+  Bookings: '/dashboard/bookings',
+  CRM: '/dashboard/crm',
+  Settings: '/dashboard/settings',
+}
 
 const revenueBars = [38, 56, 74, 60, 88, 70, 92]
 
@@ -59,8 +68,9 @@ export default async function Dashboard() {
             {navItems.map((item) => {
               const isActive = item === 'Dashboard'
               return (
-                <div
+                <Link
                   key={item}
+                  href={navLinks[item] ?? '#'}
                   style={{
                     padding: '11px 13px',
                     borderRadius: 10,
@@ -69,10 +79,11 @@ export default async function Dashboard() {
                     color: isActive ? '#7f1d1d' : '#6b7280',
                     background: isActive ? '#fee2e2' : 'transparent',
                     border: isActive ? '1px solid #fecaca' : '1px solid transparent',
+                    textDecoration: 'none',
                   }}
                 >
                   {item}
-                </div>
+                </Link>
               )
             })}
           </nav>
