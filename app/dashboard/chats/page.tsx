@@ -464,6 +464,12 @@ export default function ChatsInboxPage() {
                     type="text"
                     value={draft}
                     onChange={(event) => setDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' && !event.shiftKey) {
+                        event.preventDefault()
+                        void handleSend()
+                      }
+                    }}
                     placeholder="Write a message..."
                     style={{
                       flex: 1,
