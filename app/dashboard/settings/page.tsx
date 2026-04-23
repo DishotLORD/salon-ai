@@ -1,7 +1,8 @@
 'use client'
 
 import Link from 'next/link'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { supabase } from '@/lib/supabase'
 
 const navItems = ['Dashboard', 'Chats', 'Calendar', 'Bookings', 'CRM', 'Settings']
 const navLinks: Record<string, string> = {
@@ -44,6 +45,10 @@ const initialHours: Record<DayKey, DayHours> = {
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<TabId>('general')
   const [savedMessage, setSavedMessage] = useState('')
+  const [isLoading, setIsLoading] = useState(true)
+  const [isSaving, setIsSaving] = useState(false)
+  const [businessRowId, setBusinessRowId] = useState<string | null>(null)
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
 
   const [businessName, setBusinessName] = useState('Lumière Salon & Spa')
   const [businessType, setBusinessType] = useState<BusinessType>('salon')
@@ -79,9 +84,96 @@ export default function SettingsPage() {
     []
   )
 
-  const handleSave = () => {
-    setSavedMessage('Changes saved (mock).')
+  useEffect(() => {
+    let isMounted = true
+
+    const loadBusiness = async () => {
+      setIsLoading(true)
+      setSavedMessage('')
+
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+
+      if (!isMounted) return
+
+      if (!user) {
+        setIsLoading(false)
+        return
+      }
+
+      setCurrentUserId(user.id)
+
+      const { data, error } = await supabase
+        .from('businesses')
+        .select('id, name, email, phone, business_type, address, system_prompt, agent_name, language')
+        .eq('user_id', user.id)
+        .maybeSingle()
+
+      if (!isMounted) return
+
+      if (!error && data) {
+        setBusinessRowId(data.id ?? null)
+        setBusinessName(data.name ?? '')
+        setBusinessEmail(data.email ?? '')
+        setBusinessPhone(data.phone ?? '')
+        setBusinessType((data.business_type as BusinessType) ?? 'salon')
+        setBusinessAddress(data.address ?? '')
+        setSystemPrompt(data.system_prompt ?? '')
+        setAgentName(data.agent_name ?? '')
+        setLanguage(data.language ?? 'English (US)')
+      }
+
+      setIsLoading(false)
+    }
+
+    void loadBusiness()
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
+
+  const handleSave = async () => {
+    if (isSaving || isLoading || !currentUserId) return
+
+    setIsSaving(true)
+    setSavedMessage('')
+
+    const payload = {
+      user_id: currentUserId,
+      name: businessName,
+      email: businessEmail,
+      phone: businessPhone,
+      business_type: businessType,
+      address: businessAddress,
+      system_prompt: systemPrompt,
+      agent_name: agentName,
+      language,
+    }
+
+    let saveError: { message?: string } | null = null
+
+    if (businessRowId) {
+      const { error } = await supabase.from('businesses').update(payload).eq('id', businessRowId)
+      saveError = error
+    } else {
+      const { data, error } = await supabase.from('businesses').insert(payload).select('id').single()
+      saveError = error
+      if (!error && data?.id) {
+        setBusinessRowId(data.id)
+      }
+    }
+
+    if (saveError) {
+      setSavedMessage(saveError.message ?? 'Failed to save')
+      setIsSaving(false)
+      return
+    }
+
+    setSavedMessage('Saved!')
     window.setTimeout(() => setSavedMessage(''), 2200)
+    setIsSaving(false)
   }
 
   const fieldLabelStyle = {
@@ -188,23 +280,26 @@ export default function SettingsPage() {
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
               {savedMessage && (
-                <span style={{ color: '#166534', fontSize: 13, fontWeight: 600 }}>{savedMessage}</span>
+                <span style={{ color: savedMessage === 'Saved!' ? '#166534' : '#b91c1c', fontSize: 13, fontWeight: 600 }}>
+                  {savedMessage}
+                </span>
               )}
               <button
                 type="button"
                 onClick={handleSave}
+                disabled={isLoading || isSaving}
                 style={{
                   border: 'none',
                   borderRadius: 10,
-                  background: '#dc2626',
+                  background: isLoading || isSaving ? '#f87171' : '#dc2626',
                   color: '#fff',
                   fontWeight: 700,
                   fontSize: 14,
                   padding: '10px 16px',
-                  cursor: 'pointer',
+                  cursor: isLoading || isSaving ? 'not-allowed' : 'pointer',
                 }}
               >
-                Save Changes
+                {isLoading ? 'Loading...' : isSaving ? 'Saving...' : 'Save Changes'}
               </button>
             </div>
           </div>
@@ -252,7 +347,24 @@ export default function SettingsPage() {
               padding: 18,
             }}
           >
-            {activeTab === 'general' && (
+            {isLoading && (
+              <div style={{ display: 'grid', gap: 12 }}>
+                <p style={{ margin: 0, color: '#6b7280', fontSize: 14 }}>Loading...</p>
+                {Array.from({ length: 6 }).map((_, idx) => (
+                  <div
+                    key={`settings-skeleton-${idx}`}
+                    style={{
+                      height: idx % 3 === 0 ? 44 : 38,
+                      borderRadius: 10,
+                      background: '#f3f4f6',
+                      border: '1px solid #eceff3',
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+
+            {!isLoading && activeTab === 'general' && (
               <div style={{ display: 'grid', gap: 14 }}>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
                   <div>
@@ -358,7 +470,7 @@ export default function SettingsPage() {
               </div>
             )}
 
-            {activeTab === 'ai' && (
+            {!isLoading && activeTab === 'ai' && (
               <div style={{ display: 'grid', gap: 14 }}>
                 <div>
                   <label style={fieldLabelStyle}>SYSTEM PROMPT</label>
@@ -437,7 +549,7 @@ export default function SettingsPage() {
               </div>
             )}
 
-            {activeTab === 'notifications' && (
+            {!isLoading && activeTab === 'notifications' && (
               <div style={{ display: 'grid', gap: 14, maxWidth: 720 }}>
                 <label style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 14, color: '#374151' }}>
                   <input type="checkbox" checked={emailNotifs} onChange={(e) => setEmailNotifs(e.target.checked)} />
@@ -458,7 +570,7 @@ export default function SettingsPage() {
               </div>
             )}
 
-            {activeTab === 'billing' && (
+            {!isLoading && activeTab === 'billing' && (
               <div style={{ display: 'grid', gap: 14, maxWidth: 720 }}>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
                   <div>
