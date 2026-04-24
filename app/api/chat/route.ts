@@ -29,6 +29,143 @@ function toOpenAiMessages(messages: ChatMessage[]): ChatCompletionMessageParam[]
     }))
 }
 
+function hasBookingIntent(text: string) {
+  return /\b(book|appointment|reserve|schedule)\b/i.test(text)
+}
+
+function getUserMessagesCombined(messages: ChatMessage[]) {
+  return messages
+    .filter((m) => m.role === 'user' && typeof m.content === 'string')
+    .map((m) => m.content)
+    .join('\n')
+}
+
+function extractServiceName(text: string): string | null {
+  const t = text.trim()
+  if (!t) {
+    return null
+  }
+  const patterns: RegExp[] = [
+    /\b(?:book|reserve|schedule)\s+(?:a|an|me\s+)?(?:an?\s+)?(.+?)(?:\s+on|\s+at|\s+for\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\d)|,|\n|$)/i,
+    /\bappointment\s+(?:for\s+)?(.+?)(?:\s+on|\s+at|,|\n|$)/i,
+    /\bfor\s+(?:a|an\s+)?(.+?)(?:\s+on|\s+at|,|\n|$)/i,
+  ]
+  for (const pattern of patterns) {
+    const match = t.match(pattern)
+    if (match?.[1]) {
+      const name = match[1].replace(/\s+/g, ' ').trim().replace(/[.,;]+$/, '')
+      if (name.length >= 2) {
+        return name.slice(0, 240)
+      }
+    }
+  }
+  const stripped = t.replace(/\b(book|appointment|reserve|scheduled?|a|an|the|please|can|i|want|to|me|for|on|at)\b/gi, ' ')
+  const collapsed = stripped.replace(/\s+/g, ' ').trim()
+  if (collapsed.length >= 3 && collapsed.length <= 200) {
+    return collapsed
+  }
+  return null
+}
+
+function parseScheduledAt(text: string): Date | null {
+  if (!text.trim()) {
+    return null
+  }
+  const iso = text.match(/(\d{4}-\d{2}-\d{2}(?:[T ]\d{1,2}:\d{2}(?::\d{2})?(?:\s*[AP]M)?)?)/i)
+  if (iso) {
+    const d = new Date(iso[1])
+    if (!Number.isNaN(d.getTime())) {
+      return d
+    }
+  }
+  const slash = text.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:\s+(\d{1,2}):(\d{2})\s*([AP]M)?)?/i)
+  if (slash) {
+    let year = parseInt(slash[3], 10)
+    if (year < 100) {
+      year += 2000
+    }
+    const month = parseInt(slash[1], 10) - 1
+    const day = parseInt(slash[2], 10)
+    const d = new Date(year, month, day)
+    if (!Number.isNaN(d.getTime())) {
+      if (slash[4]) {
+        let h = parseInt(slash[4], 10)
+        const m = parseInt(slash[5], 10)
+        const ap = slash[6]?.toUpperCase()
+        if (ap === 'PM' && h < 12) {
+          h += 12
+        }
+        if (ap === 'AM' && h === 12) {
+          h = 0
+        }
+        d.setHours(h, m, 0, 0)
+      }
+      return d
+    }
+  }
+  const monthDay = text.match(
+    /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(\d{4}))?\b/i
+  )
+  if (monthDay) {
+    const tryParse = new Date(`${monthDay[1]} ${monthDay[2]}, ${monthDay[3] ?? new Date().getFullYear()}`)
+    if (!Number.isNaN(tryParse.getTime())) {
+      return tryParse
+    }
+  }
+  if (/\btomorrow\b/i.test(text)) {
+    const d = new Date()
+    d.setDate(d.getDate() + 1)
+    d.setHours(10, 0, 0, 0)
+    return d
+  }
+  const parsed = Date.parse(text)
+  if (!Number.isNaN(parsed)) {
+    return new Date(parsed)
+  }
+  return null
+}
+
+async function tryCreateAppointmentFromChat(params: {
+  lastUserContent: string
+  chatMessages: ChatMessage[]
+  assistantText: string
+  business_id: string
+  customer_id: string
+  conversation_id: string
+}) {
+  const { lastUserContent, chatMessages, assistantText, business_id, customer_id, conversation_id } = params
+
+  if (!hasBookingIntent(lastUserContent)) {
+    return false
+  }
+
+  const allUserText = getUserMessagesCombined(chatMessages)
+  const serviceName =
+    extractServiceName(lastUserContent) ??
+    extractServiceName(allUserText) ??
+    extractServiceName(`${lastUserContent}\n${allUserText}`)
+
+  const scheduledAt =
+    parseScheduledAt(lastUserContent) ??
+    parseScheduledAt(allUserText) ??
+    parseScheduledAt(assistantText)
+
+  if (!serviceName || serviceName.length < 2 || !scheduledAt) {
+    return false
+  }
+
+  const { error } = await supabaseAdmin.from('appointments').insert({
+    business_id,
+    customer_id,
+    conversation_id,
+    service_name: serviceName,
+    scheduled_at: scheduledAt.toISOString(),
+    status: 'pending',
+  })
+
+  return !error
+}
+
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as {
@@ -182,10 +319,22 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: assistantMsgErr.message }, { status: 500 })
     }
 
+    const bookingCreated = resolvedCustomerId
+      ? await tryCreateAppointmentFromChat({
+          lastUserContent: lastUserContent.trim(),
+          chatMessages,
+          assistantText,
+          business_id,
+          customer_id: resolvedCustomerId,
+          conversation_id: resolvedConversationId,
+        })
+      : false
+
     return NextResponse.json({
       message: assistantText,
       conversation_id: resolvedConversationId,
       customer_id: resolvedCustomerId,
+      booking_created: bookingCreated,
     })
   } catch (e) {
     const message = e instanceof Error ? e.message : 'Unexpected error'
