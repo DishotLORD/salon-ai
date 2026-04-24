@@ -14,7 +14,7 @@ const navLinks: Record<string, string> = {
   Settings: '/dashboard/settings',
 }
 
-const revenueBars = [38, 56, 74, 60, 88, 70, 92]
+const revenueBarsZero = [6, 6, 6, 6, 6, 6, 6, 6]
 
 const actions = [
   { icon: '🤖', text: 'Auto-confirmed booking for Emma Johnson', time: '2 min ago' },
@@ -35,13 +35,46 @@ export default async function Dashboard() {
 
   const { data: business } = await supabase
     .from('businesses')
-    .select('id')
+    .select('id, name')
     .eq('user_id', user.id)
     .maybeSingle()
 
   if (!business) {
     redirect('/onboarding')
   }
+
+  const businessId = business.id
+  const businessDisplayName = business.name?.trim() || 'your business'
+
+  const { count: activeChatsCount, error: conversationsCountError } = await supabase
+    .from('conversations')
+    .select('*', { count: 'exact', head: true })
+    .eq('business_id', businessId)
+
+  const activeChats = conversationsCountError ? 0 : (activeChatsCount ?? 0)
+
+  const { data: conversationIdRows, error: conversationIdsError } = await supabase
+    .from('conversations')
+    .select('id')
+    .eq('business_id', businessId)
+
+  const conversationIds =
+    !conversationIdsError && conversationIdRows ? conversationIdRows.map((row) => row.id) : []
+
+  let messageCount = 0
+  const idChunkSize = 200
+  for (let i = 0; i < conversationIds.length; i += idChunkSize) {
+    const chunk = conversationIds.slice(i, i + idChunkSize)
+    const { count } = await supabase
+      .from('messages')
+      .select('*', { count: 'exact', head: true })
+      .in('conversation_id', chunk)
+    messageCount += count ?? 0
+  }
+
+  const revenueDisplay = '$0'
+  const bookingsDisplay = '0'
+  const satisfactionDisplay = '0%'
 
   return (
     <div
@@ -150,10 +183,10 @@ export default async function Dashboard() {
                 System Status: Healthy
               </div>
               <h1 style={{ margin: 0, fontSize: 42, lineHeight: 1.05, letterSpacing: '-0.02em' }}>
-                Welcome back, your AI is active.
+                Welcome back, {businessDisplayName} — your AI is active.
               </h1>
               <p style={{ margin: '12px 0 0', fontSize: 15, color: '#4b5563', maxWidth: 620 }}>
-                32 conversations handled automatically today with 86% resolution before human escalation.
+                {activeChats} active chats · {messageCount} messages
               </p>
               <p style={{ margin: '7px 0 0', color: '#9ca3af', fontSize: 13 }}>
                 Welcome back, {user.email ?? 'User'}
@@ -223,9 +256,9 @@ export default async function Dashboard() {
               }}
             >
               <p style={{ margin: 0, color: '#6b7280', fontSize: 13 }}>Estimated Revenue</p>
-              <p style={{ margin: '8px 0 14px', fontSize: 30, fontWeight: 700 }}>$12,460</p>
+              <p style={{ margin: '8px 0 14px', fontSize: 30, fontWeight: 700 }}>{revenueDisplay}</p>
               <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: 74 }}>
-                {revenueBars.map((bar, idx) => (
+                {revenueBarsZero.map((bar, idx) => (
                   <div
                     key={`bar-${bar}-${idx}`}
                     style={{
@@ -248,7 +281,7 @@ export default async function Dashboard() {
               }}
             >
               <p style={{ margin: 0, color: '#6b7280', fontSize: 13 }}>Total Bookings</p>
-              <p style={{ margin: '8px 0 16px', fontSize: 30, fontWeight: 700 }}>184</p>
+              <p style={{ margin: '8px 0 16px', fontSize: 30, fontWeight: 700 }}>{bookingsDisplay}</p>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 {['A', 'M', 'J', 'S', '+12'].map((item, idx) => (
                   <span
@@ -281,7 +314,7 @@ export default async function Dashboard() {
               }}
             >
               <p style={{ margin: 0, color: '#6b7280', fontSize: 13 }}>Satisfaction Rate</p>
-              <p style={{ margin: '8px 0 10px', fontSize: 30, fontWeight: 700 }}>96.4%</p>
+              <p style={{ margin: '8px 0 10px', fontSize: 30, fontWeight: 700 }}>{satisfactionDisplay}</p>
               <div
                 style={{
                   width: '100%',
@@ -293,14 +326,14 @@ export default async function Dashboard() {
               >
                 <div
                   style={{
-                    width: '96.4%',
+                    width: '0%',
                     height: '100%',
                     borderRadius: 999,
                     background: 'linear-gradient(90deg, #f87171, #dc2626)',
                   }}
                 />
               </div>
-              <p style={{ margin: '8px 0 0', color: '#6b7280', fontSize: 12 }}>Up 1.2% from last week</p>
+              <p style={{ margin: '8px 0 0', color: '#6b7280', fontSize: 12 }}>No trend data yet</p>
             </article>
           </section>
 
