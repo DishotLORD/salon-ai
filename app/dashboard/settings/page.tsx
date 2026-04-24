@@ -1,6 +1,8 @@
 'use client'
 
 import Link from 'next/link'
+
+import { DashboardLogoutButton } from '@/components/dashboard-logout-button'
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 
@@ -250,7 +252,8 @@ export default function SettingsPage() {
               )
             })}
           </nav>
-          <div style={{ marginTop: 'auto', padding: '0 8px' }}>
+          <div style={{ marginTop: 'auto', padding: '0 8px', display: 'grid', gap: 10 }}>
+            <DashboardLogoutButton />
             <button
               type="button"
               style={{

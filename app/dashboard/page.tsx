@@ -1,6 +1,8 @@
 import Link from 'next/link'
-import { createClient } from '@/lib/supabase-server'
 import { redirect } from 'next/navigation'
+
+import { DashboardLogoutButton } from '@/components/dashboard-logout-button'
+import { createClient } from '@/lib/supabase-server'
 
 const navItems = ['Dashboard', 'Chats', 'Calendar', 'Bookings', 'CRM', 'Settings']
 const navLinks: Record<string, string> = {
@@ -87,7 +89,8 @@ export default async function Dashboard() {
               )
             })}
           </nav>
-          <div style={{ marginTop: 'auto', padding: '0 8px' }}>
+          <div style={{ marginTop: 'auto', padding: '0 8px', display: 'grid', gap: 10 }}>
+            <DashboardLogoutButton />
             <button
               type="button"
               style={{

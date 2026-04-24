@@ -1,5 +1,7 @@
 import Link from 'next/link'
 
+import { DashboardLogoutButton } from '@/components/dashboard-logout-button'
+
 type BookingStatus = 'confirmed' | 'pending' | 'cancelled'
 
 type WeekBooking = {
@@ -233,7 +235,8 @@ export default function BookingsPage() {
               )
             })}
           </nav>
-          <div style={{ marginTop: 'auto', padding: '0 8px' }}>
+          <div style={{ marginTop: 'auto', padding: '0 8px', display: 'grid', gap: 10 }}>
+            <DashboardLogoutButton />
             <button
               type="button"
               style={{
