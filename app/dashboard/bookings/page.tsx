@@ -1,6 +1,10 @@
+'use client'
+
 import Link from 'next/link'
+import { useEffect, useState } from 'react'
 
 import { DashboardLogoutButton } from '@/components/dashboard-logout-button'
+import { supabase } from '@/lib/supabase'
 
 type BookingStatus = 'confirmed' | 'pending' | 'cancelled'
 
@@ -66,114 +70,128 @@ function statusStyle(status: BookingStatus) {
   return { bg: '#fef2f2', border: '#fecaca', color: '#991b1b' }
 }
 
+function normalizeStatus(raw: string | null | undefined): BookingStatus {
+  const s = (raw ?? '').toLowerCase()
+  if (s === 'confirmed') {
+    return 'confirmed'
+  }
+  if (s === 'cancelled' || s === 'canceled') {
+    return 'cancelled'
+  }
+  return 'pending'
+}
+
+type AppointmentRow = {
+  id: string
+  service_name: string | null
+  scheduled_at: string
+  status: string | null
+  customer_id: string | null
+}
+
+function mapRowsToWeekBookings(rows: AppointmentRow[], nameById: Map<string, string>): WeekBooking[] {
+  const out: WeekBooking[] = []
+  for (const row of rows) {
+    const at = new Date(row.scheduled_at)
+    if (Number.isNaN(at.getTime())) {
+      continue
+    }
+    const dayIndex = (at.getDay() + 6) % 7
+    out.push({
+      id: row.id,
+      customerName: row.customer_id ? (nameById.get(row.customer_id) ?? 'Customer') : 'Customer',
+      service: row.service_name?.trim() ? row.service_name : 'Appointment',
+      staff: '—',
+      status: normalizeStatus(row.status),
+      dayIndex,
+      hour: at.getHours(),
+      minute: at.getMinutes(),
+    })
+  }
+  out.sort((a, b) => a.dayIndex - b.dayIndex || a.hour * 60 + a.minute - (b.hour * 60 + b.minute))
+  return out
+}
+
 export default function BookingsPage() {
+  const [weekBookings, setWeekBookings] = useState<WeekBooking[]>([])
+
   const today = new Date()
   const monday = startOfWeekMonday(today)
   const weekDays = Array.from({ length: 7 }).map((_, idx) => addDays(monday, idx))
   const hours = Array.from({ length: 11 }).map((_, idx) => idx + 9) // 9..19
 
-  const weekBookings: WeekBooking[] = [
-    {
-      id: 'b1',
-      customerName: 'Emma Johnson',
-      service: 'Balayage + toner',
-      staff: 'Alex Rivera',
-      status: 'confirmed',
-      dayIndex: 2,
-      hour: 10,
-      minute: 30,
-    },
-    {
-      id: 'b2',
-      customerName: 'Olivia Martinez',
-      service: 'Classic manicure',
-      staff: 'Priya Shah',
-      status: 'pending',
-      dayIndex: 2,
-      hour: 14,
-      minute: 0,
-    },
-    {
-      id: 'b3',
-      customerName: 'Sophia Lee',
-      service: 'Deep tissue massage',
-      staff: 'Jordan Kim',
-      status: 'confirmed',
-      dayIndex: 3,
-      hour: 11,
-      minute: 15,
-    },
-    {
-      id: 'b4',
-      customerName: 'Mia Wilson',
-      service: 'Bridal hair trial',
-      staff: 'Alex Rivera',
-      status: 'cancelled',
-      dayIndex: 4,
-      hour: 16,
-      minute: 45,
-    },
-    {
-      id: 'b5',
-      customerName: 'Noah Chen',
-      service: 'Executive haircut',
-      staff: 'Sam Patel',
-      status: 'confirmed',
-      dayIndex: 1,
-      hour: 9,
-      minute: 0,
-    },
-    {
-      id: 'b6',
-      customerName: 'Ava Thompson',
-      service: 'Hydrafacial',
-      staff: 'Jordan Kim',
-      status: 'pending',
-      dayIndex: 5,
-      hour: 13,
-      minute: 30,
-    },
-    {
-      id: 'b7',
-      customerName: 'Liam Brooks',
-      service: 'Beard trim + hot towel',
-      staff: 'Sam Patel',
-      status: 'confirmed',
-      dayIndex: 2,
-      hour: 9,
-      minute: 15,
-    },
-    {
-      id: 'b8',
-      customerName: 'Isabella Rossi',
-      service: 'Gel extensions fill',
-      staff: 'Priya Shah',
-      status: 'pending',
-      dayIndex: 2,
-      hour: 12,
-      minute: 0,
-    },
-    {
-      id: 'b9',
-      customerName: 'Ethan Park',
-      service: 'Color correction consult',
-      staff: 'Alex Rivera',
-      status: 'confirmed',
-      dayIndex: 2,
-      hour: 15,
-      minute: 20,
-    },
-    {
-      id: 'b10',
-      customerName: 'Charlotte Davis',
-      service: 'Blowout + style',
-      staff: 'Alex Rivera',
-      status: 'cancelled',
-      dayIndex: 2,
-      hour: 17,
-      minute: 0,
-    },
-  ]
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadAppointments() {
+      const {
+        data: { user: userFromGet },
+      } = await supabase.auth.getUser()
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
+      const user = userFromGet ?? session?.user ?? null
+
+      if (!user) {
+        if (!cancelled) {
+          setWeekBookings([])
+        }
+        return
+      }
+
+      const { data: business } = await supabase.from('businesses').select('id').eq('user_id', user.id).maybeSingle()
+
+      if (!business?.id) {
+        if (!cancelled) {
+          setWeekBookings([])
+        }
+        return
+      }
+
+      const weekStart = startOfWeekMonday(new Date())
+      weekStart.setHours(0, 0, 0, 0)
+      const weekEndExclusive = addDays(weekStart, 7)
+      weekEndExclusive.setHours(0, 0, 0, 0)
+
+      const { data: rows, error } = await supabase
+        .from('appointments')
+        .select('id, service_name, scheduled_at, status, customer_id')
+        .eq('business_id', business.id)
+        .gte('scheduled_at', weekStart.toISOString())
+        .lt('scheduled_at', weekEndExclusive.toISOString())
+        .order('scheduled_at', { ascending: true })
+
+      if (error || !rows) {
+        if (!cancelled) {
+          setWeekBookings([])
+        }
+        return
+      }
+
+      const typed = rows as AppointmentRow[]
+      const customerIds = [...new Set(typed.map((r) => r.customer_id).filter((id): id is string => Boolean(id)))]
+
+      const nameById = new Map<string, string>()
+      if (customerIds.length > 0) {
+        const { data: custs } = await supabase.from('customers').select('id, name').in('id', customerIds)
+        for (const c of custs ?? []) {
+          if (c.id && c.name != null) {
+            nameById.set(String(c.id), String(c.name))
+          }
+        }
+      }
+
+      if (!cancelled) {
+        setWeekBookings(mapRowsToWeekBookings(typed, nameById))
+      }
+    }
+
+    void loadAppointments()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const todayIndex = (today.getDay() + 6) % 7
   const todaysBookings = weekBookings
@@ -385,8 +403,15 @@ export default function BookingsPage() {
                               {booking.customerName}
                             </div>
                             <div style={{ marginTop: 2, fontSize: 11, color: '#6b7280' }}>{booking.service}</div>
-                            <div style={{ marginTop: 4, fontSize: 11, color: '#9ca3af' }}>
-                              {formatTime(booking.hour, booking.minute)} · {booking.staff}
+                            <div
+                              style={{
+                                marginTop: 4,
+                                fontSize: 11,
+                                color: '#9ca3af',
+                                textTransform: 'capitalize',
+                              }}
+                            >
+                              {formatTime(booking.hour, booking.minute)} · {booking.status}
                             </div>
                           </div>
                         )}
