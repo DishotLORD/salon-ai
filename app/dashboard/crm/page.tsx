@@ -3,6 +3,7 @@
 import Link from 'next/link'
 
 import { DashboardLogoutButton } from '@/components/dashboard-logout-button'
+import { supabase } from '@/lib/supabase'
 import { useEffect, useMemo, useState } from 'react'
 
 type CustomerTag = 'VIP' | 'Regular' | 'New' | 'At Risk'
@@ -31,160 +32,75 @@ const navLinks: Record<string, string> = {
   Settings: '/dashboard/settings',
 }
 
-const customers: Customer[] = [
-  {
-    id: 'c1',
-    name: 'Emma Johnson',
-    phone: '+1 (415) 555-0142',
-    email: 'emma.j@example.com',
-    lastVisit: 'Apr 18, 2026',
-    totalBookings: 14,
-    totalSpent: 1840,
-    tags: ['VIP', 'Regular'],
-    joined: 'Jan 12, 2025',
-    preferredStaff: 'Alex Rivera',
-    visitHistory: [
-      { date: 'Apr 18, 2026', service: 'Balayage refresh', amount: 220 },
-      { date: 'Mar 22, 2026', service: 'Toner + gloss', amount: 95 },
-      { date: 'Feb 10, 2026', service: 'Cut + style', amount: 85 },
-    ],
-  },
-  {
-    id: 'c2',
-    name: 'Olivia Martinez',
-    phone: '+1 (646) 555-0198',
-    email: 'olivia.m@example.com',
-    lastVisit: 'Apr 20, 2026',
-    totalBookings: 9,
-    totalSpent: 1120,
-    tags: ['Regular'],
-    joined: 'Aug 3, 2025',
-    preferredStaff: 'Priya Shah',
-    visitHistory: [
-      { date: 'Apr 20, 2026', service: 'Lash fill', amount: 120 },
-      { date: 'Mar 30, 2026', service: 'Classic manicure', amount: 45 },
-    ],
-  },
-  {
-    id: 'c3',
-    name: 'Sophia Lee',
-    phone: '+1 (213) 555-0171',
-    email: 'sophia.lee@example.com',
-    lastVisit: 'Apr 12, 2026',
-    totalBookings: 6,
-    totalSpent: 780,
-    tags: ['Regular'],
-    joined: 'Nov 19, 2024',
-    preferredStaff: 'Jordan Kim',
-    visitHistory: [
-      { date: 'Apr 12, 2026', service: 'Deep tissue massage', amount: 140 },
-      { date: 'Jan 8, 2026', service: 'Hot stone add-on', amount: 35 },
-    ],
-  },
-  {
-    id: 'c4',
-    name: 'Mia Wilson',
-    phone: '+1 (512) 555-0133',
-    email: 'mia.w@example.com',
-    lastVisit: 'Mar 2, 2026',
-    totalBookings: 3,
-    totalSpent: 420,
-    tags: ['At Risk'],
-    joined: 'Sep 1, 2025',
-    preferredStaff: 'Alex Rivera',
-    visitHistory: [
-      { date: 'Mar 2, 2026', service: 'Bridal consult', amount: 0 },
-      { date: 'Dec 14, 2025', service: 'Blowout', amount: 65 },
-    ],
-  },
-  {
-    id: 'c5',
-    name: 'Noah Chen',
-    phone: '+1 (206) 555-0160',
-    email: 'noah.chen@example.com',
-    lastVisit: 'Apr 21, 2026',
-    totalBookings: 11,
-    totalSpent: 990,
-    tags: ['VIP', 'Regular'],
-    joined: 'Mar 5, 2025',
-    preferredStaff: 'Sam Patel',
-    visitHistory: [
-      { date: 'Apr 21, 2026', service: 'Executive haircut', amount: 75 },
-      { date: 'Mar 9, 2026', service: 'Beard trim', amount: 35 },
-    ],
-  },
-  {
-    id: 'c6',
-    name: 'Ava Thompson',
-    phone: '+1 (305) 555-0184',
-    email: 'ava.t@example.com',
-    lastVisit: 'Apr 19, 2026',
-    totalBookings: 5,
-    totalSpent: 640,
-    tags: ['New'],
-    joined: 'Mar 28, 2026',
-    preferredStaff: 'Jordan Kim',
-    visitHistory: [{ date: 'Apr 19, 2026', service: 'Hydrafacial', amount: 185 }],
-  },
-  {
-    id: 'c7',
-    name: 'Liam Brooks',
-    phone: '+1 (617) 555-0129',
-    email: 'liam.brooks@example.com',
-    lastVisit: 'Apr 8, 2026',
-    totalBookings: 7,
-    totalSpent: 560,
-    tags: ['Regular'],
-    joined: 'Jun 2, 2025',
-    preferredStaff: 'Sam Patel',
-    visitHistory: [
-      { date: 'Apr 8, 2026', service: 'Beard trim + hot towel', amount: 55 },
-      { date: 'Feb 1, 2026', service: 'Haircut', amount: 60 },
-    ],
-  },
-  {
-    id: 'c8',
-    name: 'Isabella Rossi',
-    phone: '+1 (917) 555-0155',
-    email: 'isabella.r@example.com',
-    lastVisit: 'Apr 17, 2026',
-    totalBookings: 4,
-    totalSpent: 310,
-    tags: ['New', 'Regular'],
-    joined: 'Feb 14, 2026',
-    preferredStaff: 'Priya Shah',
-    visitHistory: [{ date: 'Apr 17, 2026', service: 'Gel extensions fill', amount: 85 }],
-  },
-  {
-    id: 'c9',
-    name: 'Ethan Park',
-    phone: '+1 (408) 555-0107',
-    email: 'ethan.park@example.com',
-    lastVisit: 'Apr 5, 2026',
-    totalBookings: 2,
-    totalSpent: 180,
-    tags: ['At Risk', 'New'],
-    joined: 'Mar 10, 2026',
-    preferredStaff: 'Alex Rivera',
-    visitHistory: [{ date: 'Apr 5, 2026', service: 'Color consult', amount: 0 }],
-  },
-  {
-    id: 'c10',
-    name: 'Charlotte Davis',
-    phone: '+1 (702) 555-0191',
-    email: 'charlotte.d@example.com',
-    lastVisit: 'Apr 22, 2026',
-    totalBookings: 18,
-    totalSpent: 2460,
-    tags: ['VIP', 'Regular'],
-    joined: 'Oct 2, 2024',
-    preferredStaff: 'Alex Rivera',
-    visitHistory: [
-      { date: 'Apr 22, 2026', service: 'Blowout + style', amount: 95 },
-      { date: 'Mar 30, 2026', service: 'Cut + treatment', amount: 140 },
-    ],
-  },
-]
+function formatDisplayDate(value: string) {
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) {
+    return value
+  }
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function parseTags(raw: unknown): CustomerTag[] {
+  const valid: CustomerTag[] = ['VIP', 'Regular', 'New', 'At Risk']
+  let arr: unknown[] = []
+  if (Array.isArray(raw)) {
+    arr = raw
+  } else if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw) as unknown
+      arr = Array.isArray(parsed) ? parsed : []
+    } catch {
+      arr = []
+    }
+  }
+  const out: CustomerTag[] = []
+  for (const item of arr) {
+    const s = String(item).trim()
+    const match = valid.find((v) => v.toLowerCase() === s.toLowerCase())
+    if (match) {
+      out.push(match)
+    }
+  }
+  return out.length ? Array.from(new Set(out)) : ['Regular']
+}
+
+function parseVisitHistory(raw: unknown): { date: string; service: string; amount: number }[] {
+  if (!raw || !Array.isArray(raw)) {
+    return []
+  }
+  return raw.map((entry) => {
+    if (typeof entry !== 'object' || entry === null) {
+      return { date: '—', service: '—', amount: 0 }
+    }
+    const o = entry as Record<string, unknown>
+    const dateRaw = o.date != null ? String(o.date) : ''
+    const service = o.service != null ? String(o.service) : '—'
+    const amount = Number(o.amount) || 0
+    return {
+      date: dateRaw ? formatDisplayDate(dateRaw) : '—',
+      service,
+      amount,
+    }
+  })
+}
+
+function mapDbCustomerRow(row: Record<string, unknown>): Customer {
+  const lastSource = row.last_visit ?? row.lastVisit
+  const joinedSource = row.joined ?? row.created_at ?? row.createdAt
+  return {
+    id: String(row.id),
+    name: String(row.name ?? 'Unknown'),
+    phone: row.phone != null ? String(row.phone) : '—',
+    email: row.email != null ? String(row.email) : '',
+    lastVisit: lastSource != null ? formatDisplayDate(String(lastSource)) : '—',
+    totalBookings: Number(row.total_bookings ?? row.totalBookings ?? 0) || 0,
+    totalSpent: Number(row.total_spent ?? row.totalSpent ?? 0) || 0,
+    tags: parseTags(row.tags),
+    joined: joinedSource != null ? formatDisplayDate(String(joinedSource)) : '—',
+    preferredStaff: String(row.preferred_staff ?? row.preferredStaff ?? '—'),
+    visitHistory: parseVisitHistory(row.visit_history ?? row.visitHistory),
+  }
+}
 
 function tagStyle(tag: CustomerTag) {
   switch (tag) {
@@ -208,24 +124,89 @@ function formatMoney(amount: number) {
 }
 
 export default function CrmPage() {
+  const [customers, setCustomers] = useState<Customer[]>([])
+  const [crmLoading, setCrmLoading] = useState(true)
   const [query, setQuery] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [notes, setNotes] = useState('')
 
   useEffect(() => {
+    let cancelled = false
+
+    async function loadCustomers() {
+      setCrmLoading(true)
+
+      const {
+        data: { user: userFromGet },
+      } = await supabase.auth.getUser()
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
+      const user = userFromGet ?? session?.user ?? null
+
+      if (!user) {
+        if (!cancelled) {
+          setCustomers([])
+          setCrmLoading(false)
+        }
+        return
+      }
+
+      const { data: business } = await supabase.from('businesses').select('id').eq('user_id', user.id).maybeSingle()
+
+      if (!business?.id) {
+        if (!cancelled) {
+          setCustomers([])
+          setCrmLoading(false)
+        }
+        return
+      }
+
+      const { data: rows, error } = await supabase
+        .from('customers')
+        .select('*')
+        .eq('business_id', business.id)
+        .order('name', { ascending: true })
+
+      if (!cancelled) {
+        if (!error && rows) {
+          setCustomers(rows.map((r) => mapDbCustomerRow(r as Record<string, unknown>)))
+        } else {
+          setCustomers([])
+        }
+        setCrmLoading(false)
+      }
+    }
+
+    void loadCustomers()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
     setNotes('')
   }, [selectedId])
 
+  useEffect(() => {
+    if (selectedId && !customers.some((c) => c.id === selectedId)) {
+      setSelectedId(null)
+    }
+  }, [customers, selectedId])
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    if (!q) return customers
+    if (!q) {
+      return customers
+    }
     return customers.filter(
       (c) =>
         c.name.toLowerCase().includes(q) ||
         c.email.toLowerCase().includes(q) ||
         c.phone.toLowerCase().includes(q)
     )
-  }, [query])
+  }, [customers, query])
 
   const selected = customers.find((c) => c.id === selectedId) ?? null
 
@@ -234,12 +215,12 @@ export default function CrmPage() {
     const now = new Date()
     const newThisMonth = customers.filter((c) => {
       const joined = new Date(c.joined)
-      return joined.getFullYear() === now.getFullYear() && joined.getMonth() === now.getMonth()
+      return !Number.isNaN(joined.getTime()) && joined.getFullYear() === now.getFullYear() && joined.getMonth() === now.getMonth()
     }).length
     const returning = customers.filter((c) => c.totalBookings >= 5).length
     const avgSpend = Math.round(customers.reduce((sum, c) => sum + c.totalSpent, 0) / Math.max(total, 1))
     return { total, newThisMonth, returning, avgSpend }
-  }, [])
+  }, [customers])
 
   return (
     <div
@@ -438,74 +419,119 @@ export default function CrmPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filtered.map((customer) => {
-                      const active = customer.id === selectedId
-                      return (
-                        <tr
-                          key={customer.id}
-                          onClick={() => {
-                            setSelectedId(customer.id)
-                            setNotes('')
-                          }}
+                    {crmLoading ? (
+                      <tr>
+                        <td
+                          colSpan={8}
                           style={{
-                            cursor: 'pointer',
-                            background: active ? '#fff1f2' : '#ffffff',
-                            borderBottom: '1px solid #f3f4f6',
+                            padding: '36px 14px',
+                            textAlign: 'center',
+                            color: '#6b7280',
+                            fontSize: 14,
                           }}
                         >
-                          <td style={{ padding: '12px 14px', fontWeight: 600 }}>{customer.name}</td>
-                          <td style={{ padding: '12px 14px', color: '#4b5563', fontSize: 14 }}>{customer.phone}</td>
-                          <td style={{ padding: '12px 14px', color: '#4b5563', fontSize: 14 }}>{customer.email}</td>
-                          <td style={{ padding: '12px 14px', color: '#6b7280', fontSize: 14 }}>{customer.lastVisit}</td>
-                          <td style={{ padding: '12px 14px', fontWeight: 600 }}>{customer.totalBookings}</td>
-                          <td style={{ padding: '12px 14px', fontWeight: 600 }}>{formatMoney(customer.totalSpent)}</td>
-                          <td style={{ padding: '12px 14px' }}>
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                              {customer.tags.map((tag) => {
-                                const t = tagStyle(tag)
-                                return (
-                                  <span
-                                    key={tag}
-                                    style={{
-                                      fontSize: 11,
-                                      fontWeight: 700,
-                                      padding: '4px 8px',
-                                      borderRadius: 999,
-                                      border: `1px solid ${t.border}`,
-                                      background: t.bg,
-                                      color: t.color,
-                                    }}
-                                  >
-                                    {tag}
-                                  </span>
-                                )
-                              })}
-                            </div>
-                          </td>
-                          <td style={{ padding: '12px 14px' }}>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                setSelectedId(customer.id)
-                                setNotes('')
-                              }}
-                              style={{
-                                borderRadius: 8,
-                                border: '1px solid #d1d5db',
-                                background: '#fff',
-                                padding: '6px 10px',
-                                fontSize: 12,
-                                fontWeight: 600,
-                                cursor: 'pointer',
-                              }}
-                            >
-                              View
-                            </button>
-                          </td>
-                        </tr>
-                      )
-                    })}
+                          Loading customers...
+                        </td>
+                      </tr>
+                    ) : customers.length === 0 ? (
+                      <tr>
+                        <td
+                          colSpan={8}
+                          style={{
+                            padding: '36px 14px',
+                            textAlign: 'center',
+                            color: '#6b7280',
+                            fontSize: 14,
+                            lineHeight: 1.55,
+                          }}
+                        >
+                          No customers yet. They will appear here when they chat with your AI.
+                        </td>
+                      </tr>
+                    ) : filtered.length === 0 ? (
+                      <tr>
+                        <td
+                          colSpan={8}
+                          style={{
+                            padding: '36px 14px',
+                            textAlign: 'center',
+                            color: '#6b7280',
+                            fontSize: 14,
+                          }}
+                        >
+                          No matching customers.
+                        </td>
+                      </tr>
+                    ) : (
+                      filtered.map((customer) => {
+                        const active = customer.id === selectedId
+                        return (
+                          <tr
+                            key={customer.id}
+                            onClick={() => {
+                              setSelectedId(customer.id)
+                              setNotes('')
+                            }}
+                            style={{
+                              cursor: 'pointer',
+                              background: active ? '#fff1f2' : '#ffffff',
+                              borderBottom: '1px solid #f3f4f6',
+                            }}
+                          >
+                            <td style={{ padding: '12px 14px', fontWeight: 600 }}>{customer.name}</td>
+                            <td style={{ padding: '12px 14px', color: '#4b5563', fontSize: 14 }}>{customer.phone}</td>
+                            <td style={{ padding: '12px 14px', color: '#4b5563', fontSize: 14 }}>{customer.email}</td>
+                            <td style={{ padding: '12px 14px', color: '#6b7280', fontSize: 14 }}>{customer.lastVisit}</td>
+                            <td style={{ padding: '12px 14px', fontWeight: 600 }}>{customer.totalBookings}</td>
+                            <td style={{ padding: '12px 14px', fontWeight: 600 }}>{formatMoney(customer.totalSpent)}</td>
+                            <td style={{ padding: '12px 14px' }}>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                {customer.tags.map((tag) => {
+                                  const t = tagStyle(tag)
+                                  return (
+                                    <span
+                                      key={tag}
+                                      style={{
+                                        fontSize: 11,
+                                        fontWeight: 700,
+                                        padding: '4px 8px',
+                                        borderRadius: 999,
+                                        border: `1px solid ${t.border}`,
+                                        background: t.bg,
+                                        color: t.color,
+                                      }}
+                                    >
+                                      {tag}
+                                    </span>
+                                  )
+                                })}
+                              </div>
+                            </td>
+                            <td style={{ padding: '12px 14px' }}>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setSelectedId(customer.id)
+                                  setNotes('')
+                                }}
+                                style={{
+                                  borderRadius: 8,
+                                  border: '1px solid #d1d5db',
+                                  background: '#fff',
+                                  padding: '6px 10px',
+                                  fontSize: 12,
+                                  fontWeight: 600,
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                View
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      })
+                    )}
                   </tbody>
                 </table>
               </div>
