@@ -1,6 +1,9 @@
 'use client'
 
-import { useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
+
+import { supabase } from '@/lib/supabase'
 
 type WidgetMessage = {
   id: string
@@ -16,11 +19,36 @@ const initialMessages: WidgetMessage[] = [
   },
 ]
 
-export default function WidgetPage() {
+function WidgetPageInner() {
+  const searchParams = useSearchParams()
+  const businessId = searchParams.get('business_id')
+  const [businessName, setBusinessName] = useState<string | null>(null)
+
   const [isOpen, setIsOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [draft, setDraft] = useState('')
   const [messages, setMessages] = useState<WidgetMessage[]>(initialMessages)
+
+  useEffect(() => {
+    if (!businessId) {
+      setBusinessName(null)
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      const { data } = await supabase.from('businesses').select('name').eq('id', businessId).maybeSingle()
+      if (!cancelled && data?.name?.trim()) {
+        setBusinessName(data.name.trim())
+      } else if (!cancelled) {
+        setBusinessName(null)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [businessId])
+
+  const headerTitle = businessName ?? 'AI Assistant'
 
   const handleSend = async () => {
     const text = draft.trim()
@@ -40,17 +68,25 @@ export default function WidgetPage() {
     setIsLoading(true)
 
     try {
+      const body: {
+        messages: { role: string; content: string }[]
+        business_id?: string
+      } = {
+        messages: nextMessages.map((message) => ({
+          role: message.sender === 'customer' ? 'user' : 'assistant',
+          content: message.text,
+        })),
+      }
+      if (businessId) {
+        body.business_id = businessId
+      }
+
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          messages: nextMessages.map((message) => ({
-            role: message.sender === 'customer' ? 'user' : 'assistant',
-            content: message.text,
-          })),
-        }),
+        body: JSON.stringify(body),
       })
 
       const data = await response.json()
@@ -123,7 +159,7 @@ export default function WidgetPage() {
               }}
             >
               <div>
-                <p style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#111827' }}>AI Assistant</p>
+                <p style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#111827' }}>{headerTitle}</p>
                 <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 7 }}>
                   <span
                     style={{
@@ -271,5 +307,13 @@ export default function WidgetPage() {
         </button>
       </div>
     </div>
+  )
+}
+
+export default function WidgetPage() {
+  return (
+    <Suspense fallback={null}>
+      <WidgetPageInner />
+    </Suspense>
   )
 }

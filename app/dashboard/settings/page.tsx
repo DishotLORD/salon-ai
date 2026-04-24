@@ -3,7 +3,7 @@
 import Link from 'next/link'
 
 import { DashboardLogoutButton } from '@/components/dashboard-logout-button'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 
 const navItems = ['Dashboard', 'Chats', 'Calendar', 'Bookings', 'CRM', 'Settings']
@@ -16,7 +16,7 @@ const navLinks: Record<string, string> = {
   Settings: '/dashboard/settings',
 }
 
-type TabId = 'general' | 'ai' | 'notifications' | 'billing'
+type TabId = 'general' | 'ai' | 'notifications' | 'widget' | 'billing'
 
 type BusinessType = 'salon' | 'restaurant' | 'spa' | 'clinic'
 
@@ -46,7 +46,9 @@ const initialHours: Record<DayKey, DayHours> = {
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<TabId>('general')
-  const [savedMessage, setSavedMessage] = useState('')
+  const [saveError, setSaveError] = useState('')
+  const [showSaveToast, setShowSaveToast] = useState(false)
+  const saveToastTimerRef = useRef<number | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [businessRowId, setBusinessRowId] = useState<string | null>(null)
@@ -75,45 +77,58 @@ export default function SettingsPage() {
   const [plan, setPlan] = useState('Pro')
   const [cardLast4, setCardLast4] = useState('4242')
 
+  const [widgetOrigin, setWidgetOrigin] = useState('')
+  const [widgetCopied, setWidgetCopied] = useState(false)
+
   const tabs = useMemo(
     () =>
       [
         { id: 'general' as const, label: 'General' },
         { id: 'ai' as const, label: 'AI Agent' },
         { id: 'notifications' as const, label: 'Notifications' },
+        { id: 'widget' as const, label: 'Widget' },
         { id: 'billing' as const, label: 'Billing' },
       ] satisfies { id: TabId; label: string }[],
     []
   )
 
+  const widgetEmbedSnippet = useMemo(() => {
+    if (!businessRowId || !widgetOrigin) {
+      return ''
+    }
+    return `<script src="${widgetOrigin}/widget.js?id=${businessRowId}" async></script>`
+  }, [businessRowId, widgetOrigin])
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setWidgetOrigin(window.location.origin)
+    }
+  }, [])
+
   useEffect(() => {
     let isMounted = true
 
-    const loadBusiness = async () => {
-      setIsLoading(true)
-      setSavedMessage('')
-
-      const {
-        data: { user },
-      } = await supabase.auth.getUser()
-
-      if (!isMounted) return
-
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (!isMounted) {
+        return
+      }
+      const user = session?.user ?? null
       if (!user) {
+        setCurrentUserId(null)
         setIsLoading(false)
         return
       }
-
       setCurrentUserId(user.id)
-
       const { data, error } = await supabase
         .from('businesses')
         .select('id, name, email, phone, business_type, address, system_prompt, agent_name, language')
         .eq('user_id', user.id)
         .maybeSingle()
-
-      if (!isMounted) return
-
+      if (!isMounted) {
+        return
+      }
       if (!error && data) {
         setBusinessRowId(data.id ?? null)
         setBusinessName(data.name ?? '')
@@ -125,25 +140,52 @@ export default function SettingsPage() {
         setAgentName(data.agent_name ?? '')
         setLanguage(data.language ?? 'English (US)')
       }
-
       setIsLoading(false)
-    }
-
-    void loadBusiness()
+    })
 
     return () => {
       isMounted = false
+      subscription.unsubscribe()
+    }
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (saveToastTimerRef.current) {
+        window.clearTimeout(saveToastTimerRef.current)
+      }
     }
   }, [])
 
   const handleSave = async () => {
-    if (isSaving || isLoading || !currentUserId) return
+    if (isSaving || isLoading) {
+      return
+    }
+
+    let userId = currentUserId
+    if (!userId) {
+      const {
+        data: { user: userFromGet },
+      } = await supabase.auth.getUser()
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
+      userId = userFromGet?.id ?? session?.user?.id ?? null
+      if (userId) {
+        setCurrentUserId(userId)
+      }
+    }
+
+    if (!userId) {
+      setSaveError('You must be signed in to save.')
+      return
+    }
 
     setIsSaving(true)
-    setSavedMessage('')
+    setSaveError('')
 
     const payload = {
-      user_id: currentUserId,
+      user_id: userId,
       name: businessName,
       email: businessEmail,
       phone: businessPhone,
@@ -154,27 +196,45 @@ export default function SettingsPage() {
       language,
     }
 
-    let saveError: { message?: string } | null = null
+    let requestError: { message?: string } | null = null
 
     if (businessRowId) {
       const { error } = await supabase.from('businesses').update(payload).eq('id', businessRowId)
-      saveError = error
+      requestError = error
     } else {
-      const { data, error } = await supabase.from('businesses').insert(payload).select('id').single()
-      saveError = error
-      if (!error && data?.id) {
-        setBusinessRowId(data.id)
+      const { data, error } = await supabase.from('businesses').insert(payload).select('id').maybeSingle()
+      requestError = error
+      if (!error) {
+        if (data?.id) {
+          setBusinessRowId(data.id)
+        } else {
+          const { data: row } = await supabase
+            .from('businesses')
+            .select('id')
+            .eq('user_id', userId)
+            .maybeSingle()
+          if (row?.id) {
+            setBusinessRowId(row.id)
+          }
+        }
       }
     }
 
-    if (saveError) {
-      setSavedMessage(saveError.message ?? 'Failed to save')
+    if (requestError) {
+      setSaveError(requestError.message ?? 'Failed to save')
       setIsSaving(false)
       return
     }
 
-    setSavedMessage('Saved!')
-    window.setTimeout(() => setSavedMessage(''), 2200)
+    if (saveToastTimerRef.current) {
+      window.clearTimeout(saveToastTimerRef.current)
+    }
+    setShowSaveToast(true)
+    saveToastTimerRef.current = window.setTimeout(() => {
+      setShowSaveToast(false)
+      saveToastTimerRef.current = null
+    }, 3000)
+
     setIsSaving(false)
   }
 
@@ -204,8 +264,31 @@ export default function SettingsPage() {
         background: '#f3f4f6',
         color: '#111827',
         fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        position: 'relative',
       }}
     >
+      {showSaveToast && (
+        <div
+          role="status"
+          style={{
+            position: 'fixed',
+            top: 20,
+            right: 24,
+            zIndex: 9999,
+            pointerEvents: 'none',
+            padding: '12px 18px',
+            borderRadius: 12,
+            background: '#ecfdf5',
+            border: '1px solid #bbf7d0',
+            color: '#166534',
+            fontSize: 14,
+            fontWeight: 700,
+            boxShadow: '0 10px 30px rgba(15, 23, 42, 0.12)',
+          }}
+        >
+          Saved!
+        </div>
+      )}
       <div style={{ display: 'flex', minHeight: '100vh' }}>
         <aside
           style={{
@@ -282,14 +365,14 @@ export default function SettingsPage() {
               </p>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
-              {savedMessage && (
-                <span style={{ color: savedMessage === 'Saved!' ? '#166534' : '#b91c1c', fontSize: 13, fontWeight: 600 }}>
-                  {savedMessage}
+              {saveError ? (
+                <span style={{ color: '#b91c1c', fontSize: 13, fontWeight: 600, textAlign: 'right', maxWidth: 320 }}>
+                  {saveError}
                 </span>
-              )}
+              ) : null}
               <button
                 type="button"
-                onClick={handleSave}
+                onClick={() => void handleSave()}
                 disabled={isLoading || isSaving}
                 style={{
                   border: 'none',
@@ -569,6 +652,185 @@ export default function SettingsPage() {
                     <option value="weekly">Weekly summary</option>
                     <option value="off">Off</option>
                   </select>
+                </div>
+              </div>
+            )}
+
+            {!isLoading && activeTab === 'widget' && (
+              <div style={{ display: 'grid', gap: 20, maxWidth: 800 }}>
+                <div>
+                  <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: '#0f172a', letterSpacing: '-0.02em' }}>
+                    Embed your AI widget
+                  </h2>
+                  <p style={{ margin: '8px 0 0', color: '#6b7280', fontSize: 14, lineHeight: 1.55 }}>
+                    Add this code to your website to enable the AI chat widget
+                  </p>
+                </div>
+
+                {widgetEmbedSnippet ? (
+                  <div style={{ display: 'grid', gap: 10 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                      <span style={{ ...fieldLabelStyle, marginBottom: 0 }}>EMBED CODE</span>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(widgetEmbedSnippet)
+                            setWidgetCopied(true)
+                            window.setTimeout(() => setWidgetCopied(false), 2000)
+                          } catch {
+                            setWidgetCopied(false)
+                          }
+                        }}
+                        style={{
+                          borderRadius: 10,
+                          border: '1px solid #d1d5db',
+                          background: widgetCopied ? '#ecfdf5' : '#fff',
+                          color: widgetCopied ? '#166534' : '#374151',
+                          fontWeight: 600,
+                          fontSize: 13,
+                          padding: '8px 14px',
+                          cursor: 'pointer',
+                          flexShrink: 0,
+                        }}
+                      >
+                        {widgetCopied ? 'Copied!' : 'Copy to clipboard'}
+                      </button>
+                    </div>
+                    <pre
+                      style={{
+                        margin: 0,
+                        padding: '14px 16px',
+                        borderRadius: 12,
+                        background: '#0f172a',
+                        color: '#e2e8f0',
+                        fontSize: 13,
+                        lineHeight: 1.5,
+                        overflowX: 'auto',
+                        border: '1px solid #1e293b',
+                        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                      }}
+                    >
+                      <code>{widgetEmbedSnippet}</code>
+                    </pre>
+                  </div>
+                ) : (
+                  <p style={{ margin: 0, color: '#6b7280', fontSize: 14 }}>
+                    {!businessRowId
+                      ? 'Save your business profile first so we can generate your widget embed code.'
+                      : 'Loading embed URL…'}
+                  </p>
+                )}
+
+                <div>
+                  <p style={{ margin: '0 0 12px', fontSize: 12, fontWeight: 700, color: '#6b7280', letterSpacing: '0.04em' }}>
+                    PREVIEW
+                  </p>
+                  <p style={{ margin: '0 0 14px', fontSize: 14, fontWeight: 600, color: '#374151' }}>
+                    Your widget will appear like this
+                  </p>
+                  <div
+                    style={{
+                      position: 'relative',
+                      height: 200,
+                      borderRadius: 14,
+                      border: '1px solid #e2e8f0',
+                      background: 'linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)',
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <div
+                      style={{
+                        position: 'absolute',
+                        inset: 12,
+                        borderRadius: 10,
+                        border: '1px dashed #cbd5e1',
+                        background: '#fff',
+                      }}
+                    />
+                    <div
+                      style={{
+                        position: 'absolute',
+                        bottom: 52,
+                        right: 16,
+                        width: 132,
+                        height: 96,
+                        borderRadius: 12,
+                        background: '#ffffff',
+                        border: '1px solid #e2e8f0',
+                        boxShadow: '0 10px 28px rgba(15, 23, 42, 0.12)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      <div
+                        style={{
+                          padding: '8px 10px',
+                          borderBottom: '1px solid #f1f5f9',
+                          fontSize: 11,
+                          fontWeight: 700,
+                          color: '#111827',
+                        }}
+                      >
+                        {businessName?.trim() || 'AI Assistant'}
+                      </div>
+                      <div style={{ flex: 1, padding: 8, background: '#f8fafc' }}>
+                        <div
+                          style={{
+                            height: 8,
+                            width: '72%',
+                            background: '#e5e7eb',
+                            borderRadius: 4,
+                            marginBottom: 6,
+                          }}
+                        />
+                        <div
+                          style={{
+                            height: 8,
+                            width: '48%',
+                            background: '#ede9fe',
+                            borderRadius: 4,
+                          }}
+                        />
+                      </div>
+                    </div>
+                    <div
+                      style={{
+                        position: 'absolute',
+                        bottom: 14,
+                        right: 16,
+                        width: 40,
+                        height: 40,
+                        borderRadius: '50%',
+                        background: 'linear-gradient(135deg, #7c3aed 0%, #dc2626 100%)',
+                        boxShadow: '0 6px 16px rgba(124, 58, 237, 0.4)',
+                        display: 'grid',
+                        placeItems: 'center',
+                        fontSize: 18,
+                      }}
+                      aria-hidden
+                    >
+                      💬
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <p style={{ ...fieldLabelStyle, marginBottom: 10 }}>INSTRUCTIONS</p>
+                  <ol
+                    style={{
+                      margin: 0,
+                      paddingLeft: 22,
+                      color: '#4b5563',
+                      fontSize: 14,
+                      lineHeight: 1.65,
+                    }}
+                  >
+                    <li style={{ marginBottom: 6 }}>Copy the code above</li>
+                    <li style={{ marginBottom: 6 }}>Paste it before &lt;/body&gt; tag on your website</li>
+                    <li>Your AI assistant will appear automatically</li>
+                  </ol>
                 </div>
               </div>
             )}
