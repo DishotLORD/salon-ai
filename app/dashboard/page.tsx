@@ -33,6 +33,16 @@ export default async function Dashboard() {
     redirect('/auth/login')
   }
 
+  const { data: business } = await supabase
+    .from('businesses')
+    .select('id')
+    .eq('user_id', user.id)
+    .maybeSingle()
+
+  if (!business) {
+    redirect('/onboarding')
+  }
+
   return (
     <div
       style={{
