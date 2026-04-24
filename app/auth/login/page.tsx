@@ -3,12 +3,17 @@
 import { useEffect, useRef, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 
+type AuthMode = 'login' | 'register'
+
 export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [authMode, setAuthMode] = useState<AuthMode>('login')
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const formCardRef = useRef<HTMLDivElement | null>(null)
+  const emailInputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -114,6 +119,19 @@ export default function LoginPage() {
     }
   }, [])
 
+  const scrollToFormAndFocusEmail = () => {
+    formCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    window.setTimeout(() => {
+      emailInputRef.current?.focus()
+    }, 280)
+  }
+
+  const handleTrialLinkClick = () => {
+    setError('')
+    setAuthMode('register')
+    scrollToFormAndFocusEmail()
+  }
+
   const handleLogin = async () => {
     setLoading(true)
     const { data, error } = await supabase.auth.signInWithPassword({ email, password })
@@ -122,7 +140,17 @@ export default function LoginPage() {
       setLoading(false)
     } else {
       console.log('Logged in:', data.user?.email)
-      window.location.replace('/dashboard')
+      const userId = data.user?.id
+      if (!userId) {
+        window.location.replace('/dashboard')
+        return
+      }
+      const { data: business } = await supabase
+        .from('businesses')
+        .select('id')
+        .eq('user_id', userId)
+        .maybeSingle()
+      window.location.replace(business ? '/dashboard' : '/onboarding')
     }
   }
 
@@ -133,8 +161,15 @@ export default function LoginPage() {
       setError(error.message)
       setLoading(false)
     } else {
-      setError('Аккаунт создан! Теперь войдите.')
-      setLoading(false)
+      window.location.replace('/onboarding')
+    }
+  }
+
+  const handlePrimaryAction = () => {
+    if (authMode === 'login') {
+      void handleLogin()
+    } else {
+      void handleSignUp()
     }
   }
 
@@ -179,6 +214,7 @@ export default function LoginPage() {
         }}
       >
         <div
+          ref={formCardRef}
           style={{
             width: '100%',
             maxWidth: 460,
@@ -219,9 +255,13 @@ export default function LoginPage() {
           </div>
 
           <h1 style={{ margin: 0, fontSize: 32, lineHeight: 1.05, letterSpacing: '-0.02em', color: '#111827' }}>
-            Welcome Back
+            {authMode === 'login' ? 'Welcome Back' : 'Register'}
           </h1>
-          <p style={{ margin: '8px 0 0', color: '#6b7280', fontSize: 14 }}>Securely access your dashboard</p>
+          <p style={{ margin: '8px 0 0', color: '#6b7280', fontSize: 14 }}>
+            {authMode === 'login'
+              ? 'Securely access your dashboard'
+              : 'Create your account to start your 14-day trial'}
+          </p>
 
           <div style={{ marginTop: 20 }}>
             <label
@@ -237,6 +277,7 @@ export default function LoginPage() {
               BUSINESS EMAIL
             </label>
             <input
+              ref={emailInputRef}
               type="email"
               placeholder="name@business.com"
               value={email}
@@ -298,7 +339,8 @@ export default function LoginPage() {
           {error && <p style={{ color: '#dc2626', margin: '0 0 12px', fontSize: 14 }}>{error}</p>}
 
           <button
-            onClick={handleLogin}
+            type="button"
+            onClick={handlePrimaryAction}
             disabled={loading}
             style={{
               width: '100%',
@@ -313,7 +355,13 @@ export default function LoginPage() {
               opacity: loading ? 0.72 : 1,
             }}
           >
-            {loading ? 'Signing In...' : 'Sign In'}
+            {loading
+              ? authMode === 'login'
+                ? 'Signing In...'
+                : 'Creating account...'
+              : authMode === 'login'
+                ? 'Sign In'
+                : 'Register'}
           </button>
 
           <div
@@ -365,23 +413,51 @@ export default function LoginPage() {
           </div>
 
           <p style={{ margin: '16px 0 0', fontSize: 13, color: '#6b7280', textAlign: 'center' }}>
-            New to Salon AI?{' '}
-            <button
-              type="button"
-              onClick={handleSignUp}
-              disabled={loading}
-              style={{
-                border: 'none',
-                background: 'transparent',
-                color: '#dc2626',
-                fontSize: 13,
-                fontWeight: 600,
-                cursor: loading ? 'not-allowed' : 'pointer',
-                padding: 0,
-              }}
-            >
-              Sign up for a 14-day trial
-            </button>
+            {authMode === 'login' ? (
+              <>
+                New to Salon AI?{' '}
+                <button
+                  type="button"
+                  onClick={handleTrialLinkClick}
+                  disabled={loading}
+                  style={{
+                    border: 'none',
+                    background: 'transparent',
+                    color: '#dc2626',
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: loading ? 'not-allowed' : 'pointer',
+                    padding: 0,
+                  }}
+                >
+                  Sign up for a 14-day trial
+                </button>
+              </>
+            ) : (
+              <>
+                Already have an account?{' '}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setError('')
+                    setAuthMode('login')
+                    scrollToFormAndFocusEmail()
+                  }}
+                  disabled={loading}
+                  style={{
+                    border: 'none',
+                    background: 'transparent',
+                    color: '#dc2626',
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: loading ? 'not-allowed' : 'pointer',
+                    padding: 0,
+                  }}
+                >
+                  Sign in
+                </button>
+              </>
+            )}
           </p>
         </div>
       </main>
