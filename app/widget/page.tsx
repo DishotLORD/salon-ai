@@ -28,6 +28,11 @@ function WidgetPageInner() {
   const [isLoading, setIsLoading] = useState(false)
   const [draft, setDraft] = useState('')
   const [messages, setMessages] = useState<WidgetMessage[]>(initialMessages)
+  const [conversationId, setConversationId] = useState<string | null>(null)
+
+  useEffect(() => {
+    setConversationId(null)
+  }, [businessId])
 
   useEffect(() => {
     if (!businessId) {
@@ -71,6 +76,7 @@ function WidgetPageInner() {
       const body: {
         messages: { role: string; content: string }[]
         business_id?: string
+        conversation_id?: string
       } = {
         messages: nextMessages.map((message) => ({
           role: message.sender === 'customer' ? 'user' : 'assistant',
@@ -79,6 +85,9 @@ function WidgetPageInner() {
       }
       if (businessId) {
         body.business_id = businessId
+        if (conversationId) {
+          body.conversation_id = conversationId
+        }
       }
 
       const response = await fetch('/api/chat', {
@@ -89,11 +98,18 @@ function WidgetPageInner() {
         body: JSON.stringify(body),
       })
 
-      const data = await response.json()
+      const data = (await response.json()) as {
+        message?: string
+        conversation_id?: string
+      }
       const aiText =
         response.ok && typeof data.message === 'string'
           ? data.message
           : 'Sorry, something went wrong. Please try again.'
+
+      if (response.ok && typeof data.conversation_id === 'string' && data.conversation_id) {
+        setConversationId(data.conversation_id)
+      }
 
       setMessages((prev) => [
         ...prev,
