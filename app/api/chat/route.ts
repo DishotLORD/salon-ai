@@ -2,7 +2,7 @@ import OpenAI from 'openai'
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions'
 import { NextResponse } from 'next/server'
 
-import { createClient } from '@/lib/supabase-server'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -45,8 +45,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'messages array required' }, { status: 400 })
     }
 
-    const supabase = await createClient()
-
     if (!business_id) {
       const systemPrompt =
         'You are a helpful AI assistant for a service business. Help customers with bookings, questions about services, and general inquiries. Be friendly, professional, and concise.'
@@ -62,7 +60,7 @@ export async function POST(request: Request) {
       })
     }
 
-    const { data: business, error: bizError } = await supabase
+    const { data: business, error: bizError } = await supabaseAdmin
       .from('businesses')
       .select('id, name, system_prompt, agent_name')
       .eq('id', business_id)
@@ -85,7 +83,7 @@ export async function POST(request: Request) {
     let resolvedCustomerId: string | null = null
 
     if (conversation_id) {
-      const { data: existing, error: convErr } = await supabase
+      const { data: existing, error: convErr } = await supabaseAdmin
         .from('conversations')
         .select('id, customer_id, business_id')
         .eq('id', conversation_id)
@@ -99,7 +97,7 @@ export async function POST(request: Request) {
       resolvedConversationId = existing.id
       resolvedCustomerId = existing.customer_id ?? null
     } else {
-      const { data: newConv, error: convInsErr } = await supabase
+      const { data: newConv, error: convInsErr } = await supabaseAdmin
         .from('conversations')
         .insert({
           business_id,
@@ -121,7 +119,7 @@ export async function POST(request: Request) {
     }
 
     if (!resolvedCustomerId) {
-      const { data: newCustomer, error: custErr } = await supabase
+      const { data: newCustomer, error: custErr } = await supabaseAdmin
         .from('customers')
         .insert({
           business_id,
@@ -142,7 +140,7 @@ export async function POST(request: Request) {
 
       resolvedCustomerId = newCustomer.id
 
-      const { error: linkErr } = await supabase
+      const { error: linkErr } = await supabaseAdmin
         .from('conversations')
         .update({
           customer_id: resolvedCustomerId,
@@ -156,7 +154,7 @@ export async function POST(request: Request) {
       }
     }
 
-    const { error: userMsgErr } = await supabase.from('messages').insert({
+    const { error: userMsgErr } = await supabaseAdmin.from('messages').insert({
       conversation_id: resolvedConversationId,
       role: 'user',
       content: lastUserContent.trim(),
@@ -174,7 +172,7 @@ export async function POST(request: Request) {
 
     const assistantText = completion.choices[0].message?.content ?? ''
 
-    const { error: assistantMsgErr } = await supabase.from('messages').insert({
+    const { error: assistantMsgErr } = await supabaseAdmin.from('messages').insert({
       conversation_id: resolvedConversationId,
       role: 'assistant',
       content: assistantText,
