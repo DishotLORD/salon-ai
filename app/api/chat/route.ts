@@ -29,8 +29,9 @@ function toOpenAiMessages(messages: ChatMessage[]): ChatCompletionMessageParam[]
     }))
 }
 
-function hasBookingIntent(text: string) {
-  return /\b(book|appointment|reserve|schedule)\b/i.test(text)
+/** User or assistant text suggests booking / services context. */
+function hasBookingRelatedWords(text: string) {
+  return /\b(book|booking|appointment|haircut|services?|reserve|schedules?|scheduled)\b/i.test(text.trim())
 }
 
 function getUserMessagesCombined(messages: ChatMessage[]) {
@@ -125,6 +126,13 @@ function parseScheduledAt(text: string): Date | null {
   return null
 }
 
+function tomorrowAtNoonLocal(): Date {
+  const d = new Date()
+  d.setDate(d.getDate() + 1)
+  d.setHours(12, 0, 0, 0)
+  return d
+}
+
 async function tryCreateAppointmentFromChat(params: {
   lastUserContent: string
   chatMessages: ChatMessage[]
@@ -134,36 +142,80 @@ async function tryCreateAppointmentFromChat(params: {
   conversation_id: string
 }) {
   const { lastUserContent, chatMessages, assistantText, business_id, customer_id, conversation_id } = params
-
-  if (!hasBookingIntent(lastUserContent)) {
-    return false
-  }
+  const logPrefix = '[chat/booking]'
 
   const allUserText = getUserMessagesCombined(chatMessages)
-  const serviceName =
-    extractServiceName(lastUserContent) ??
-    extractServiceName(allUserText) ??
-    extractServiceName(`${lastUserContent}\n${allUserText}`)
+  const userSideText = `${lastUserContent}\n${allUserText}`.trim()
 
-  const scheduledAt =
-    parseScheduledAt(lastUserContent) ??
-    parseScheduledAt(allUserText) ??
-    parseScheduledAt(assistantText)
+  const intentFromUser = hasBookingRelatedWords(lastUserContent) || hasBookingRelatedWords(allUserText)
+  const intentFromAssistant = hasBookingRelatedWords(assistantText)
+  const shouldBook = intentFromUser || intentFromAssistant
 
-  if (!serviceName || serviceName.length < 2 || !scheduledAt) {
-    return false
-  }
-
-  const { error } = await supabaseAdmin.from('appointments').insert({
+  console.info(`${logPrefix} evaluate`, {
     business_id,
     customer_id,
     conversation_id,
-    service_name: serviceName,
-    scheduled_at: scheduledAt.toISOString(),
-    status: 'pending',
+    intentFromUser,
+    intentFromAssistant,
+    shouldBook,
+    lastUserPreview: lastUserContent.slice(0, 120),
+    assistantPreview: assistantText.slice(0, 120),
   })
 
-  return !error
+  if (!business_id || !customer_id) {
+    console.warn(`${logPrefix} skip: missing business_id or customer_id`)
+    return false
+  }
+
+  if (!shouldBook) {
+    console.info(`${logPrefix} skip: no booking-related keywords in user or assistant text`)
+    return false
+  }
+
+  const extractedService =
+    extractServiceName(lastUserContent) ??
+    extractServiceName(allUserText) ??
+    extractServiceName(userSideText) ??
+    extractServiceName(assistantText)
+  const serviceName =
+    extractedService && extractedService.trim().length >= 2 ? extractedService.trim() : 'Appointment'
+
+  const parsedTime =
+    parseScheduledAt(lastUserContent) ??
+    parseScheduledAt(allUserText) ??
+    parseScheduledAt(assistantText) ??
+    parseScheduledAt(`${lastUserContent}\n${assistantText}`)
+  const scheduledAt = parsedTime ?? tomorrowAtNoonLocal()
+
+  const row = {
+    business_id,
+    customer_id,
+    conversation_id,
+    service_name: serviceName.slice(0, 500),
+    scheduled_at: scheduledAt.toISOString(),
+    status: 'pending' as const,
+  }
+
+  console.info(`${logPrefix} inserting appointment`, {
+    service_name: row.service_name,
+    scheduled_at: row.scheduled_at,
+    usedDefaultTime: !parsedTime,
+  })
+
+  const { data: inserted, error } = await supabaseAdmin.from('appointments').insert(row).select('id').maybeSingle()
+
+  if (error) {
+    console.error(`${logPrefix} insert failed`, {
+      message: error.message,
+      code: error.code,
+      details: error.details,
+      hint: error.hint,
+    })
+    return false
+  }
+
+  console.info(`${logPrefix} insert ok`, { appointment_id: inserted?.id })
+  return true
 }
 
 export async function POST(request: Request) {
