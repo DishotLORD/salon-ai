@@ -1,7 +1,9 @@
 'use client'
 
 import Link from 'next/link'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+
+import { supabase } from '@/lib/supabase'
 
 type ConversationStatus = 'Live' | 'Waiting' | 'Resolved'
 type Sender = 'customer' | 'ai'
@@ -22,6 +24,84 @@ type Conversation = {
   messages: Message[]
 }
 
+type DbMessageRow = {
+  id: string
+  role: string
+  content: string
+  created_at: string
+}
+
+type DbConversationRow = {
+  id: string
+  customer_name: string | null
+  status: string | null
+  updated_at: string | null
+  messages: DbMessageRow[] | null
+}
+
+function normalizeStatus(raw: string | null | undefined): ConversationStatus {
+  const key = (raw ?? 'Live').toLowerCase()
+  if (key === 'waiting') {
+    return 'Waiting'
+  }
+  if (key === 'resolved') {
+    return 'Resolved'
+  }
+  return 'Live'
+}
+
+function formatClock(iso: string) {
+  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+function formatRelativeTime(iso: string | null | undefined) {
+  if (!iso) {
+    return 'now'
+  }
+  const then = new Date(iso).getTime()
+  const sec = Math.floor((Date.now() - then) / 1000)
+  if (sec < 45) {
+    return 'now'
+  }
+  if (sec < 3600) {
+    return `${Math.floor(sec / 60)}m`
+  }
+  if (sec < 86400) {
+    return `${Math.floor(sec / 3600)}h`
+  }
+  if (sec < 604800) {
+    return `${Math.floor(sec / 86400)}d`
+  }
+  return new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric' })
+}
+
+function mapDbMessageToMessage(row: DbMessageRow): Message {
+  const sender: Sender = row.role === 'assistant' ? 'ai' : 'customer'
+  return {
+    id: row.id,
+    sender,
+    text: row.content,
+    time: formatClock(row.created_at),
+  }
+}
+
+function mapDbConversationToConversation(row: DbConversationRow): Conversation {
+  const ordered = [...(row.messages ?? [])].sort(
+    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+  )
+  const last = ordered[ordered.length - 1]
+  const preview = last?.content ?? 'No messages yet'
+  const lastActivity = row.updated_at ?? last?.created_at
+  return {
+    id: row.id,
+    customerName: row.customer_name?.trim() || 'Customer',
+    preview,
+    time: formatRelativeTime(lastActivity),
+    status: normalizeStatus(row.status),
+    messages: ordered.map(mapDbMessageToMessage),
+  }
+}
+
 const navItems = ['Dashboard', 'Chats', 'Calendar', 'Bookings', 'CRM', 'Settings']
 const navLinks: Record<string, string> = {
   Dashboard: '/dashboard',
@@ -31,55 +111,6 @@ const navLinks: Record<string, string> = {
   CRM: '/dashboard/crm',
   Settings: '/dashboard/settings',
 }
-
-const initialConversations: Conversation[] = [
-  {
-    id: 'c1',
-    customerName: 'Emma Johnson',
-    preview: 'Can I move my balayage appointment to Friday?',
-    time: '2m',
-    status: 'Live',
-    messages: [
-      { id: 'm1', sender: 'customer', text: 'Hi! Can I move my balayage appointment to Friday?', time: '10:02' },
-      { id: 'm2', sender: 'ai', text: 'Absolutely. Friday has openings at 1:30 PM and 4:00 PM. Which works best?', time: '10:03' },
-      { id: 'm3', sender: 'customer', text: '1:30 PM works for me.', time: '10:04' },
-    ],
-  },
-  {
-    id: 'c2',
-    customerName: 'Olivia Martinez',
-    preview: 'Do you have any lash extension slots tomorrow?',
-    time: '11m',
-    status: 'Waiting',
-    messages: [
-      { id: 'm1', sender: 'customer', text: 'Do you have any lash extension slots tomorrow?', time: '09:48' },
-      { id: 'm2', sender: 'ai', text: 'Yes, we currently have 11:00 AM and 2:30 PM available.', time: '09:49' },
-    ],
-  },
-  {
-    id: 'c3',
-    customerName: 'Sophia Lee',
-    preview: 'Thanks, the AI helped me rebook successfully.',
-    time: '27m',
-    status: 'Resolved',
-    messages: [
-      { id: 'm1', sender: 'customer', text: 'I need to cancel my manicure today.', time: '09:22' },
-      { id: 'm2', sender: 'ai', text: 'No problem. I can cancel and suggest tomorrow 3:00 PM instead.', time: '09:23' },
-      { id: 'm3', sender: 'customer', text: 'Perfect, thank you!', time: '09:24' },
-    ],
-  },
-  {
-    id: 'c4',
-    customerName: 'Mia Wilson',
-    preview: 'Could I get a quote for the bridal package?',
-    time: '1h',
-    status: 'Live',
-    messages: [
-      { id: 'm1', sender: 'customer', text: 'Could I get a quote for the bridal package?', time: '08:40' },
-      { id: 'm2', sender: 'ai', text: 'Our bridal package starts at $320 and can be customized.', time: '08:41' },
-    ],
-  },
-]
 
 function getStatusStyle(status: ConversationStatus) {
   if (status === 'Live') {
@@ -92,17 +123,75 @@ function getStatusStyle(status: ConversationStatus) {
 }
 
 export default function ChatsInboxPage() {
-  const [conversationList, setConversationList] = useState(initialConversations)
-  const [selectedId, setSelectedId] = useState(initialConversations[0].id)
+  const [conversationList, setConversationList] = useState<Conversation[]>([])
+  const [selectedId, setSelectedId] = useState('')
   const [draft, setDraft] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [sendingConversationId, setSendingConversationId] = useState<string | null>(null)
+  const [inboxLoaded, setInboxLoaded] = useState(false)
+  const [inboxFetchError, setInboxFetchError] = useState(false)
 
-  const selectedConversation = useMemo(
-    () =>
-      conversationList.find((conversation) => conversation.id === selectedId) ?? conversationList[0],
-    [conversationList, selectedId]
-  )
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadConversations() {
+      const { data, error } = await supabase
+        .from('conversations')
+        .select(
+          `
+          id,
+          customer_name,
+          status,
+          updated_at,
+          messages (
+            id,
+            role,
+            content,
+            created_at
+          )
+        `
+        )
+        .order('updated_at', { ascending: false })
+        .order('created_at', { referencedTable: 'messages', ascending: true })
+
+      if (cancelled) {
+        return
+      }
+
+      setInboxLoaded(true)
+
+      if (error) {
+        setInboxFetchError(true)
+        setConversationList([])
+        setSelectedId('')
+        return
+      }
+
+      setInboxFetchError(false)
+
+      if (!data?.length) {
+        setConversationList([])
+        setSelectedId('')
+        return
+      }
+
+      const mapped = data.map((row) => mapDbConversationToConversation(row as DbConversationRow))
+      setConversationList(mapped)
+      setSelectedId(mapped[0].id)
+    }
+
+    void loadConversations()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const selectedConversation = useMemo(() => {
+    if (!selectedId) {
+      return null
+    }
+    return conversationList.find((conversation) => conversation.id === selectedId) ?? null
+  }, [conversationList, selectedId])
 
   const handleSend = async () => {
     if (!selectedConversation || !draft.trim() || isLoading) {
@@ -111,13 +200,30 @@ export default function ChatsInboxPage() {
 
     const messageText = draft.trim()
     const conversationId = selectedConversation.id
-    const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    const customerMessage: Message = {
-      id: `m-${Date.now()}-customer`,
-      sender: 'customer',
-      text: messageText,
-      time: now,
+
+    let customerMessage: Message
+    const { data: insertedUser, error: userInsertError } = await supabase
+      .from('messages')
+      .insert({
+        conversation_id: conversationId,
+        role: 'user',
+        content: messageText,
+      })
+      .select('id, role, content, created_at')
+      .single()
+
+    if (userInsertError || !insertedUser) {
+      const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      customerMessage = {
+        id: `m-${Date.now()}-customer`,
+        sender: 'customer',
+        text: messageText,
+        time: now,
+      }
+    } else {
+      customerMessage = mapDbMessageToMessage(insertedUser as DbMessageRow)
     }
+
     const messagesForApi = [...selectedConversation.messages, customerMessage]
 
     setConversationList((prev) =>
@@ -157,11 +263,27 @@ export default function ChatsInboxPage() {
         response.ok && typeof data.message === 'string'
           ? data.message
           : 'Sorry, I hit a temporary issue. Please try again in a moment.'
-      const aiMessage: Message = {
-        id: `m-${Date.now()}-ai`,
-        sender: 'ai',
-        text: aiText,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+
+      let aiMessage: Message
+      const { data: insertedAssistant, error: assistantInsertError } = await supabase
+        .from('messages')
+        .insert({
+          conversation_id: conversationId,
+          role: 'assistant',
+          content: aiText,
+        })
+        .select('id, role, content, created_at')
+        .single()
+
+      if (assistantInsertError || !insertedAssistant) {
+        aiMessage = {
+          id: `m-${Date.now()}-ai`,
+          sender: 'ai',
+          text: aiText,
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        }
+      } else {
+        aiMessage = mapDbMessageToMessage(insertedAssistant as DbMessageRow)
       }
 
       setConversationList((prev) =>
@@ -177,11 +299,27 @@ export default function ChatsInboxPage() {
         )
       )
     } catch {
-      const fallbackMessage: Message = {
-        id: `m-${Date.now()}-ai-fallback`,
-        sender: 'ai',
-        text: 'I could not reach the AI service right now. Please try again.',
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      const fallbackText = 'I could not reach the AI service right now. Please try again.'
+      let fallbackMessage: Message
+      const { data: insertedAssistant, error: assistantInsertError } = await supabase
+        .from('messages')
+        .insert({
+          conversation_id: conversationId,
+          role: 'assistant',
+          content: fallbackText,
+        })
+        .select('id, role, content, created_at')
+        .single()
+
+      if (assistantInsertError || !insertedAssistant) {
+        fallbackMessage = {
+          id: `m-${Date.now()}-ai-fallback`,
+          sender: 'ai',
+          text: fallbackText,
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        }
+      } else {
+        fallbackMessage = mapDbMessageToMessage(insertedAssistant as DbMessageRow)
       }
 
       setConversationList((prev) =>
@@ -306,8 +444,21 @@ export default function ChatsInboxPage() {
               </header>
 
               <div style={{ overflowY: 'auto', padding: 8 }}>
+                {inboxLoaded && !inboxFetchError && conversationList.length === 0 ? (
+                  <p
+                    style={{
+                      margin: '24px 12px',
+                      color: '#6b7280',
+                      fontSize: 14,
+                      textAlign: 'center',
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    No conversations yet
+                  </p>
+                ) : null}
                 {conversationList.map((conversation) => {
-                  const isSelected = conversation.id === selectedConversation.id
+                  const isSelected = conversation.id === selectedId
                   const badge = getStatusStyle(conversation.status)
                   return (
                     <button
@@ -373,145 +524,162 @@ export default function ChatsInboxPage() {
                 overflow: 'hidden',
               }}
             >
-              <header
-                style={{
-                  padding: '16px 18px',
-                  borderBottom: '1px solid #f3f4f6',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                }}
-              >
-                <div>
-                  <h2 style={{ margin: 0, fontSize: 18 }}>{selectedConversation.customerName}</h2>
-                  <p style={{ margin: '5px 0 0', color: '#6b7280', fontSize: 13 }}>
-                    AI assistant is handling this conversation
-                  </p>
-                </div>
-                <span
-                  style={{
-                    padding: '6px 10px',
-                    borderRadius: 999,
-                    border: '1px solid #d1fae5',
-                    background: '#ecfdf5',
-                    color: '#047857',
-                    fontSize: 12,
-                    fontWeight: 600,
-                  }}
-                >
-                  Session Active
-                </span>
-              </header>
-
-              <div style={{ flex: 1, overflowY: 'auto', padding: '16px 16px 8px', background: '#f9fafb' }}>
-                {selectedConversation.messages.map((message) => {
-                  const isAI = message.sender === 'ai'
-                  return (
-                    <div
-                      key={message.id}
+              {selectedConversation ? (
+                <>
+                  <header
+                    style={{
+                      padding: '16px 18px',
+                      borderBottom: '1px solid #f3f4f6',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                    }}
+                  >
+                    <div>
+                      <h2 style={{ margin: 0, fontSize: 18 }}>{selectedConversation.customerName}</h2>
+                      <p style={{ margin: '5px 0 0', color: '#6b7280', fontSize: 13 }}>
+                        AI assistant is handling this conversation
+                      </p>
+                    </div>
+                    <span
                       style={{
-                        display: 'flex',
-                        justifyContent: isAI ? 'flex-end' : 'flex-start',
-                        marginBottom: 12,
+                        padding: '6px 10px',
+                        borderRadius: 999,
+                        border: '1px solid #d1fae5',
+                        background: '#ecfdf5',
+                        color: '#047857',
+                        fontSize: 12,
+                        fontWeight: 600,
                       }}
                     >
-                      <div
-                        style={{
-                          maxWidth: '72%',
-                          borderRadius: 12,
-                          padding: '10px 12px',
-                          background: isAI ? '#dc2626' : '#ffffff',
-                          border: isAI ? '1px solid #b91c1c' : '1px solid #e5e7eb',
-                          color: isAI ? '#fff' : '#1f2937',
-                        }}
-                      >
-                        <p style={{ margin: 0, fontSize: 14, lineHeight: 1.4 }}>{message.text}</p>
-                        <p
+                      Session Active
+                    </span>
+                  </header>
+
+                  <div style={{ flex: 1, overflowY: 'auto', padding: '16px 16px 8px', background: '#f9fafb' }}>
+                    {selectedConversation.messages.map((message) => {
+                      const isAI = message.sender === 'ai'
+                      return (
+                        <div
+                          key={message.id}
                           style={{
-                            margin: '7px 0 0',
-                            fontSize: 11,
-                            opacity: isAI ? 0.88 : 0.5,
-                            textAlign: 'right',
+                            display: 'flex',
+                            justifyContent: isAI ? 'flex-end' : 'flex-start',
+                            marginBottom: 12,
                           }}
                         >
-                          {message.sender === 'ai' ? 'AI' : 'Customer'} - {message.time}
-                        </p>
+                          <div
+                            style={{
+                              maxWidth: '72%',
+                              borderRadius: 12,
+                              padding: '10px 12px',
+                              background: isAI ? '#dc2626' : '#ffffff',
+                              border: isAI ? '1px solid #b91c1c' : '1px solid #e5e7eb',
+                              color: isAI ? '#fff' : '#1f2937',
+                            }}
+                          >
+                            <p style={{ margin: 0, fontSize: 14, lineHeight: 1.4 }}>{message.text}</p>
+                            <p
+                              style={{
+                                margin: '7px 0 0',
+                                fontSize: 11,
+                                opacity: isAI ? 0.88 : 0.5,
+                                textAlign: 'right',
+                              }}
+                            >
+                              {message.sender === 'ai' ? 'AI' : 'Customer'} - {message.time}
+                            </p>
+                          </div>
+                        </div>
+                      )
+                    })}
+                    {isLoading && sendingConversationId === selectedConversation.id && (
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+                        <div
+                          style={{
+                            maxWidth: '72%',
+                            borderRadius: 12,
+                            padding: '10px 12px',
+                            background: '#fee2e2',
+                            border: '1px solid #fecaca',
+                            color: '#991b1b',
+                          }}
+                        >
+                          <p style={{ margin: 0, fontSize: 14, lineHeight: 1.4 }}>AI is typing...</p>
+                        </div>
                       </div>
-                    </div>
-                  )
-                })}
-                {isLoading && sendingConversationId === selectedConversation.id && (
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-                    <div
-                      style={{
-                        maxWidth: '72%',
-                        borderRadius: 12,
-                        padding: '10px 12px',
-                        background: '#fee2e2',
-                        border: '1px solid #fecaca',
-                        color: '#991b1b',
-                      }}
-                    >
-                      <p style={{ margin: 0, fontSize: 14, lineHeight: 1.4 }}>AI is typing...</p>
-                    </div>
+                    )}
                   </div>
-                )}
-              </div>
 
-              <footer style={{ borderTop: '1px solid #f3f4f6', padding: 14, background: '#ffffff' }}>
-                <div style={{ display: 'flex', gap: 10 }}>
-                  <input
-                    type="text"
-                    value={draft}
-                    onChange={(event) => setDraft(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' && !event.shiftKey) {
-                        event.preventDefault()
-                        void handleSend()
-                      }
-                    }}
-                    placeholder="Write a message..."
-                    style={{
-                      flex: 1,
-                      border: '1px solid #d1d5db',
-                      borderRadius: 10,
-                      padding: '10px 12px',
-                      fontSize: 14,
-                      outline: 'none',
-                    }}
-                  />
-                  <button
-                    type="button"
-                    onClick={handleSend}
-                    disabled={isLoading || !draft.trim()}
-                    style={{
-                      border: 'none',
-                      borderRadius: 10,
-                      background: isLoading || !draft.trim() ? '#fca5a5' : '#dc2626',
-                      color: '#fff',
-                      fontWeight: 600,
-                      padding: '10px 14px',
-                      cursor: isLoading || !draft.trim() ? 'not-allowed' : 'pointer',
-                    }}
-                  >
-                    {isLoading ? 'Sending...' : 'Send'}
-                  </button>
-                  <button
-                    type="button"
-                    style={{
-                      borderRadius: 10,
-                      border: '1px solid #d1d5db',
-                      background: '#ffffff',
-                      color: '#374151',
-                      fontWeight: 600,
-                      padding: '10px 14px',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    Take Over
-                  </button>
-                </div>
-              </footer>
+                  <footer style={{ borderTop: '1px solid #f3f4f6', padding: 14, background: '#ffffff' }}>
+                    <div style={{ display: 'flex', gap: 10 }}>
+                      <input
+                        type="text"
+                        value={draft}
+                        onChange={(event) => setDraft(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' && !event.shiftKey) {
+                            event.preventDefault()
+                            void handleSend()
+                          }
+                        }}
+                        placeholder="Write a message..."
+                        style={{
+                          flex: 1,
+                          border: '1px solid #d1d5db',
+                          borderRadius: 10,
+                          padding: '10px 12px',
+                          fontSize: 14,
+                          outline: 'none',
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={handleSend}
+                        disabled={isLoading || !draft.trim()}
+                        style={{
+                          border: 'none',
+                          borderRadius: 10,
+                          background: isLoading || !draft.trim() ? '#fca5a5' : '#dc2626',
+                          color: '#fff',
+                          fontWeight: 600,
+                          padding: '10px 14px',
+                          cursor: isLoading || !draft.trim() ? 'not-allowed' : 'pointer',
+                        }}
+                      >
+                        {isLoading ? 'Sending...' : 'Send'}
+                      </button>
+                      <button
+                        type="button"
+                        style={{
+                          borderRadius: 10,
+                          border: '1px solid #d1d5db',
+                          background: '#ffffff',
+                          color: '#374151',
+                          fontWeight: 600,
+                          padding: '10px 14px',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Take Over
+                      </button>
+                    </div>
+                  </footer>
+                </>
+              ) : (
+                <div
+                  style={{
+                    flex: 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: 32,
+                    color: '#9ca3af',
+                    fontSize: 14,
+                    minHeight: 200,
+                  }}
+                />
+              )}
             </section>
           </div>
         </main>
