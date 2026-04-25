@@ -114,6 +114,8 @@ function mapRowsToWeekBookings(rows: AppointmentRow[], nameById: Map<string, str
 
 export default function BookingsPage() {
   const [weekBookings, setWeekBookings] = useState<WeekBooking[]>([])
+  const [isMobile, setIsMobile] = useState(false)
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false)
 
   const today = new Date()
   const monday = startOfWeekMonday(today)
@@ -193,10 +195,113 @@ export default function BookingsPage() {
     }
   }, [])
 
+  useEffect(() => {
+    function syncViewport() {
+      const mobile = window.innerWidth < 768
+      setIsMobile(mobile)
+      if (!mobile) {
+        setIsDrawerOpen(false)
+      }
+    }
+    syncViewport()
+    window.addEventListener('resize', syncViewport)
+    return () => window.removeEventListener('resize', syncViewport)
+  }, [])
+
   const todayIndex = (today.getDay() + 6) % 7
   const todaysBookings = weekBookings
     .filter((b) => b.dayIndex === todayIndex)
     .sort((a, b) => a.hour * 60 + a.minute - (b.hour * 60 + b.minute))
+  const mobileListBookings = [...weekBookings].sort((a, b) => a.dayIndex - b.dayIndex || a.hour * 60 + a.minute - (b.hour * 60 + b.minute))
+
+  const sidebar = (
+    <aside
+      style={{
+        width: 258,
+        background: '#ffffff',
+        borderRight: '1px solid #e5e7eb',
+        padding: '24px 14px 20px',
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+      }}
+    >
+      <p
+        style={{
+          fontSize: 11,
+          textTransform: 'uppercase',
+          letterSpacing: '0.24em',
+          color: '#ef4444',
+          margin: '0 12px 6px',
+        }}
+      >
+        Salon AI
+      </p>
+      <div style={{ margin: '0 12px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>Operations</h2>
+        {isMobile && (
+          <button
+            type="button"
+            aria-label="Close menu"
+            onClick={() => setIsDrawerOpen(false)}
+            style={{
+              border: 'none',
+              background: 'transparent',
+              fontSize: 26,
+              lineHeight: 1,
+              color: '#374151',
+              cursor: 'pointer',
+            }}
+          >
+            ×
+          </button>
+        )}
+      </div>
+      <nav style={{ display: 'grid', gap: 6 }}>
+        {navItems.map((item) => {
+          const isActive = item === 'Bookings'
+          return (
+            <Link
+              key={item}
+              href={navLinks[item] ?? '#'}
+              onClick={() => setIsDrawerOpen(false)}
+              style={{
+                padding: '11px 13px',
+                borderRadius: 10,
+                fontSize: 14,
+                fontWeight: 500,
+                color: isActive ? '#7f1d1d' : '#6b7280',
+                background: isActive ? '#fee2e2' : 'transparent',
+                border: isActive ? '1px solid #fecaca' : '1px solid transparent',
+                textDecoration: 'none',
+              }}
+            >
+              {item}
+            </Link>
+          )
+        })}
+      </nav>
+      <div style={{ marginTop: 'auto', padding: '0 8px', display: 'grid', gap: 10 }}>
+        <DashboardLogoutButton />
+        <button
+          type="button"
+          style={{
+            width: '100%',
+            border: 'none',
+            borderRadius: 10,
+            background: '#dc2626',
+            color: '#fff',
+            fontWeight: 600,
+            fontSize: 14,
+            padding: '11px 14px',
+            cursor: 'pointer',
+          }}
+        >
+          Deploy Agent
+        </button>
+      </div>
+    </aside>
+  )
 
   return (
     <div
@@ -208,78 +313,64 @@ export default function BookingsPage() {
       }}
     >
       <div style={{ display: 'flex', minHeight: '100vh' }}>
-        <aside
-          style={{
-            width: 258,
-            background: '#ffffff',
-            borderRight: '1px solid #e5e7eb',
-            padding: '24px 14px 20px',
-            display: 'flex',
-            flexDirection: 'column',
-          }}
-        >
-          <p
+        {!isMobile && sidebar}
+        {isMobile && isDrawerOpen && (
+          <div
+            role="presentation"
+            onClick={() => setIsDrawerOpen(false)}
             style={{
-              fontSize: 11,
-              textTransform: 'uppercase',
-              letterSpacing: '0.24em',
-              color: '#ef4444',
-              margin: '0 12px 6px',
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(17, 24, 39, 0.45)',
+              zIndex: 40,
             }}
           >
-            Salon AI
-          </p>
-          <h2 style={{ margin: '0 12px 24px', fontSize: 20, fontWeight: 700 }}>Operations</h2>
-          <nav style={{ display: 'grid', gap: 6 }}>
-            {navItems.map((item) => {
-              const isActive = item === 'Bookings'
-              return (
-                <Link
-                  key={item}
-                  href={navLinks[item] ?? '#'}
-                  style={{
-                    padding: '11px 13px',
-                    borderRadius: 10,
-                    fontSize: 14,
-                    fontWeight: 500,
-                    color: isActive ? '#7f1d1d' : '#6b7280',
-                    background: isActive ? '#fee2e2' : 'transparent',
-                    border: isActive ? '1px solid #fecaca' : '1px solid transparent',
-                    textDecoration: 'none',
-                  }}
-                >
-                  {item}
-                </Link>
-              )
-            })}
-          </nav>
-          <div style={{ marginTop: 'auto', padding: '0 8px', display: 'grid', gap: 10 }}>
-            <DashboardLogoutButton />
-            <button
-              type="button"
+            <div
+              role="presentation"
+              onClick={(e) => e.stopPropagation()}
               style={{
-                width: '100%',
-                border: 'none',
-                borderRadius: 10,
-                background: '#dc2626',
-                color: '#fff',
-                fontWeight: 600,
-                fontSize: 14,
-                padding: '11px 14px',
-                cursor: 'pointer',
+                position: 'absolute',
+                left: 0,
+                top: 0,
+                bottom: 0,
+                width: 258,
+                boxShadow: '0 12px 24px rgba(0, 0, 0, 0.2)',
               }}
             >
-              Deploy Agent
-            </button>
+              {sidebar}
+            </div>
           </div>
-        </aside>
+        )}
 
-        <main style={{ flex: 1, padding: '30px 32px 36px' }}>
+        <main style={{ flex: 1, padding: isMobile ? '16px 14px 24px' : '30px 32px 36px' }}>
+          {isMobile && (
+            <div style={{ marginBottom: 12 }}>
+              <button
+                type="button"
+                aria-label="Open menu"
+                onClick={() => setIsDrawerOpen(true)}
+                style={{
+                  border: '1px solid #e5e7eb',
+                  borderRadius: 10,
+                  background: '#fff',
+                  color: '#374151',
+                  width: 40,
+                  height: 40,
+                  fontSize: 23,
+                  lineHeight: 1,
+                  cursor: 'pointer',
+                }}
+              >
+                ☰
+              </button>
+            </div>
+          )}
           <div
             style={{
               display: 'flex',
               justifyContent: 'space-between',
-              alignItems: 'flex-end',
+              alignItems: isMobile ? 'flex-start' : 'flex-end',
+              flexDirection: isMobile ? 'column' : 'row',
               gap: 16,
               marginBottom: 16,
             }}
@@ -291,23 +382,25 @@ export default function BookingsPage() {
                 {addDays(monday, 6).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
               </p>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <select
-                defaultValue="this-week"
-                style={{
-                  borderRadius: 10,
-                  border: '1px solid #d1d5db',
-                  background: '#fff',
-                  color: '#374151',
-                  padding: '10px 12px',
-                  fontSize: 14,
-                  fontWeight: 600,
-                }}
-              >
-                <option value="this-week">This week</option>
-                <option value="next-week">Next week</option>
-                <option value="this-month">This month</option>
-              </select>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              {!isMobile && (
+                <select
+                  defaultValue="this-week"
+                  style={{
+                    borderRadius: 10,
+                    border: '1px solid #d1d5db',
+                    background: '#fff',
+                    color: '#374151',
+                    padding: '10px 12px',
+                    fontSize: 14,
+                    fontWeight: 600,
+                  }}
+                >
+                  <option value="this-week">This week</option>
+                  <option value="next-week">Next week</option>
+                  <option value="this-month">This month</option>
+                </select>
+              )}
               <button
                 type="button"
                 style={{
@@ -335,92 +428,159 @@ export default function BookingsPage() {
               marginBottom: 14,
             }}
           >
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: '92px repeat(7, minmax(0, 1fr))',
-                borderBottom: '1px solid #e5e7eb',
-              }}
-            >
-              <div />
-              {weekDays.map((d, idx) => {
-                const isToday = d.toDateString() === today.toDateString()
-                return (
+            {isMobile ? (
+              <div style={{ display: 'grid', gap: 10 }}>
+                {mobileListBookings.length === 0 && (
                   <div
-                    key={d.toISOString()}
                     style={{
-                      padding: '10px 8px',
-                      textAlign: 'center',
-                      borderLeft: '1px solid #f3f4f6',
-                      background: isToday ? '#fef2f2' : 'transparent',
+                      borderRadius: 12,
+                      border: '1px solid #f3f4f6',
+                      background: '#fafafa',
+                      padding: '14px 12px',
+                      color: '#6b7280',
+                      fontSize: 14,
                     }}
                   >
-                    <div style={{ fontSize: 12, color: '#6b7280' }}>
-                      {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][idx]}
-                    </div>
-                    <div style={{ marginTop: 4, fontWeight: 700, fontSize: 14 }}>{d.getDate()}</div>
+                    No appointments this week.
                   </div>
-                )
-              })}
-            </div>
-
-            <div style={{ maxHeight: 560, overflow: 'auto' }}>
-              {hours.map((hour) => (
+                )}
+                {mobileListBookings.map((booking) => {
+                  const badge = statusStyle(booking.status)
+                  const dayDate = weekDays[booking.dayIndex]
+                  return (
+                    <div
+                      key={booking.id}
+                      style={{
+                        borderRadius: 12,
+                        border: '1px solid #f3f4f6',
+                        background: '#fafafa',
+                        padding: '12px 12px',
+                        display: 'grid',
+                        gap: 5,
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+                        <div style={{ fontWeight: 700, color: '#111827' }}>{booking.customerName}</div>
+                        <span
+                          style={{
+                            padding: '4px 8px',
+                            borderRadius: 999,
+                            border: `1px solid ${badge.border}`,
+                            background: badge.bg,
+                            color: badge.color,
+                            fontSize: 11,
+                            fontWeight: 700,
+                            textTransform: 'capitalize',
+                          }}
+                        >
+                          {booking.status}
+                        </span>
+                      </div>
+                      <div style={{ color: '#4b5563', fontSize: 14 }}>{booking.service}</div>
+                      <div
+                        style={{
+                          color: '#6b7280',
+                          fontSize: 13,
+                          fontWeight: 600,
+                        }}
+                      >
+                        {dayDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} ·{' '}
+                        {formatTime(booking.hour, booking.minute)}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              <>
                 <div
-                  key={hour}
                   style={{
                     display: 'grid',
                     gridTemplateColumns: '92px repeat(7, minmax(0, 1fr))',
-                    borderBottom: '1px solid #f3f4f6',
-                    minHeight: 52,
+                    borderBottom: '1px solid #e5e7eb',
                   }}
                 >
-                  <div style={{ padding: '10px 10px', color: '#6b7280', fontSize: 12, fontWeight: 600 }}>
-                    {formatHour(hour)}
-                  </div>
-                  {weekDays.map((d, dayIdx) => {
+                  <div />
+                  {weekDays.map((d, idx) => {
                     const isToday = d.toDateString() === today.toDateString()
-                    const booking = weekBookings.find((b) => b.dayIndex === dayIdx && b.hour === hour)
                     return (
                       <div
-                        key={`${hour}-${dayIdx}`}
+                        key={d.toISOString()}
                         style={{
+                          padding: '10px 8px',
+                          textAlign: 'center',
                           borderLeft: '1px solid #f3f4f6',
-                          padding: 6,
-                          background: isToday ? '#fffafa' : '#ffffff',
+                          background: isToday ? '#fef2f2' : 'transparent',
                         }}
                       >
-                        {booking && (
-                          <div
-                            style={{
-                              borderRadius: 10,
-                              border: '1px solid #e5e7eb',
-                              background: '#f9fafb',
-                              padding: '6px 8px',
-                            }}
-                          >
-                            <div style={{ fontSize: 12, fontWeight: 700, color: '#111827' }}>
-                              {booking.customerName}
-                            </div>
-                            <div style={{ marginTop: 2, fontSize: 11, color: '#6b7280' }}>{booking.service}</div>
-                            <div
-                              style={{
-                                marginTop: 4,
-                                fontSize: 11,
-                                color: '#9ca3af',
-                                textTransform: 'capitalize',
-                              }}
-                            >
-                              {formatTime(booking.hour, booking.minute)} · {booking.status}
-                            </div>
-                          </div>
-                        )}
+                        <div style={{ fontSize: 12, color: '#6b7280' }}>
+                          {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][idx]}
+                        </div>
+                        <div style={{ marginTop: 4, fontWeight: 700, fontSize: 14 }}>{d.getDate()}</div>
                       </div>
                     )
                   })}
                 </div>
-              ))}
-            </div>
+
+                <div style={{ maxHeight: 560, overflow: 'auto' }}>
+                  {hours.map((hour) => (
+                    <div
+                      key={hour}
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: '92px repeat(7, minmax(0, 1fr))',
+                        borderBottom: '1px solid #f3f4f6',
+                        minHeight: 52,
+                      }}
+                    >
+                      <div style={{ padding: '10px 10px', color: '#6b7280', fontSize: 12, fontWeight: 600 }}>
+                        {formatHour(hour)}
+                      </div>
+                      {weekDays.map((d, dayIdx) => {
+                        const isToday = d.toDateString() === today.toDateString()
+                        const booking = weekBookings.find((b) => b.dayIndex === dayIdx && b.hour === hour)
+                        return (
+                          <div
+                            key={`${hour}-${dayIdx}`}
+                            style={{
+                              borderLeft: '1px solid #f3f4f6',
+                              padding: 6,
+                              background: isToday ? '#fffafa' : '#ffffff',
+                            }}
+                          >
+                            {booking && (
+                              <div
+                                style={{
+                                  borderRadius: 10,
+                                  border: '1px solid #e5e7eb',
+                                  background: '#f9fafb',
+                                  padding: '6px 8px',
+                                }}
+                              >
+                                <div style={{ fontSize: 12, fontWeight: 700, color: '#111827' }}>
+                                  {booking.customerName}
+                                </div>
+                                <div style={{ marginTop: 2, fontSize: 11, color: '#6b7280' }}>{booking.service}</div>
+                                <div
+                                  style={{
+                                    marginTop: 4,
+                                    fontSize: 11,
+                                    color: '#9ca3af',
+                                    textTransform: 'capitalize',
+                                  }}
+                                >
+                                  {formatTime(booking.hour, booking.minute)} · {booking.status}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
           </section>
 
           <section
@@ -446,7 +606,7 @@ export default function BookingsPage() {
                     key={booking.id}
                     style={{
                       display: 'grid',
-                      gridTemplateColumns: '1.1fr 1.2fr 0.7fr 0.9fr auto',
+                      gridTemplateColumns: isMobile ? '1fr' : '1.1fr 1.2fr 0.7fr 0.9fr auto',
                       gap: 12,
                       alignItems: 'center',
                       padding: '12px 12px',
@@ -463,7 +623,7 @@ export default function BookingsPage() {
                     <div style={{ color: '#6b7280', fontSize: 13 }}>{booking.staff}</div>
                     <span
                       style={{
-                        justifySelf: 'end',
+                        justifySelf: isMobile ? 'start' : 'end',
                         padding: '5px 10px',
                         borderRadius: 999,
                         border: `1px solid ${badge.border}`,

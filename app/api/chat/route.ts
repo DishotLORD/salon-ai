@@ -237,12 +237,14 @@ function queueNewConversationOwnerEmail(ownerEmail: string | null | undefined, b
       const from =
         process.env.RESEND_FROM_EMAIL?.trim() ||
         'notifications@salon-ai.app'
-      await resend.emails.send({
+      console.log('[email] calling resend with key:', !!process.env.RESEND_API_KEY)
+      const result = await resend.emails.send({
         from,
         to,
         subject: `New customer started a chat - ${businessName ?? 'Your business'}`,
         text: 'A new customer started chatting with your AI assistant. Check your inbox at salon-ai-eta.vercel.app/dashboard/chats',
       })
+      console.log('[email] resend result:', JSON.stringify(result))
     } catch (err) {
       console.error('[chat/email] Failed to send new conversation notification', err)
     }
@@ -319,6 +321,7 @@ export async function POST(request: Request) {
       resolvedCustomerId = existing.customer_id ?? null
     } else {
       isNewConversation = true
+      console.log('[email] new conversation created, isNewConversation:', isNewConversation)
       const { data: newConv, error: convInsErr } = await supabaseAdmin
         .from('conversations')
         .insert({
@@ -377,6 +380,7 @@ export async function POST(request: Request) {
     }
 
     if (isNewConversation && resolvedCustomerId) {
+      console.log('[email] sending notification to:', business.email, 'isNewConversation:', isNewConversation)
       queueNewConversationOwnerEmail(business.email, business.name)
     }
 
