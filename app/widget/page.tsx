@@ -52,15 +52,16 @@ function WidgetPageInner() {
         },
         (payload) => {
           const row = payload.new as { id?: string; role?: string; content?: string | null }
-          if (typeof row.id !== 'string' || row.role !== 'assistant') {
+          if (typeof row.id !== 'string') {
             return
           }
+          const sender: WidgetMessage['sender'] = row.role === 'assistant' ? 'ai' : 'customer'
           const incomingId = row.id
           setMessages((prev) => {
             if (prev.some((message) => message.id === incomingId)) {
               return prev
             }
-            return [...prev, { id: incomingId, sender: 'ai', text: row.content ?? '' }]
+            return [...prev, { id: incomingId, sender, text: row.content ?? '' }]
           })
         }
       )
