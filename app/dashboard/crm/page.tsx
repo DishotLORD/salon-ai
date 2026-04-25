@@ -129,6 +129,8 @@ export default function CrmPage() {
   const [query, setQuery] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [notes, setNotes] = useState('')
+  const [isMobile, setIsMobile] = useState(false)
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -190,6 +192,19 @@ export default function CrmPage() {
   }, [selectedId])
 
   useEffect(() => {
+    function syncViewport() {
+      const mobile = window.innerWidth < 768
+      setIsMobile(mobile)
+      if (!mobile) {
+        setIsDrawerOpen(false)
+      }
+    }
+    syncViewport()
+    window.addEventListener('resize', syncViewport)
+    return () => window.removeEventListener('resize', syncViewport)
+  }, [])
+
+  useEffect(() => {
     if (selectedId && !customers.some((c) => c.id === selectedId)) {
       setSelectedId(null)
     }
@@ -222,6 +237,88 @@ export default function CrmPage() {
     return { total, newThisMonth, returning, avgSpend }
   }, [customers])
 
+  const sidebar = (
+    <aside
+      style={{
+        width: 258,
+        background: '#ffffff',
+        borderRight: '1px solid #e5e7eb',
+        padding: '24px 14px 20px',
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+      }}
+    >
+      <p
+        style={{
+          fontSize: 11,
+          textTransform: 'uppercase',
+          letterSpacing: '0.24em',
+          color: '#ef4444',
+          margin: '0 12px 6px',
+        }}
+      >
+        Salon AI
+      </p>
+      <div style={{ margin: '0 12px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>Operations</h2>
+        {isMobile && (
+          <button
+            type="button"
+            aria-label="Close menu"
+            onClick={() => setIsDrawerOpen(false)}
+            style={{ border: 'none', background: 'transparent', fontSize: 26, lineHeight: 1, color: '#374151', cursor: 'pointer' }}
+          >
+            ×
+          </button>
+        )}
+      </div>
+      <nav style={{ display: 'grid', gap: 6 }}>
+        {navItems.map((item) => {
+          const isActive = item === 'CRM'
+          return (
+            <Link
+              key={item}
+              href={navLinks[item] ?? '#'}
+              onClick={() => setIsDrawerOpen(false)}
+              style={{
+                padding: '11px 13px',
+                borderRadius: 10,
+                fontSize: 14,
+                fontWeight: 500,
+                color: isActive ? '#7f1d1d' : '#6b7280',
+                background: isActive ? '#fee2e2' : 'transparent',
+                border: isActive ? '1px solid #fecaca' : '1px solid transparent',
+                textDecoration: 'none',
+              }}
+            >
+              {item}
+            </Link>
+          )
+        })}
+      </nav>
+      <div style={{ marginTop: 'auto', padding: '0 8px', display: 'grid', gap: 10 }}>
+        <DashboardLogoutButton />
+        <button
+          type="button"
+          style={{
+            width: '100%',
+            border: 'none',
+            borderRadius: 10,
+            background: '#dc2626',
+            color: '#fff',
+            fontWeight: 600,
+            fontSize: 14,
+            padding: '11px 14px',
+            cursor: 'pointer',
+          }}
+        >
+          Deploy Agent
+        </button>
+      </div>
+    </aside>
+  )
+
   return (
     <div
       style={{
@@ -232,78 +329,34 @@ export default function CrmPage() {
       }}
     >
       <div style={{ display: 'flex', minHeight: '100vh' }}>
-        <aside
-          style={{
-            width: 258,
-            background: '#ffffff',
-            borderRight: '1px solid #e5e7eb',
-            padding: '24px 14px 20px',
-            display: 'flex',
-            flexDirection: 'column',
-          }}
-        >
-          <p
-            style={{
-              fontSize: 11,
-              textTransform: 'uppercase',
-              letterSpacing: '0.24em',
-              color: '#ef4444',
-              margin: '0 12px 6px',
-            }}
-          >
-            Salon AI
-          </p>
-          <h2 style={{ margin: '0 12px 24px', fontSize: 20, fontWeight: 700 }}>Operations</h2>
-          <nav style={{ display: 'grid', gap: 6 }}>
-            {navItems.map((item) => {
-              const isActive = item === 'CRM'
-              return (
-                <Link
-                  key={item}
-                  href={navLinks[item] ?? '#'}
-                  style={{
-                    padding: '11px 13px',
-                    borderRadius: 10,
-                    fontSize: 14,
-                    fontWeight: 500,
-                    color: isActive ? '#7f1d1d' : '#6b7280',
-                    background: isActive ? '#fee2e2' : 'transparent',
-                    border: isActive ? '1px solid #fecaca' : '1px solid transparent',
-                    textDecoration: 'none',
-                  }}
-                >
-                  {item}
-                </Link>
-              )
-            })}
-          </nav>
-          <div style={{ marginTop: 'auto', padding: '0 8px', display: 'grid', gap: 10 }}>
-            <DashboardLogoutButton />
-            <button
-              type="button"
-              style={{
-                width: '100%',
-                border: 'none',
-                borderRadius: 10,
-                background: '#dc2626',
-                color: '#fff',
-                fontWeight: 600,
-                fontSize: 14,
-                padding: '11px 14px',
-                cursor: 'pointer',
-              }}
-            >
-              Deploy Agent
-            </button>
+        {!isMobile && sidebar}
+        {isMobile && isDrawerOpen && (
+          <div role="presentation" onClick={() => setIsDrawerOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(17, 24, 39, 0.45)', zIndex: 40 }}>
+            <div role="presentation" onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 258, boxShadow: '0 12px 24px rgba(0, 0, 0, 0.2)' }}>
+              {sidebar}
+            </div>
           </div>
-        </aside>
+        )}
 
-        <main style={{ flex: 1, padding: '30px 32px 36px' }}>
+        <main style={{ flex: 1, padding: isMobile ? '16px 14px 24px' : '30px 32px 36px' }}>
+          {isMobile && (
+            <div style={{ marginBottom: 12 }}>
+              <button
+                type="button"
+                aria-label="Open menu"
+                onClick={() => setIsDrawerOpen(true)}
+                style={{ border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff', color: '#374151', width: 40, height: 40, fontSize: 23, lineHeight: 1, cursor: 'pointer' }}
+              >
+                ☰
+              </button>
+            </div>
+          )}
           <div
             style={{
               display: 'flex',
               justifyContent: 'space-between',
-              alignItems: 'center',
+              alignItems: isMobile ? 'flex-start' : 'center',
+              flexDirection: isMobile ? 'column' : 'row',
               gap: 12,
               marginBottom: 16,
             }}
@@ -312,15 +365,15 @@ export default function CrmPage() {
               <h1 style={{ margin: 0, fontSize: 30, letterSpacing: '-0.02em' }}>Customers</h1>
               <p style={{ margin: '8px 0 0', color: '#6b7280', fontSize: 14 }}>Search, segment, and nurture your best clients.</p>
             </div>
-            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', width: isMobile ? '100%' : 'auto' }}>
               <input
                 type="search"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search name, email, phone..."
                 style={{
-                  width: 320,
-                  maxWidth: '42vw',
+                  width: isMobile ? '100%' : 320,
+                  maxWidth: isMobile ? '100%' : '42vw',
                   borderRadius: 10,
                   border: '1px solid #d1d5db',
                   padding: '10px 12px',
@@ -351,7 +404,7 @@ export default function CrmPage() {
           <section
             style={{
               display: 'grid',
-              gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+              gridTemplateColumns: isMobile ? 'repeat(2, minmax(0, 1fr))' : 'repeat(4, minmax(0, 1fr))',
               gap: 12,
               marginBottom: 14,
             }}
@@ -380,7 +433,7 @@ export default function CrmPage() {
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: selected ? 'minmax(0, 1fr) 360px' : 'minmax(0, 1fr)',
+              gridTemplateColumns: isMobile ? 'minmax(0, 1fr)' : selected ? 'minmax(0, 1fr) 360px' : 'minmax(0, 1fr)',
               gap: 14,
               alignItems: 'start',
             }}
@@ -393,6 +446,61 @@ export default function CrmPage() {
                 overflow: 'hidden',
               }}
             >
+              {isMobile ? (
+                <div style={{ padding: 12, display: 'grid', gap: 10 }}>
+                  {crmLoading ? (
+                    <div style={{ padding: 24, textAlign: 'center', color: '#6b7280', fontSize: 14 }}>Loading customers...</div>
+                  ) : customers.length === 0 ? (
+                    <div style={{ padding: 24, textAlign: 'center', color: '#6b7280', fontSize: 14, lineHeight: 1.55 }}>
+                      No customers yet. They will appear here when they chat with your AI.
+                    </div>
+                  ) : filtered.length === 0 ? (
+                    <div style={{ padding: 24, textAlign: 'center', color: '#6b7280', fontSize: 14 }}>No matching customers.</div>
+                  ) : (
+                    filtered.map((customer) => {
+                      const active = customer.id === selectedId
+                      return (
+                        <button
+                          key={customer.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedId(customer.id)
+                            setNotes('')
+                          }}
+                          style={{
+                            border: `1px solid ${active ? '#fecaca' : '#f3f4f6'}`,
+                            background: active ? '#fff1f2' : '#ffffff',
+                            borderRadius: 12,
+                            padding: 12,
+                            textAlign: 'left',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                            <div style={{ fontWeight: 700, color: '#111827' }}>{customer.name}</div>
+                            <div style={{ fontSize: 12, color: '#6b7280' }}>{customer.lastVisit}</div>
+                          </div>
+                          <div style={{ marginTop: 6, color: '#4b5563', fontSize: 13 }}>{customer.email}</div>
+                          <div style={{ marginTop: 3, color: '#4b5563', fontSize: 13 }}>{customer.phone}</div>
+                          <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                            {customer.tags.map((tag) => {
+                              const t = tagStyle(tag)
+                              return (
+                                <span key={tag} style={{ fontSize: 11, fontWeight: 700, padding: '4px 8px', borderRadius: 999, border: `1px solid ${t.border}`, background: t.bg, color: t.color }}>
+                                  {tag}
+                                </span>
+                              )
+                            })}
+                          </div>
+                          <div style={{ marginTop: 8, fontSize: 12, color: '#6b7280' }}>
+                            {customer.totalBookings} bookings · {formatMoney(customer.totalSpent)}
+                          </div>
+                        </button>
+                      )
+                    })
+                  )}
+                </div>
+              ) : (
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 980 }}>
                   <thead>
@@ -535,6 +643,7 @@ export default function CrmPage() {
                   </tbody>
                 </table>
               </div>
+              )}
             </section>
 
             {selected && (

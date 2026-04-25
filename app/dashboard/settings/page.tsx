@@ -79,6 +79,8 @@ export default function SettingsPage() {
 
   const [widgetOrigin, setWidgetOrigin] = useState('')
   const [widgetCopied, setWidgetCopied] = useState(false)
+  const [isMobile, setIsMobile] = useState(false)
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false)
 
   const tabs = useMemo(
     () =>
@@ -155,6 +157,19 @@ export default function SettingsPage() {
         window.clearTimeout(saveToastTimerRef.current)
       }
     }
+  }, [])
+
+  useEffect(() => {
+    function syncViewport() {
+      const mobile = window.innerWidth < 768
+      setIsMobile(mobile)
+      if (!mobile) {
+        setIsDrawerOpen(false)
+      }
+    }
+    syncViewport()
+    window.addEventListener('resize', syncViewport)
+    return () => window.removeEventListener('resize', syncViewport)
   }, [])
 
   const handleSave = async () => {
@@ -257,6 +272,88 @@ export default function SettingsPage() {
     background: '#fff',
   }
 
+  const sidebar = (
+    <aside
+      style={{
+        width: 258,
+        background: '#ffffff',
+        borderRight: '1px solid #e5e7eb',
+        padding: '24px 14px 20px',
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+      }}
+    >
+      <p
+        style={{
+          fontSize: 11,
+          textTransform: 'uppercase',
+          letterSpacing: '0.24em',
+          color: '#ef4444',
+          margin: '0 12px 6px',
+        }}
+      >
+        Salon AI
+      </p>
+      <div style={{ margin: '0 12px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>Operations</h2>
+        {isMobile && (
+          <button
+            type="button"
+            aria-label="Close menu"
+            onClick={() => setIsDrawerOpen(false)}
+            style={{ border: 'none', background: 'transparent', fontSize: 26, lineHeight: 1, color: '#374151', cursor: 'pointer' }}
+          >
+            ×
+          </button>
+        )}
+      </div>
+      <nav style={{ display: 'grid', gap: 6 }}>
+        {navItems.map((item) => {
+          const isActive = item === 'Settings'
+          return (
+            <Link
+              key={item}
+              href={navLinks[item] ?? '#'}
+              onClick={() => setIsDrawerOpen(false)}
+              style={{
+                padding: '11px 13px',
+                borderRadius: 10,
+                fontSize: 14,
+                fontWeight: 500,
+                color: isActive ? '#7f1d1d' : '#6b7280',
+                background: isActive ? '#fee2e2' : 'transparent',
+                border: isActive ? '1px solid #fecaca' : '1px solid transparent',
+                textDecoration: 'none',
+              }}
+            >
+              {item}
+            </Link>
+          )
+        })}
+      </nav>
+      <div style={{ marginTop: 'auto', padding: '0 8px', display: 'grid', gap: 10 }}>
+        <DashboardLogoutButton />
+        <button
+          type="button"
+          style={{
+            width: '100%',
+            border: 'none',
+            borderRadius: 10,
+            background: '#dc2626',
+            color: '#fff',
+            fontWeight: 600,
+            fontSize: 14,
+            padding: '11px 14px',
+            cursor: 'pointer',
+          }}
+        >
+          Deploy Agent
+        </button>
+      </div>
+    </aside>
+  )
+
   return (
     <div
       style={{
@@ -290,74 +387,29 @@ export default function SettingsPage() {
         </div>
       )}
       <div style={{ display: 'flex', minHeight: '100vh' }}>
-        <aside
-          style={{
-            width: 258,
-            background: '#ffffff',
-            borderRight: '1px solid #e5e7eb',
-            padding: '24px 14px 20px',
-            display: 'flex',
-            flexDirection: 'column',
-          }}
-        >
-          <p
-            style={{
-              fontSize: 11,
-              textTransform: 'uppercase',
-              letterSpacing: '0.24em',
-              color: '#ef4444',
-              margin: '0 12px 6px',
-            }}
-          >
-            Salon AI
-          </p>
-          <h2 style={{ margin: '0 12px 24px', fontSize: 20, fontWeight: 700 }}>Operations</h2>
-          <nav style={{ display: 'grid', gap: 6 }}>
-            {navItems.map((item) => {
-              const isActive = item === 'Settings'
-              return (
-                <Link
-                  key={item}
-                  href={navLinks[item] ?? '#'}
-                  style={{
-                    padding: '11px 13px',
-                    borderRadius: 10,
-                    fontSize: 14,
-                    fontWeight: 500,
-                    color: isActive ? '#7f1d1d' : '#6b7280',
-                    background: isActive ? '#fee2e2' : 'transparent',
-                    border: isActive ? '1px solid #fecaca' : '1px solid transparent',
-                    textDecoration: 'none',
-                  }}
-                >
-                  {item}
-                </Link>
-              )
-            })}
-          </nav>
-          <div style={{ marginTop: 'auto', padding: '0 8px', display: 'grid', gap: 10 }}>
-            <DashboardLogoutButton />
-            <button
-              type="button"
-              style={{
-                width: '100%',
-                border: 'none',
-                borderRadius: 10,
-                background: '#dc2626',
-                color: '#fff',
-                fontWeight: 600,
-                fontSize: 14,
-                padding: '11px 14px',
-                cursor: 'pointer',
-              }}
-            >
-              Deploy Agent
-            </button>
+        {!isMobile && sidebar}
+        {isMobile && isDrawerOpen && (
+          <div role="presentation" onClick={() => setIsDrawerOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(17, 24, 39, 0.45)', zIndex: 40 }}>
+            <div role="presentation" onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 258, boxShadow: '0 12px 24px rgba(0, 0, 0, 0.2)' }}>
+              {sidebar}
+            </div>
           </div>
-        </aside>
+        )}
 
-        <main style={{ flex: 1, padding: '30px 32px 36px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 16 }}>
+        <main style={{ flex: 1, padding: isMobile ? '16px 14px 24px' : '30px 32px 36px' }}>
+          {isMobile && (
+            <div style={{ marginBottom: 12 }}>
+              <button
+                type="button"
+                aria-label="Open menu"
+                onClick={() => setIsDrawerOpen(true)}
+                style={{ border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff', color: '#374151', width: 40, height: 40, fontSize: 23, lineHeight: 1, cursor: 'pointer' }}
+              >
+                ☰
+              </button>
+            </div>
+          )}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'flex-end', flexDirection: isMobile ? 'column' : 'row', gap: 16 }}>
             <div>
               <h1 style={{ margin: 0, fontSize: 30, letterSpacing: '-0.02em' }}>Settings</h1>
               <p style={{ margin: '8px 0 0', color: '#6b7280', fontSize: 14 }}>
@@ -397,6 +449,8 @@ export default function SettingsPage() {
               gap: 8,
               borderBottom: '1px solid #e5e7eb',
               paddingBottom: 10,
+              overflowX: isMobile ? 'auto' : 'visible',
+              whiteSpace: isMobile ? 'nowrap' : 'normal',
             }}
           >
             {tabs.map((tab) => {
@@ -416,6 +470,7 @@ export default function SettingsPage() {
                     color: active ? '#7f1d1d' : '#6b7280',
                     background: active ? '#fee2e2' : 'transparent',
                     borderBottom: active ? '2px solid #dc2626' : '2px solid transparent',
+                    flexShrink: 0,
                   }}
                 >
                   {tab.label}
@@ -452,7 +507,7 @@ export default function SettingsPage() {
 
             {!isLoading && activeTab === 'general' && (
               <div style={{ display: 'grid', gap: 14 }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 14 }}>
                   <div>
                     <label style={fieldLabelStyle}>BUSINESS NAME</label>
                     <input style={inputStyle} value={businessName} onChange={(e) => setBusinessName(e.target.value)} />
@@ -472,7 +527,7 @@ export default function SettingsPage() {
                   </div>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 14 }}>
                   <div>
                     <label style={fieldLabelStyle}>PHONE</label>
                     <input style={inputStyle} value={businessPhone} onChange={(e) => setBusinessPhone(e.target.value)} />
@@ -502,7 +557,7 @@ export default function SettingsPage() {
                           key={day.key}
                           style={{
                             display: 'grid',
-                            gridTemplateColumns: '160px 120px 1fr 1fr',
+                            gridTemplateColumns: isMobile ? '1fr' : '160px 120px 1fr 1fr',
                             gap: 10,
                             alignItems: 'center',
                             padding: '10px 12px',
@@ -573,7 +628,7 @@ export default function SettingsPage() {
                   />
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 14 }}>
                   <div>
                     <label style={fieldLabelStyle}>AGENT NAME</label>
                     <input style={inputStyle} value={agentName} onChange={(e) => setAgentName(e.target.value)} />
@@ -837,7 +892,7 @@ export default function SettingsPage() {
 
             {!isLoading && activeTab === 'billing' && (
               <div style={{ display: 'grid', gap: 14, maxWidth: 720 }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 14 }}>
                   <div>
                     <label style={fieldLabelStyle}>PLAN</label>
                     <select style={inputStyle} value={plan} onChange={(e) => setPlan(e.target.value)}>
