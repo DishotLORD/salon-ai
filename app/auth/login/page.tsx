@@ -120,7 +120,7 @@ export default function LoginPage() {
         />
         <div style={{ position: 'relative', zIndex: 1, maxWidth: 520 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <img src="/logo.png" alt="Salon AI" width={56} height={56} style={{ borderRadius: 12 }} />
+            <img src="/logo.png" alt="Salon AI" width={56} height={56} style={{ display: 'block' }} />
             <div style={{ fontSize: 34, fontWeight: 700, letterSpacing: '-0.02em', color: '#ffffff' }}>Salon AI</div>
           </div>
           <p
