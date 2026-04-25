@@ -144,6 +144,7 @@ export default function ChatsInboxPage() {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false)
   const [isTakenOver, setIsTakenOver] = useState(false)
   const messagesScrollRef = useRef<HTMLDivElement | null>(null)
+  const previousSelectedIdRef = useRef<string>('')
 
   useEffect(() => {
     let cancelled = false
@@ -221,12 +222,17 @@ export default function ChatsInboxPage() {
   }, [conversationList, selectedId])
 
   useEffect(() => {
-    if (!selectedConversation) {
+    if (!selectedId) {
+      previousSelectedIdRef.current = ''
       setIsTakenOver(false)
       return
     }
-    setIsTakenOver(selectedConversation.status === 'Human')
-  }, [selectedConversation?.id, selectedConversation?.status])
+    if (previousSelectedIdRef.current === selectedId) {
+      return
+    }
+    previousSelectedIdRef.current = selectedId
+    setIsTakenOver(selectedConversation?.status === 'Human')
+  }, [selectedId, selectedConversation?.status])
 
   useEffect(() => {
     if (!selectedId) {
