@@ -64,17 +64,33 @@ export function DashboardClient({ businessDisplayName, userEmail, activeChats, m
         minHeight: '100vh',
       }}
     >
-      <p
+      <div
         style={{
-          fontSize: 11,
-          textTransform: 'uppercase',
-          letterSpacing: '0.24em',
-          color: '#ef4444',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
           margin: '0 12px 6px',
         }}
       >
-        Salon AI
-      </p>
+        <img
+          src="/logo.png"
+          alt=""
+          width={40}
+          height={40}
+          style={{ borderRadius: 10, flexShrink: 0, display: 'block' }}
+        />
+        <p
+          style={{
+            fontSize: 11,
+            textTransform: 'uppercase',
+            letterSpacing: '0.24em',
+            color: '#ef4444',
+            margin: 0,
+          }}
+        >
+          Salon AI
+        </p>
+      </div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '0 12px 24px' }}>
         <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>Operations</h2>
         {isMobile && (
