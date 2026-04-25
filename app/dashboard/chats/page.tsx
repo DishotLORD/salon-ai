@@ -109,7 +109,7 @@ function mapDbConversationToConversation(row: DbConversationRow): Conversation {
   }
 }
 
-const navItems = ['Dashboard', 'Chats', 'Calendar', 'Bookings', 'CRM', 'Settings']
+const navItems = ['Dashboard', 'Chats', 'Bookings', 'CRM', 'Settings']
 const navLinks: Record<string, string> = {
   Dashboard: '/dashboard',
   Chats: '/dashboard/chats',
@@ -515,33 +515,18 @@ export default function ChatsInboxPage() {
         minHeight: '100vh',
       }}
     >
-      <div
+      <p
         style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
+          fontSize: 11,
+          textTransform: 'uppercase',
+          letterSpacing: '0.2em',
+          color: '#ef4444',
           margin: '0 12px 6px',
+          fontWeight: 700,
         }}
       >
-        <img
-          src="/logo.png"
-          alt=""
-          width={40}
-          height={40}
-          style={{ display: 'block', width: 40, height: 40 }}
-        />
-        <p
-          style={{
-            fontSize: 11,
-            textTransform: 'uppercase',
-            letterSpacing: '0.24em',
-            color: '#ef4444',
-            margin: 0,
-          }}
-        >
-          Salon AI
-        </p>
-      </div>
+        Salon AI
+      </p>
       <div style={{ margin: '0 12px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>Operations</h2>
         {isMobile && (

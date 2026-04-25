@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react'
 
 import { DashboardLogoutButton } from '@/components/dashboard-logout-button'
 
-const navItems = ['Dashboard', 'Chats', 'Calendar', 'Bookings', 'CRM', 'Settings']
+const navItems = ['Dashboard', 'Chats', 'Bookings', 'CRM', 'Settings']
 const navLinks: Record<string, string> = {
   Dashboard: '/dashboard',
   Chats: '/dashboard/chats',
@@ -64,33 +64,17 @@ export function DashboardClient({ businessDisplayName, userEmail, activeChats, m
         minHeight: '100vh',
       }}
     >
-      <div
+      <p
         style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
+          fontSize: 11,
+          textTransform: 'uppercase',
+          letterSpacing: '0.2em',
+          color: '#ef4444',
           margin: '0 12px 6px',
         }}
       >
-        <img
-          src="/logo.png"
-          alt=""
-          width={40}
-          height={40}
-          style={{ display: 'block', width: 40, height: 40 }}
-        />
-        <p
-          style={{
-            fontSize: 11,
-            textTransform: 'uppercase',
-            letterSpacing: '0.24em',
-            color: '#ef4444',
-            margin: 0,
-          }}
-        >
-          Salon AI
-        </p>
-      </div>
+        SALON AI
+      </p>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '0 12px 24px' }}>
         <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>Operations</h2>
         {isMobile && (
@@ -293,18 +277,79 @@ export function DashboardClient({ businessDisplayName, userEmail, activeChats, m
             <div
               style={{
                 borderRadius: 14,
-                background:
-                  'radial-gradient(circle at 20% 20%, rgba(248, 113, 113, 0.35), rgba(37, 99, 235, 0.2) 50%, rgba(15, 23, 42, 0.98) 100%)',
+                background: 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #4c0519 100%)',
                 minHeight: 220,
                 position: 'relative',
                 overflow: 'hidden',
-                border: '1px solid #dbeafe',
+                border: '1px solid rgba(148, 163, 184, 0.32)',
               }}
             >
-              <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center' }}>
-                <div style={{ textAlign: 'center', color: '#fff' }}>
-                  <p style={{ margin: 0, fontSize: 66, lineHeight: 1 }}>🤖</p>
-                  <p style={{ margin: '8px 0 0', fontSize: 13, opacity: 0.86 }}>AI Concierge Image Placeholder</p>
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  backgroundImage:
+                    'linear-gradient(rgba(255,255,255,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.06) 1px, transparent 1px)',
+                  backgroundSize: '28px 28px',
+                  opacity: 0.22,
+                }}
+              />
+              <div
+                style={{
+                  position: 'absolute',
+                  width: 144,
+                  height: 144,
+                  borderRadius: 999,
+                  background: 'radial-gradient(circle, rgba(248,113,113,0.45) 0%, rgba(248,113,113,0) 70%)',
+                  filter: 'blur(6px)',
+                  top: -28,
+                  right: -18,
+                }}
+              />
+              <div
+                style={{
+                  position: 'absolute',
+                  width: 164,
+                  height: 164,
+                  borderRadius: 999,
+                  background: 'radial-gradient(circle, rgba(99,102,241,0.32) 0%, rgba(99,102,241,0) 72%)',
+                  filter: 'blur(10px)',
+                  bottom: -44,
+                  left: -30,
+                }}
+              />
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  padding: 20,
+                  display: 'flex',
+                  alignItems: 'flex-end',
+                }}
+              >
+                <div
+                  style={{
+                    borderRadius: 12,
+                    padding: '12px 14px',
+                    border: '1px solid rgba(255,255,255,0.18)',
+                    background: 'rgba(15, 23, 42, 0.45)',
+                    backdropFilter: 'blur(3px)',
+                    color: '#fff',
+                  }}
+                >
+                  <p style={{ margin: 0, fontSize: 18, fontWeight: 700, letterSpacing: '-0.01em' }}>AI Agent Active</p>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, color: '#d1fae5', fontSize: 12 }}>
+                    <span
+                      style={{
+                        width: 9,
+                        height: 9,
+                        borderRadius: 999,
+                        background: '#22c55e',
+                        boxShadow: '0 0 0 6px rgba(34, 197, 94, 0.18)',
+                      }}
+                    />
+                    Live monitoring enabled
+                  </div>
                 </div>
               </div>
             </div>
@@ -456,7 +501,7 @@ export function DashboardClient({ businessDisplayName, userEmail, activeChats, m
             <article
               style={{
                 borderRadius: 14,
-                background: 'linear-gradient(165deg, #1e3a8a, #172554)',
+                background: 'linear-gradient(165deg, #1e3a8a 0%, #172554 65%, #0b173d 100%)',
                 color: '#dbeafe',
                 padding: 18,
                 display: 'flex',
@@ -466,23 +511,22 @@ export function DashboardClient({ businessDisplayName, userEmail, activeChats, m
               }}
             >
               <div>
-                <p style={{ margin: 0, fontSize: 13, opacity: 0.9 }}>Agent Model</p>
-                <p style={{ margin: '8px 0 0', fontSize: 28, fontWeight: 700 }}>gpt-5.4-mini</p>
-                <p style={{ margin: '10px 0 0', fontSize: 14, color: '#bfdbfe' }}>
-                  Optimized for booking support and lead qualification.
-                </p>
+                <p style={{ margin: 0, fontSize: 20, fontWeight: 700, color: '#eff6ff', letterSpacing: '-0.01em' }}>AI Agent</p>
+                <p style={{ margin: '8px 0 0', fontSize: 13, color: '#86efac', fontWeight: 600 }}>● Online</p>
               </div>
-              <div style={{ marginTop: 20 }}>
+              <div style={{ marginTop: 16, display: 'grid', gap: 8 }}>
                 <div
                   style={{
                     background: 'rgba(255, 255, 255, 0.1)',
                     borderRadius: 10,
                     padding: '10px 12px',
-                    marginBottom: 8,
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
                   }}
                 >
-                  <p style={{ margin: 0, fontSize: 12, color: '#bfdbfe' }}>Average Latency</p>
-                  <p style={{ margin: '4px 0 0', fontWeight: 700, fontSize: 18 }}>620 ms</p>
+                  <span style={{ fontSize: 12, color: '#bfdbfe' }}>Messages today</span>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: '#eff6ff' }}>{messageCount}</span>
                 </div>
                 <div
                   style={{
@@ -494,8 +538,21 @@ export function DashboardClient({ businessDisplayName, userEmail, activeChats, m
                     alignItems: 'center',
                   }}
                 >
-                  <span style={{ fontSize: 12, color: '#bfdbfe' }}>Throughput</span>
-                  <span style={{ fontSize: 13, fontWeight: 600 }}>46 req/min</span>
+                  <span style={{ fontSize: 12, color: '#bfdbfe' }}>Response time</span>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: '#eff6ff' }}>&lt; 1s</span>
+                </div>
+                <div
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.1)',
+                    borderRadius: 10,
+                    padding: '10px 12px',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                  }}
+                >
+                  <span style={{ fontSize: 12, color: '#bfdbfe' }}>Conversations handled</span>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: '#eff6ff' }}>{activeChats}</span>
                 </div>
               </div>
             </article>
