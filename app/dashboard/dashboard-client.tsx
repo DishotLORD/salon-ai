@@ -71,9 +71,10 @@ export function DashboardClient({ businessDisplayName, userEmail, activeChats, m
           letterSpacing: '0.2em',
           color: '#ef4444',
           margin: '0 12px 6px',
+          fontWeight: 700,
         }}
       >
-        SALON AI
+        Salon AI
       </p>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '0 12px 24px' }}>
         <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>Operations</h2>
