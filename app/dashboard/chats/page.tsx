@@ -512,7 +512,7 @@ export default function ChatsInboxPage() {
         padding: '24px 14px 20px',
         display: 'flex',
         flexDirection: 'column',
-        height: '100%',
+        height: isMobile ? '100vh' : '100%',
       }}
     >
       <p
