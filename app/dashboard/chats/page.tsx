@@ -512,7 +512,8 @@ export default function ChatsInboxPage() {
         padding: '24px 14px 20px',
         display: 'flex',
         flexDirection: 'column',
-        minHeight: '100vh',
+        height: '100vh',
+        overflow: 'hidden',
       }}
     >
       <p
@@ -598,384 +599,335 @@ export default function ChatsInboxPage() {
   return (
     <div
       style={{
-        minHeight: '100vh',
+        display: 'flex',
+        height: '100vh',
+        overflow: 'hidden',
         background: '#f3f4f6',
         color: '#111827',
         fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }}
     >
-      <div style={{ display: 'flex', minHeight: '100vh' }}>
-        {!isMobile && sidebar}
-        {isMobile && isDrawerOpen && (
+      {!isMobile && sidebar}
+      {isMobile && isDrawerOpen && (
+        <div
+          role="presentation"
+          onClick={() => setIsDrawerOpen(false)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(17, 24, 39, 0.45)',
+            zIndex: 40,
+          }}
+        >
           <div
             role="presentation"
-            onClick={() => setIsDrawerOpen(false)}
-            style={{
-              position: 'fixed',
-              inset: 0,
-              background: 'rgba(17, 24, 39, 0.45)',
-              zIndex: 40,
-            }}
+            onClick={(e) => e.stopPropagation()}
+            style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 258, boxShadow: '0 12px 24px rgba(0, 0, 0, 0.2)' }}
           >
-            <div
-              role="presentation"
-              onClick={(e) => e.stopPropagation()}
-              style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 258, boxShadow: '0 12px 24px rgba(0, 0, 0, 0.2)' }}
-            >
-              {sidebar}
-            </div>
+            {sidebar}
           </div>
-        )}
+        </div>
+      )}
 
-        <main style={{ flex: 1, padding: isMobile ? (selectedConversation ? 0 : 14) : 24 }}>
-          {isMobile && !selectedConversation && (
-            <div style={{ marginBottom: 12 }}>
-              <button
-                type="button"
-                aria-label="Open menu"
-                onClick={() => setIsDrawerOpen(true)}
-                style={{
-                  border: '1px solid #e5e7eb',
-                  borderRadius: 10,
-                  background: '#fff',
-                  color: '#374151',
-                  width: 40,
-                  height: 40,
-                  fontSize: 23,
-                  lineHeight: 1,
-                  cursor: 'pointer',
-                }}
-              >
-                ☰
-              </button>
-            </div>
-          )}
-          <div
+      <div style={{ flex: 1, display: 'flex', height: '100vh', overflow: 'hidden' }}>
+        {isMobile ? null : (
+          <section
             style={{
-              display: 'grid',
-              gridTemplateColumns: isMobile ? '1fr' : '360px minmax(0, 1fr)',
-              gap: 14,
-              height: isMobile ? (selectedConversation ? '100vh' : 'calc(100vh - 66px)') : 'calc(100vh - 48px)',
+              width: 300,
+              height: '100vh',
+              overflow: 'hidden',
+              display: 'flex',
+              flexDirection: 'column',
+              borderRight: '1px solid #e5e7eb',
+              background: '#ffffff',
+              flexShrink: 0,
             }}
           >
-            {(!isMobile || !selectedConversation) && (
-            <section
-              style={{
-                background: '#ffffff',
-                border: isMobile ? 'none' : '1px solid #e5e7eb',
-                borderRadius: isMobile ? 0 : 14,
-                overflow: 'hidden',
-                display: 'flex',
-                flexDirection: 'column',
-                minHeight: '100vh',
-              }}
-            >
-              <header style={{ padding: '16px 16px 12px', borderBottom: '1px solid #f3f4f6' }}>
-                <h1 style={{ margin: 0, fontSize: 18 }}>Chat Inbox</h1>
-                <p style={{ margin: '6px 0 0', color: '#6b7280', fontSize: 13 }}>
-                  {conversationList.length} active conversations
+            <header style={{ padding: 20, flexShrink: 0, borderBottom: '1px solid #f3f4f6' }}>
+              <h1 style={{ margin: 0, fontSize: 18 }}>Chat Inbox</h1>
+              <p style={{ margin: '6px 0 0', color: '#6b7280', fontSize: 13 }}>{conversationList.length} active conversations</p>
+            </header>
+            <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
+              {inboxLoaded && !inboxFetchError && conversationList.length === 0 ? (
+                <p style={{ margin: '24px 12px', color: '#6b7280', fontSize: 14, textAlign: 'center', lineHeight: 1.5 }}>
+                  No conversations yet
                 </p>
-              </header>
-
-              <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
-                {inboxLoaded && !inboxFetchError && conversationList.length === 0 ? (
-                  <p
+              ) : null}
+              {conversationList.map((conversation) => {
+                const isSelected = conversation.id === selectedId
+                const badge = getStatusStyle(conversation.status)
+                return (
+                  <button
+                    key={conversation.id}
+                    type="button"
+                    onClick={() => setSelectedId(conversation.id)}
                     style={{
-                      margin: '24px 12px',
-                      color: '#6b7280',
-                      fontSize: 14,
-                      textAlign: 'center',
-                      lineHeight: 1.5,
+                      width: '100%',
+                      textAlign: 'left',
+                      border: `1px solid ${isSelected ? '#fecaca' : '#f3f4f6'}`,
+                      background: isSelected ? '#fef2f2' : '#ffffff',
+                      borderRadius: 12,
+                      padding: '12px 12px',
+                      marginBottom: 8,
+                      cursor: 'pointer',
                     }}
                   >
-                    No conversations yet
-                  </p>
-                ) : null}
-                {conversationList.map((conversation) => {
-                  const isSelected = conversation.id === selectedId
-                  const badge = getStatusStyle(conversation.status)
-                  return (
-                    <button
-                      key={conversation.id}
-                      type="button"
-                      onClick={() => setSelectedId(conversation.id)}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <p style={{ margin: 0, fontWeight: 600, color: '#111827', fontSize: 14 }}>{conversation.customerName}</p>
+                      <p style={{ margin: 0, color: '#9ca3af', fontSize: 12 }}>{conversation.time}</p>
+                    </div>
+                    <p
                       style={{
-                        width: '100%',
-                        textAlign: 'left',
-                        border: `1px solid ${isSelected ? '#fecaca' : '#f3f4f6'}`,
-                        background: isSelected ? '#fef2f2' : '#ffffff',
-                        borderRadius: 12,
-                        padding: '12px 12px',
-                        marginBottom: 8,
-                        cursor: 'pointer',
+                        margin: '6px 0 9px',
+                        color: '#6b7280',
+                        fontSize: 13,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
                       }}
                     >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <p style={{ margin: 0, fontWeight: 600, color: '#111827', fontSize: 14 }}>
-                          {conversation.customerName}
-                        </p>
-                        <p style={{ margin: 0, color: '#9ca3af', fontSize: 12 }}>{conversation.time}</p>
-                      </div>
-                      <p
-                        style={{
-                          margin: '6px 0 9px',
-                          color: '#6b7280',
-                          fontSize: 13,
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {conversation.preview}
-                      </p>
-                      <span
-                        style={{
-                          display: 'inline-block',
-                          padding: '4px 8px',
-                          borderRadius: 999,
-                          border: `1px solid ${badge.border}`,
-                          background: badge.background,
-                          color: badge.color,
-                          fontSize: 11,
-                          fontWeight: 600,
-                        }}
-                      >
-                        {conversation.status}
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
-            </section>
-            )}
-
-            {(!isMobile || selectedConversation) && (
-            <section
-              style={{
-                background: '#ffffff',
-                border: isMobile ? 'none' : '1px solid #e5e7eb',
-                borderRadius: isMobile ? 0 : 14,
-                display: 'flex',
-                flexDirection: 'column',
-                overflow: 'hidden',
-                height: isMobile ? '100vh' : 'auto',
-              }}
-            >
-              {selectedConversation ? (
-                <>
-                  <header
-                    style={{
-                      padding: '16px 18px',
-                      borderBottom: '1px solid #f3f4f6',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      {isMobile && (
-                        <button
-                          type="button"
-                          onClick={() => setSelectedId('')}
-                          style={{
-                            borderRadius: 8,
-                            border: '1px solid #d1d5db',
-                            background: '#fff',
-                            color: '#374151',
-                            fontWeight: 700,
-                            fontSize: 12,
-                            padding: '6px 10px',
-                            cursor: 'pointer',
-                          }}
-                        >
-                          ← Back
-                        </button>
-                      )}
-                      <div>
-                      <h2 style={{ margin: 0, fontSize: 18 }}>{selectedConversation.customerName}</h2>
-                      <p style={{ margin: '5px 0 0', color: '#6b7280', fontSize: 13 }}>
-                        AI assistant is handling this conversation
-                      </p>
-                      </div>
-                    </div>
+                      {conversation.preview}
+                    </p>
                     <span
                       style={{
-                        padding: '6px 10px',
+                        display: 'inline-block',
+                        padding: '4px 8px',
                         borderRadius: 999,
-                        border: '1px solid #d1fae5',
-                        background: '#ecfdf5',
-                        color: '#047857',
-                        fontSize: 12,
+                        border: `1px solid ${badge.border}`,
+                        background: badge.background,
+                        color: badge.color,
+                        fontSize: 11,
                         fontWeight: 600,
                       }}
                     >
-                      Session Active
+                      {conversation.status}
                     </span>
-                  </header>
+                  </button>
+                )
+              })}
+            </div>
+          </section>
+        )}
 
-                  <div
-                    ref={messagesScrollRef}
-                    style={{ flex: 1, overflowY: 'auto', padding: '16px 16px 8px', background: '#f9fafb' }}
-                  >
-                    {selectedConversation.messages.map((message) => {
-                      const isAI = message.sender === 'ai'
-                      return (
-                        <div
-                          key={message.id}
-                          style={{
-                            display: 'flex',
-                            justifyContent: isAI ? 'flex-end' : 'flex-start',
-                            marginBottom: 12,
-                          }}
-                        >
-                          <div
-                            style={{
-                              maxWidth: '72%',
-                              borderRadius: 12,
-                              padding: '10px 12px',
-                              background: isAI ? '#dc2626' : '#ffffff',
-                              border: isAI ? '1px solid #b91c1c' : '1px solid #e5e7eb',
-                              color: isAI ? '#fff' : '#1f2937',
-                            }}
-                          >
-                            <p style={{ margin: 0, fontSize: 14, lineHeight: 1.4 }}>{message.text}</p>
-                            <p
-                              style={{
-                                margin: '7px 0 0',
-                                fontSize: 11,
-                                opacity: isAI ? 0.88 : 0.5,
-                                textAlign: 'right',
-                              }}
-                            >
-                              {message.sender === 'ai' ? 'AI' : 'Customer'} - {message.time}
-                            </p>
-                          </div>
-                        </div>
-                      )
-                    })}
-                    {isLoading && sendingConversationId === selectedConversation.id && (
-                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-                        <div
-                          style={{
-                            maxWidth: '72%',
-                            borderRadius: 12,
-                            padding: '10px 12px',
-                            background: '#fee2e2',
-                            border: '1px solid #fecaca',
-                            color: '#991b1b',
-                          }}
-                        >
-                          <p style={{ margin: 0, fontSize: 14, lineHeight: 1.4 }}>AI is typing...</p>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  <footer
-                    style={{
-                      borderTop: '1px solid #f3f4f6',
-                      padding: 14,
-                      background: '#ffffff',
-                      position: isMobile ? 'sticky' : 'static',
-                      bottom: isMobile ? 0 : undefined,
-                    }}
-                  >
-                    <div
+        <section
+          style={{
+            flex: 1,
+            height: '100vh',
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column',
+            background: '#ffffff',
+          }}
+        >
+          {selectedConversation ? (
+            <>
+              <header
+                style={{
+                  padding: 16,
+                  flexShrink: 0,
+                  borderBottom: '1px solid #e5e7eb',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  gap: 10,
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  {isMobile && (
+                    <button
+                      type="button"
+                      onClick={() => setIsDrawerOpen(true)}
                       style={{
-                        marginBottom: 8,
-                        borderRadius: 9,
-                        border: `1px solid ${isTakenOver ? '#fed7aa' : '#d1fae5'}`,
-                        background: isTakenOver ? '#fff7ed' : '#ecfdf5',
-                        color: isTakenOver ? '#9a3412' : '#065f46',
-                        fontSize: 12,
+                        borderRadius: 8,
+                        border: '1px solid #d1d5db',
+                        background: '#fff',
+                        color: '#374151',
                         fontWeight: 700,
-                        padding: '8px 10px',
+                        fontSize: 12,
+                        padding: '6px 10px',
+                        cursor: 'pointer',
                       }}
                     >
-                      {isTakenOver ? 'You are now handling this conversation' : 'AI is handling this conversation'}
-                    </div>
-                    <div style={{ display: 'flex', gap: 10 }}>
-                      <input
-                        type="text"
-                        value={draft}
-                        onChange={(event) => setDraft(event.target.value)}
-                        disabled={!isTakenOver || isLoading}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter' && !event.shiftKey) {
-                            event.preventDefault()
-                            void handleSend()
-                          }
-                        }}
-                        placeholder={
-                          isTakenOver
-                            ? 'Write a message...'
-                            : 'AI is handling this conversation - click Take Over to respond manually'
-                        }
+                      Menu
+                    </button>
+                  )}
+                  <div>
+                    <h2 style={{ margin: 0, fontSize: 18 }}>{selectedConversation.customerName}</h2>
+                    <p style={{ margin: '5px 0 0', color: '#6b7280', fontSize: 13 }}>AI assistant is handling this conversation</p>
+                  </div>
+                </div>
+                <span
+                  style={{
+                    padding: '6px 10px',
+                    borderRadius: 999,
+                    border: '1px solid #d1fae5',
+                    background: '#ecfdf5',
+                    color: '#047857',
+                    fontSize: 12,
+                    fontWeight: 600,
+                  }}
+                >
+                  Session Active
+                </span>
+              </header>
+
+              <div ref={messagesScrollRef} style={{ flex: 1, overflowY: 'auto', padding: 20, background: '#f9fafb' }}>
+                {selectedConversation.messages.map((message) => {
+                  const isAI = message.sender === 'ai'
+                  return (
+                    <div
+                      key={message.id}
+                      style={{
+                        display: 'flex',
+                        justifyContent: isAI ? 'flex-end' : 'flex-start',
+                        marginBottom: 12,
+                      }}
+                    >
+                      <div
                         style={{
-                          flex: 1,
-                          border: '1px solid #d1d5db',
-                          borderRadius: 10,
+                          maxWidth: '72%',
+                          borderRadius: 12,
                           padding: '10px 12px',
-                          fontSize: 14,
-                          outline: 'none',
-                          background: !isTakenOver ? '#f9fafb' : '#ffffff',
-                          color: !isTakenOver ? '#6b7280' : '#111827',
-                        }}
-                      />
-                      <button
-                        type="button"
-                        onClick={handleSend}
-                        disabled={!isTakenOver || isLoading || !draft.trim()}
-                        style={{
-                          border: 'none',
-                          borderRadius: 10,
-                          background: !isTakenOver || isLoading || !draft.trim() ? '#fca5a5' : '#dc2626',
-                          color: '#fff',
-                          fontWeight: 600,
-                          fontSize: isMobile ? 13 : 14,
-                          padding: isMobile ? '8px 12px' : '10px 14px',
-                          cursor: !isTakenOver || isLoading || !draft.trim() ? 'not-allowed' : 'pointer',
+                          background: isAI ? '#dc2626' : '#ffffff',
+                          border: isAI ? '1px solid #b91c1c' : '1px solid #e5e7eb',
+                          color: isAI ? '#fff' : '#1f2937',
                         }}
                       >
-                        {isLoading ? 'Sending...' : 'Send'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleTakeOverToggle()}
-                        style={{
-                          borderRadius: 10,
-                          border: `1px solid ${isTakenOver ? '#fdba74' : '#d1d5db'}`,
-                          background: isTakenOver ? '#fb923c' : '#ffffff',
-                          color: isTakenOver ? '#ffffff' : '#374151',
-                          fontWeight: 600,
-                          fontSize: isMobile ? 13 : 14,
-                          padding: isMobile ? '8px 12px' : '10px 14px',
-                          cursor: 'pointer',
-                        }}
-                      >
-                        {isTakenOver ? 'AI Mode' : 'Take Over'}
-                      </button>
+                        <p style={{ margin: 0, fontSize: 14, lineHeight: 1.4 }}>{message.text}</p>
+                        <p
+                          style={{
+                            margin: '7px 0 0',
+                            fontSize: 11,
+                            opacity: isAI ? 0.88 : 0.5,
+                            textAlign: 'right',
+                          }}
+                        >
+                          {message.sender === 'ai' ? 'AI' : 'Customer'} - {message.time}
+                        </p>
+                      </div>
                     </div>
-                  </footer>
-                </>
-              ) : (
+                  )
+                })}
+                {isLoading && sendingConversationId === selectedConversation.id && (
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+                    <div
+                      style={{
+                        maxWidth: '72%',
+                        borderRadius: 12,
+                        padding: '10px 12px',
+                        background: '#fee2e2',
+                        border: '1px solid #fecaca',
+                        color: '#991b1b',
+                      }}
+                    >
+                      <p style={{ margin: 0, fontSize: 14, lineHeight: 1.4 }}>AI is typing...</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <footer
+                style={{
+                  flexShrink: 0,
+                  padding: 16,
+                  borderTop: '1px solid #e5e7eb',
+                  background: '#ffffff',
+                }}
+              >
                 <div
                   style={{
-                    flex: 1,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    padding: 32,
-                    color: '#9ca3af',
-                    fontSize: 14,
-                    minHeight: 200,
+                    marginBottom: 8,
+                    borderRadius: 9,
+                    border: `1px solid ${isTakenOver ? '#fed7aa' : '#d1fae5'}`,
+                    background: isTakenOver ? '#fff7ed' : '#ecfdf5',
+                    color: isTakenOver ? '#9a3412' : '#065f46',
+                    fontSize: 12,
+                    fontWeight: 700,
+                    padding: '8px 10px',
                   }}
-                />
-              )}
-            </section>
-            )}
-          </div>
-        </main>
+                >
+                  {isTakenOver ? 'You are now handling this conversation' : 'AI is handling this conversation'}
+                </div>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <input
+                    type="text"
+                    value={draft}
+                    onChange={(event) => setDraft(event.target.value)}
+                    disabled={!isTakenOver || isLoading}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' && !event.shiftKey) {
+                        event.preventDefault()
+                        void handleSend()
+                      }
+                    }}
+                    placeholder={
+                      isTakenOver
+                        ? 'Write a message...'
+                        : 'AI is handling this conversation - click Take Over to respond manually'
+                    }
+                    style={{
+                      flex: 1,
+                      border: '1px solid #d1d5db',
+                      borderRadius: 10,
+                      padding: '10px 12px',
+                      fontSize: 14,
+                      outline: 'none',
+                      background: !isTakenOver ? '#f9fafb' : '#ffffff',
+                      color: !isTakenOver ? '#6b7280' : '#111827',
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSend}
+                    disabled={!isTakenOver || isLoading || !draft.trim()}
+                    style={{
+                      border: 'none',
+                      borderRadius: 10,
+                      background: !isTakenOver || isLoading || !draft.trim() ? '#fca5a5' : '#dc2626',
+                      color: '#fff',
+                      fontWeight: 600,
+                      fontSize: 14,
+                      padding: '10px 14px',
+                      cursor: !isTakenOver || isLoading || !draft.trim() ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    {isLoading ? 'Sending...' : 'Send'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleTakeOverToggle()}
+                    style={{
+                      borderRadius: 10,
+                      border: `1px solid ${isTakenOver ? '#fdba74' : '#d1d5db'}`,
+                      background: isTakenOver ? '#fb923c' : '#ffffff',
+                      color: isTakenOver ? '#ffffff' : '#374151',
+                      fontWeight: 600,
+                      fontSize: 14,
+                      padding: '10px 14px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {isTakenOver ? 'AI Mode' : 'Take Over'}
+                  </button>
+                </div>
+              </footer>
+            </>
+          ) : (
+            <div
+              style={{
+                flex: 1,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: 32,
+                color: '#9ca3af',
+                fontSize: 14,
+              }}
+            >
+              Select a conversation to start
+            </div>
+          )}
+        </section>
       </div>
     </div>
   )
