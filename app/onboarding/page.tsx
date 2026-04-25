@@ -182,22 +182,7 @@ export default function OnboardingPage() {
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 22 }}>
-          <div
-            style={{
-              width: 36,
-              height: 36,
-              borderRadius: 8,
-              background: '#dc2626',
-              color: '#fff',
-              display: 'grid',
-              placeItems: 'center',
-              fontWeight: 700,
-              fontSize: 13,
-              letterSpacing: '0.03em',
-            }}
-          >
-            SA
-          </div>
+          <img src="/logo.png" alt="Salon AI" width={52} height={52} style={{ display: 'block' }} />
           <div style={{ fontSize: 18, fontWeight: 700, color: '#111827' }}>Salon AI</div>
         </div>
 

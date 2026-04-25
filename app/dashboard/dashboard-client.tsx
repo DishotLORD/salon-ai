@@ -77,7 +77,7 @@ export function DashboardClient({ businessDisplayName, userEmail, activeChats, m
           alt=""
           width={40}
           height={40}
-          style={{ borderRadius: 10, flexShrink: 0, display: 'block' }}
+          style={{ display: 'block', width: 40, height: 40 }}
         />
         <p
           style={{
