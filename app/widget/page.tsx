@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, useEffect, useState } from 'react'
+import { Suspense, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 
 import { supabase } from '@/lib/supabase'
@@ -29,10 +29,58 @@ function WidgetPageInner() {
   const [draft, setDraft] = useState('')
   const [messages, setMessages] = useState<WidgetMessage[]>(initialMessages)
   const [conversationId, setConversationId] = useState<string | null>(null)
+  const messagesContainerRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     setConversationId(null)
   }, [businessId])
+
+  useEffect(() => {
+    if (!conversationId) {
+      return
+    }
+
+    const channel = supabase
+      .channel(`widget-messages:${conversationId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+          filter: `conversation_id=eq.${conversationId}`,
+        },
+        (payload) => {
+          const row = payload.new as { id?: string; role?: string; content?: string | null }
+          if (typeof row.id !== 'string' || row.role !== 'assistant') {
+            return
+          }
+          const incomingId = row.id
+          setMessages((prev) => {
+            if (prev.some((message) => message.id === incomingId)) {
+              return prev
+            }
+            return [...prev, { id: incomingId, sender: 'ai', text: row.content ?? '' }]
+          })
+        }
+      )
+      .subscribe()
+
+    return () => {
+      void supabase.removeChannel(channel)
+    }
+  }, [conversationId])
+
+  useEffect(() => {
+    if (!isOpen) {
+      return
+    }
+    const el = messagesContainerRef.current
+    if (!el) {
+      return
+    }
+    el.scrollTop = el.scrollHeight
+  }, [messages.length, isOpen])
 
   useEffect(() => {
     if (!businessId) {
@@ -111,14 +159,16 @@ function WidgetPageInner() {
         setConversationId(data.conversation_id)
       }
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `ai-${Date.now()}`,
-          sender: 'ai',
-          text: aiText,
-        },
-      ])
+      if (!businessId || !data.conversation_id) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `ai-${Date.now()}`,
+            sender: 'ai',
+            text: aiText,
+          },
+        ])
+      }
     } catch {
       setMessages((prev) => [
         ...prev,
@@ -208,7 +258,7 @@ function WidgetPageInner() {
               </button>
             </header>
 
-            <div style={{ flex: 1, padding: '14px 12px', overflowY: 'auto', background: '#f8fafc' }}>
+            <div ref={messagesContainerRef} style={{ flex: 1, padding: '14px 12px', overflowY: 'auto', background: '#f8fafc' }}>
               {messages.map((message) => {
                 const isCustomer = message.sender === 'customer'
                 return (
