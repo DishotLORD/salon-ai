@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { DashboardLogoutButton } from '@/components/dashboard-logout-button'
 import { supabase } from '@/lib/supabase'
 
-type ConversationStatus = 'Live' | 'Waiting' | 'Resolved'
+type ConversationStatus = 'Live' | 'Waiting' | 'Resolved' | 'Human'
 type Sender = 'customer' | 'ai'
 
 type Message = {
@@ -42,11 +42,17 @@ type DbConversationRow = {
 
 function normalizeStatus(raw: string | null | undefined): ConversationStatus {
   const key = (raw ?? 'Live').toLowerCase()
+  if (key === 'human') {
+    return 'Human'
+  }
   if (key === 'waiting') {
     return 'Waiting'
   }
   if (key === 'resolved') {
     return 'Resolved'
+  }
+  if (key === 'active' || key === 'live' || key === '') {
+    return 'Live'
   }
   return 'Live'
 }
@@ -116,6 +122,9 @@ const navLinks: Record<string, string> = {
 function getStatusStyle(status: ConversationStatus) {
   if (status === 'Live') {
     return { background: '#dcfce7', color: '#166534', border: '#bbf7d0' }
+  }
+  if (status === 'Human') {
+    return { background: '#ffedd5', color: '#9a3412', border: '#fed7aa' }
   }
   if (status === 'Waiting') {
     return { background: '#fef3c7', color: '#92400e', border: '#fde68a' }
@@ -212,6 +221,14 @@ export default function ChatsInboxPage() {
   }, [conversationList, selectedId])
 
   useEffect(() => {
+    if (!selectedConversation) {
+      setIsTakenOver(false)
+      return
+    }
+    setIsTakenOver(selectedConversation.status === 'Human')
+  }, [selectedConversation?.id, selectedConversation?.status])
+
+  useEffect(() => {
     if (!selectedId) {
       return
     }
@@ -268,6 +285,23 @@ export default function ChatsInboxPage() {
     }
     container.scrollTop = container.scrollHeight
   }, [selectedConversation?.id, selectedConversation?.messages.length])
+
+  const handleTakeOverToggle = async () => {
+    if (!selectedId) {
+      return
+    }
+    const next = !isTakenOver
+    const status = next ? 'human' : 'active'
+    const { error } = await supabase.from('conversations').update({ status }).eq('id', selectedId)
+    if (error) {
+      console.error(error)
+      return
+    }
+    setIsTakenOver(next)
+    setConversationList((prev) =>
+      prev.map((c) => (c.id === selectedId ? { ...c, status: next ? 'Human' : 'Live' } : c))
+    )
+  }
 
   const handleSend = async () => {
     if (!selectedConversation || !draft.trim() || isLoading) {
@@ -900,7 +934,7 @@ export default function ChatsInboxPage() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => setIsTakenOver((prev) => !prev)}
+                        onClick={() => void handleTakeOverToggle()}
                         style={{
                           borderRadius: 10,
                           border: `1px solid ${isTakenOver ? '#fdba74' : '#d1d5db'}`,

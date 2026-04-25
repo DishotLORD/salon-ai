@@ -308,7 +308,7 @@ export async function POST(request: Request) {
     if (conversation_id) {
       const { data: existing, error: convErr } = await supabaseAdmin
         .from('conversations')
-        .select('id, customer_id, business_id')
+        .select('id, customer_id, business_id, status')
         .eq('id', conversation_id)
         .eq('business_id', business_id)
         .maybeSingle()
@@ -328,7 +328,7 @@ export async function POST(request: Request) {
           business_id,
           customer_id: null,
           customer_name: 'Website visitor',
-          status: 'Live',
+          status: 'active',
         })
         .select('id')
         .maybeSingle()
@@ -392,6 +392,25 @@ export async function POST(request: Request) {
 
     if (userMsgErr) {
       return NextResponse.json({ error: userMsgErr.message }, { status: 500 })
+    }
+
+    const { data: convForAi } = await supabaseAdmin
+      .from('conversations')
+      .select('status')
+      .eq('id', resolvedConversationId)
+      .eq('business_id', business_id)
+      .maybeSingle()
+
+    const statusLower = (convForAi?.status ?? '').toString().trim().toLowerCase()
+    if (statusLower === 'human') {
+      return NextResponse.json({
+        message: null,
+        skipped: true,
+        reason: 'human_takeover',
+        conversation_id: resolvedConversationId,
+        customer_id: resolvedCustomerId,
+        booking_created: false,
+      })
     }
 
     const completion = await openai.chat.completions.create({

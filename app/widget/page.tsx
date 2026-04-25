@@ -148,17 +148,24 @@ function WidgetPageInner() {
       })
 
       const data = (await response.json()) as {
-        message?: string
+        message?: string | null
         conversation_id?: string
+        skipped?: boolean
+        reason?: string
       }
-      const aiText =
-        response.ok && typeof data.message === 'string'
-          ? data.message
-          : 'Sorry, something went wrong. Please try again.'
 
       if (response.ok && typeof data.conversation_id === 'string' && data.conversation_id) {
         setConversationId(data.conversation_id)
       }
+
+      if (data.skipped) {
+        return
+      }
+
+      const aiText =
+        response.ok && typeof data.message === 'string'
+          ? data.message
+          : 'Sorry, something went wrong. Please try again.'
 
       if (!businessId || !data.conversation_id) {
         setMessages((prev) => [
