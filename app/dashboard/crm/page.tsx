@@ -246,7 +246,7 @@ export default function CrmPage() {
         padding: '24px 14px 20px',
         display: 'flex',
         flexDirection: 'column',
-        height: '100%',
+        minHeight: '100vh',
       }}
     >
       <p

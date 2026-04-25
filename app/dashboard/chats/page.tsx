@@ -512,7 +512,7 @@ export default function ChatsInboxPage() {
         padding: '24px 14px 20px',
         display: 'flex',
         flexDirection: 'column',
-        height: isMobile ? '100vh' : '100%',
+        minHeight: '100vh',
       }}
     >
       <p
@@ -666,7 +666,7 @@ export default function ChatsInboxPage() {
                 overflow: 'hidden',
                 display: 'flex',
                 flexDirection: 'column',
-                height: '100%',
+                minHeight: '100vh',
               }}
             >
               <header style={{ padding: '16px 16px 12px', borderBottom: '1px solid #f3f4f6' }}>
