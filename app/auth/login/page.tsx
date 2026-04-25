@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 
@@ -8,7 +8,7 @@ import { supabase } from '@/lib/supabase'
 
 type AuthMode = 'login' | 'register'
 
-export default function LoginPage() {
+function LoginContent() {
   const searchParams = useSearchParams()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -317,5 +317,13 @@ export default function LoginPage() {
         </div>
       </section>
     </div>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div style={{ minHeight: '100vh', background: '#0f172a' }} />}>
+      <LoginContent />
+    </Suspense>
   )
 }
