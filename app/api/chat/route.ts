@@ -1,6 +1,7 @@
 import OpenAI from 'openai'
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions'
 import { NextResponse } from 'next/server'
+import { Resend } from 'resend'
 
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
@@ -218,6 +219,36 @@ async function tryCreateAppointmentFromChat(params: {
   return true
 }
 
+/** Fire-and-forget; never throws. Uses RESEND_FROM_EMAIL or notifications@salon-ai.app (use onboarding@resend.dev when testing without a verified domain). */
+function queueNewConversationOwnerEmail(ownerEmail: string | null | undefined, businessName: string | null | undefined) {
+  const to = typeof ownerEmail === 'string' ? ownerEmail.trim() : ''
+  if (!to) {
+    return
+  }
+
+  void (async () => {
+    const apiKey = process.env.RESEND_API_KEY
+    if (!apiKey) {
+      console.warn('[chat/email] RESEND_API_KEY not set; skipping new chat notification')
+      return
+    }
+    try {
+      const resend = new Resend(apiKey)
+      const from =
+        process.env.RESEND_FROM_EMAIL?.trim() ||
+        'notifications@salon-ai.app'
+      await resend.emails.send({
+        from,
+        to,
+        subject: `New customer started a chat - ${businessName ?? 'Your business'}`,
+        text: 'A new customer started chatting with your AI assistant. Check your inbox at salon-ai-eta.vercel.app/dashboard/chats',
+      })
+    } catch (err) {
+      console.error('[chat/email] Failed to send new conversation notification', err)
+    }
+  })()
+}
+
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as {
@@ -251,7 +282,7 @@ export async function POST(request: Request) {
 
     const { data: business, error: bizError } = await supabaseAdmin
       .from('businesses')
-      .select('id, name, system_prompt, agent_name')
+      .select('id, name, email, system_prompt, agent_name')
       .eq('id', business_id)
       .maybeSingle()
 
@@ -270,6 +301,7 @@ export async function POST(request: Request) {
 
     let resolvedConversationId: string
     let resolvedCustomerId: string | null = null
+    let isNewConversation = false
 
     if (conversation_id) {
       const { data: existing, error: convErr } = await supabaseAdmin
@@ -286,6 +318,7 @@ export async function POST(request: Request) {
       resolvedConversationId = existing.id
       resolvedCustomerId = existing.customer_id ?? null
     } else {
+      isNewConversation = true
       const { data: newConv, error: convInsErr } = await supabaseAdmin
         .from('conversations')
         .insert({
@@ -341,6 +374,10 @@ export async function POST(request: Request) {
       if (linkErr) {
         return NextResponse.json({ error: linkErr.message }, { status: 500 })
       }
+    }
+
+    if (isNewConversation && resolvedCustomerId) {
+      queueNewConversationOwnerEmail(business.email, business.name)
     }
 
     const { error: userMsgErr } = await supabaseAdmin.from('messages').insert({
