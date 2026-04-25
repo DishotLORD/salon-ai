@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { DashboardLogoutButton } from '@/components/dashboard-logout-button'
 import { supabase } from '@/lib/supabase'
@@ -134,6 +134,7 @@ export default function ChatsInboxPage() {
   const [isMobile, setIsMobile] = useState(false)
   const [isDrawerOpen, setIsDrawerOpen] = useState(false)
   const [isTakenOver, setIsTakenOver] = useState(false)
+  const messagesScrollRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -209,6 +210,64 @@ export default function ChatsInboxPage() {
     }
     return conversationList.find((conversation) => conversation.id === selectedId) ?? null
   }, [conversationList, selectedId])
+
+  useEffect(() => {
+    if (!selectedId) {
+      return
+    }
+
+    const channel = supabase
+      .channel(`messages:${selectedId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+          filter: `conversation_id=eq.${selectedId}`,
+        },
+        (payload) => {
+          const inserted = payload.new as DbMessageRow
+          if (!inserted?.id) {
+            return
+          }
+
+          const incoming = mapDbMessageToMessage(inserted)
+          setConversationList((prev) =>
+            prev.map((conversation) => {
+              if (conversation.id !== selectedId) {
+                return conversation
+              }
+              if (conversation.messages.some((m) => m.id === incoming.id)) {
+                return conversation
+              }
+              return {
+                ...conversation,
+                messages: [...conversation.messages, incoming],
+                preview: incoming.text,
+                time: formatRelativeTime(inserted.created_at),
+              }
+            })
+          )
+        }
+      )
+      .subscribe()
+
+    return () => {
+      void supabase.removeChannel(channel)
+    }
+  }, [selectedId])
+
+  useEffect(() => {
+    if (!selectedConversation) {
+      return
+    }
+    const container = messagesScrollRef.current
+    if (!container) {
+      return
+    }
+    container.scrollTop = container.scrollHeight
+  }, [selectedConversation?.id, selectedConversation?.messages.length])
 
   const handleSend = async () => {
     if (!selectedConversation || !draft.trim() || isLoading) {
@@ -713,7 +772,10 @@ export default function ChatsInboxPage() {
                     </span>
                   </header>
 
-                  <div style={{ flex: 1, overflowY: 'auto', padding: '16px 16px 8px', background: '#f9fafb' }}>
+                  <div
+                    ref={messagesScrollRef}
+                    style={{ flex: 1, overflowY: 'auto', padding: '16px 16px 8px', background: '#f9fafb' }}
+                  >
                     {selectedConversation.messages.map((message) => {
                       const isAI = message.sender === 'ai'
                       return (
