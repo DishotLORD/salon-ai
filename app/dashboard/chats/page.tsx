@@ -858,13 +858,18 @@ export default function ChatsInboxPage() {
                         type="text"
                         value={draft}
                         onChange={(event) => setDraft(event.target.value)}
+                        disabled={!isTakenOver || isLoading}
                         onKeyDown={(event) => {
                           if (event.key === 'Enter' && !event.shiftKey) {
                             event.preventDefault()
                             void handleSend()
                           }
                         }}
-                        placeholder="Write a message..."
+                        placeholder={
+                          isTakenOver
+                            ? 'Write a message...'
+                            : 'AI is handling this conversation - click Take Over to respond manually'
+                        }
                         style={{
                           flex: 1,
                           border: '1px solid #d1d5db',
@@ -872,21 +877,23 @@ export default function ChatsInboxPage() {
                           padding: '10px 12px',
                           fontSize: 14,
                           outline: 'none',
+                          background: !isTakenOver ? '#f9fafb' : '#ffffff',
+                          color: !isTakenOver ? '#6b7280' : '#111827',
                         }}
                       />
                       <button
                         type="button"
                         onClick={handleSend}
-                        disabled={isLoading || !draft.trim()}
+                        disabled={!isTakenOver || isLoading || !draft.trim()}
                         style={{
                           border: 'none',
                           borderRadius: 10,
-                          background: isLoading || !draft.trim() ? '#fca5a5' : '#dc2626',
+                          background: !isTakenOver || isLoading || !draft.trim() ? '#fca5a5' : '#dc2626',
                           color: '#fff',
                           fontWeight: 600,
                           fontSize: isMobile ? 13 : 14,
                           padding: isMobile ? '8px 12px' : '10px 14px',
-                          cursor: isLoading || !draft.trim() ? 'not-allowed' : 'pointer',
+                          cursor: !isTakenOver || isLoading || !draft.trim() ? 'not-allowed' : 'pointer',
                         }}
                       >
                         {isLoading ? 'Sending...' : 'Send'}
