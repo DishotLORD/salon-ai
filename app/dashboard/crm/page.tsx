@@ -1,8 +1,9 @@
 'use client'
 
-import Link from 'next/link'
+import { AnimatePresence, motion } from 'framer-motion'
 
-import { DashboardLogoutButton } from '@/components/dashboard-logout-button'
+import { DashboardOceanNav } from '@/components/dashboard-ocean-nav'
+import { slideInRight } from '@/lib/ocean-motion'
 import { supabase } from '@/lib/supabase'
 import { useEffect, useMemo, useState } from 'react'
 
@@ -20,16 +21,6 @@ type Customer = {
   joined: string
   preferredStaff: string
   visitHistory: { date: string; service: string; amount: number }[]
-}
-
-const navItems = ['Dashboard', 'Chats', 'Bookings', 'CRM', 'Settings']
-const navLinks: Record<string, string> = {
-  Dashboard: '/dashboard',
-  Chats: '/dashboard/chats',
-  Calendar: '/dashboard/bookings',
-  Bookings: '/dashboard/bookings',
-  CRM: '/dashboard/crm',
-  Settings: '/dashboard/settings',
 }
 
 function formatDisplayDate(value: string) {
@@ -105,15 +96,35 @@ function mapDbCustomerRow(row: Record<string, unknown>): Customer {
 function tagStyle(tag: CustomerTag) {
   switch (tag) {
     case 'VIP':
-      return { bg: '#fef3c7', border: '#fde68a', color: '#92400e' }
+      return {
+        bg: 'rgba(232, 220, 200, 0.2)',
+        border: 'rgba(232, 220, 200, 0.45)',
+        color: 'var(--ocean-sand)',
+      }
     case 'Regular':
-      return { bg: '#eff6ff', border: '#bfdbfe', color: '#1d4ed8' }
+      return {
+        bg: 'rgba(56, 189, 248, 0.1)',
+        border: 'var(--ocean-border-strong)',
+        color: 'var(--ocean-sky-bright)',
+      }
     case 'New':
-      return { bg: '#ecfdf5', border: '#bbf7d0', color: '#166534' }
+      return {
+        bg: 'rgba(74, 222, 128, 0.12)',
+        border: 'rgba(74, 222, 128, 0.35)',
+        color: 'var(--ocean-success)',
+      }
     case 'At Risk':
-      return { bg: '#fef2f2', border: '#fecaca', color: '#991b1b' }
+      return {
+        bg: 'rgba(248, 113, 113, 0.12)',
+        border: 'rgba(248, 113, 113, 0.35)',
+        color: 'var(--ocean-danger)',
+      }
     default:
-      return { bg: '#f3f4f6', border: '#e5e7eb', color: '#374151' }
+      return {
+        bg: 'var(--ocean-surface)',
+        border: 'var(--ocean-border)',
+        color: 'var(--ocean-text-muted)',
+      }
   }
 }
 
@@ -129,8 +140,6 @@ export default function CrmPage() {
   const [query, setQuery] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [notes, setNotes] = useState('')
-  const [isMobile, setIsMobile] = useState(false)
-  const [isDrawerOpen, setIsDrawerOpen] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -188,24 +197,13 @@ export default function CrmPage() {
   }, [])
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- clear draft notes when switching customer
     setNotes('')
   }, [selectedId])
 
   useEffect(() => {
-    function syncViewport() {
-      const mobile = window.innerWidth < 768
-      setIsMobile(mobile)
-      if (!mobile) {
-        setIsDrawerOpen(false)
-      }
-    }
-    syncViewport()
-    window.addEventListener('resize', syncViewport)
-    return () => window.removeEventListener('resize', syncViewport)
-  }, [])
-
-  useEffect(() => {
     if (selectedId && !customers.some((c) => c.id === selectedId)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- drop stale selection after data refresh
       setSelectedId(null)
     }
   }, [customers, selectedId])
@@ -237,119 +235,32 @@ export default function CrmPage() {
     return { total, newThisMonth, returning, avgSpend }
   }, [customers])
 
-  const sidebar = (
-    <aside
-      style={{
-        width: 258,
-        background: '#ffffff',
-        borderRight: '1px solid #e5e7eb',
-        padding: '24px 14px 20px',
-        display: 'flex',
-        flexDirection: 'column',
-        minHeight: '100vh',
-      }}
-    >
-      <p
-        style={{
-          fontSize: 11,
-          textTransform: 'uppercase',
-          letterSpacing: '0.2em',
-          color: '#ef4444',
-          margin: '0 12px 6px',
-          fontWeight: 700,
-        }}
-      >
-        Salon AI
-      </p>
-      <div style={{ margin: '0 12px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>Operations</h2>
-        {isMobile && (
-          <button
-            type="button"
-            aria-label="Close menu"
-            onClick={() => setIsDrawerOpen(false)}
-            style={{ border: 'none', background: 'transparent', fontSize: 26, lineHeight: 1, color: '#374151', cursor: 'pointer' }}
-          >
-            ×
-          </button>
-        )}
-      </div>
-      <nav style={{ display: 'grid', gap: 6 }}>
-        {navItems.map((item) => {
-          const isActive = item === 'CRM'
-          return (
-            <Link
-              key={item}
-              href={navLinks[item] ?? '#'}
-              onClick={() => setIsDrawerOpen(false)}
-              style={{
-                padding: '11px 13px',
-                borderRadius: 10,
-                fontSize: 14,
-                fontWeight: 500,
-                color: isActive ? '#7f1d1d' : '#6b7280',
-                background: isActive ? '#fee2e2' : 'transparent',
-                border: isActive ? '1px solid #fecaca' : '1px solid transparent',
-                textDecoration: 'none',
-              }}
-            >
-              {item}
-            </Link>
-          )
-        })}
-      </nav>
-      <div style={{ marginTop: 'auto', padding: '0 8px', display: 'grid', gap: 10 }}>
-        <DashboardLogoutButton />
-        <button
-          type="button"
-          style={{
-            width: '100%',
-            border: 'none',
-            borderRadius: 10,
-            background: '#dc2626',
-            color: '#fff',
-            fontWeight: 600,
-            fontSize: 14,
-            padding: '11px 14px',
-            cursor: 'pointer',
-          }}
-        >
-          Deploy Agent
-        </button>
-      </div>
-    </aside>
-  )
-
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        background: '#f3f4f6',
-        color: '#111827',
-        fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      }}
-    >
-      <div style={{ display: 'flex', minHeight: '100vh' }}>
-        {!isMobile && sidebar}
-        {isMobile && isDrawerOpen && (
-          <div role="presentation" onClick={() => setIsDrawerOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(17, 24, 39, 0.45)', zIndex: 40 }}>
-            <div role="presentation" onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 258, boxShadow: '0 12px 24px rgba(0, 0, 0, 0.2)' }}>
-              {sidebar}
-            </div>
-          </div>
-        )}
-
-        <main style={{ flex: 1, padding: isMobile ? '16px 14px 24px' : '30px 32px 36px' }}>
+    <DashboardOceanNav activeNav="CRM">
+      {({ isMobile, openNav }) => (
+        <main style={{ flex: 1, padding: isMobile ? '16px 14px 24px' : '30px 32px 36px', overflow: 'auto' }}>
           {isMobile && (
             <div style={{ marginBottom: 12 }}>
-              <button
+              <motion.button
                 type="button"
                 aria-label="Open menu"
-                onClick={() => setIsDrawerOpen(true)}
-                style={{ border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff', color: '#374151', width: 40, height: 40, fontSize: 23, lineHeight: 1, cursor: 'pointer' }}
+                onClick={openNav}
+                whileHover={{ scale: 1.04 }}
+                whileTap={{ scale: 0.96 }}
+                style={{
+                  border: '1px solid var(--ocean-border)',
+                  borderRadius: 'var(--ocean-radius-md)',
+                  background: 'var(--ocean-surface)',
+                  color: 'var(--ocean-text)',
+                  width: 44,
+                  height: 44,
+                  fontSize: 22,
+                  lineHeight: 1,
+                  cursor: 'pointer',
+                }}
               >
                 ☰
-              </button>
+              </motion.button>
             </div>
           )}
           <div
@@ -363,8 +274,10 @@ export default function CrmPage() {
             }}
           >
             <div>
-              <h1 style={{ margin: 0, fontSize: 30, letterSpacing: '-0.02em' }}>Customers</h1>
-              <p style={{ margin: '8px 0 0', color: '#6b7280', fontSize: 14 }}>Search, segment, and nurture your best clients.</p>
+              <h1 style={{ margin: 0, fontSize: 30, letterSpacing: '-0.02em', color: 'var(--ocean-text)' }}>Customers</h1>
+              <p style={{ margin: '8px 0 0', color: 'var(--ocean-text-muted)', fontSize: 14 }}>
+                Search, segment, and nurture your best clients.
+              </p>
             </div>
             <div style={{ display: 'flex', gap: 10, alignItems: 'center', width: isMobile ? '100%' : 'auto' }}>
               <input
@@ -376,11 +289,11 @@ export default function CrmPage() {
                   width: isMobile ? '100%' : 320,
                   maxWidth: isMobile ? '100%' : '42vw',
                   borderRadius: 10,
-                  border: '1px solid #d1d5db',
+                  border: '1px solid var(--ocean-border)',
                   padding: '10px 12px',
                   fontSize: 14,
                   outline: 'none',
-                  background: '#fff',
+                  background: 'var(--ocean-surface)',
                 }}
               />
               <button
@@ -388,8 +301,8 @@ export default function CrmPage() {
                 style={{
                   border: 'none',
                   borderRadius: 10,
-                  background: '#dc2626',
-                  color: '#fff',
+                  background: 'linear-gradient(135deg, var(--ocean-sky) 0%, #0ea5e9 100%)',
+                  color: 'var(--ocean-black)',
                   fontWeight: 700,
                   fontSize: 14,
                   padding: '10px 14px',
@@ -419,13 +332,13 @@ export default function CrmPage() {
               <div
                 key={stat.label}
                 style={{
-                  background: '#ffffff',
-                  border: '1px solid #e5e7eb',
+background: 'var(--ocean-card)',
+              border: '1px solid var(--ocean-border)',
                   borderRadius: 14,
                   padding: 14,
                 }}
               >
-                <p style={{ margin: 0, color: '#6b7280', fontSize: 13 }}>{stat.label}</p>
+                <p style={{ margin: 0, color: 'var(--ocean-text-muted)', fontSize: 13 }}>{stat.label}</p>
                 <p style={{ margin: '8px 0 0', fontSize: 26, fontWeight: 700 }}>{stat.value}</p>
               </div>
             ))}
@@ -441,8 +354,8 @@ export default function CrmPage() {
           >
             <section
               style={{
-                background: '#ffffff',
-                border: '1px solid #e5e7eb',
+background: 'var(--ocean-card)',
+              border: '1px solid var(--ocean-border)',
                 borderRadius: 16,
                 overflow: 'hidden',
               }}
@@ -450,13 +363,13 @@ export default function CrmPage() {
               {isMobile ? (
                 <div style={{ padding: 12, display: 'grid', gap: 10 }}>
                   {crmLoading ? (
-                    <div style={{ padding: 24, textAlign: 'center', color: '#6b7280', fontSize: 14 }}>Loading customers...</div>
+                    <div style={{ padding: 24, textAlign: 'center', color: 'var(--ocean-text-muted)', fontSize: 14 }}>Loading customers...</div>
                   ) : customers.length === 0 ? (
-                    <div style={{ padding: 24, textAlign: 'center', color: '#6b7280', fontSize: 14, lineHeight: 1.55 }}>
+                    <div style={{ padding: 24, textAlign: 'center', color: 'var(--ocean-text-muted)', fontSize: 14, lineHeight: 1.55 }}>
                       No customers yet. They will appear here when they chat with your AI.
                     </div>
                   ) : filtered.length === 0 ? (
-                    <div style={{ padding: 24, textAlign: 'center', color: '#6b7280', fontSize: 14 }}>No matching customers.</div>
+                    <div style={{ padding: 24, textAlign: 'center', color: 'var(--ocean-text-muted)', fontSize: 14 }}>No matching customers.</div>
                   ) : (
                     filtered.map((customer) => {
                       const active = customer.id === selectedId
@@ -469,8 +382,8 @@ export default function CrmPage() {
                             setNotes('')
                           }}
                           style={{
-                            border: `1px solid ${active ? '#fecaca' : '#f3f4f6'}`,
-                            background: active ? '#fff1f2' : '#ffffff',
+                            border: `1px solid ${active ? 'var(--ocean-border-strong)' : 'var(--ocean-border)'}`,
+                            background: active ? 'rgba(56, 189, 248, 0.1)' : 'var(--ocean-ink)',
                             borderRadius: 12,
                             padding: 12,
                             textAlign: 'left',
@@ -478,11 +391,11 @@ export default function CrmPage() {
                           }}
                         >
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-                            <div style={{ fontWeight: 700, color: '#111827' }}>{customer.name}</div>
-                            <div style={{ fontSize: 12, color: '#6b7280' }}>{customer.lastVisit}</div>
+                            <div style={{ fontWeight: 700, color: 'var(--ocean-text)' }}>{customer.name}</div>
+                            <div style={{ fontSize: 12, color: 'var(--ocean-text-muted)' }}>{customer.lastVisit}</div>
                           </div>
-                          <div style={{ marginTop: 6, color: '#4b5563', fontSize: 13 }}>{customer.email}</div>
-                          <div style={{ marginTop: 3, color: '#4b5563', fontSize: 13 }}>{customer.phone}</div>
+                          <div style={{ marginTop: 6, color: 'var(--ocean-text-muted)', fontSize: 13 }}>{customer.email}</div>
+                          <div style={{ marginTop: 3, color: 'var(--ocean-text-muted)', fontSize: 13 }}>{customer.phone}</div>
                           <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                             {customer.tags.map((tag) => {
                               const t = tagStyle(tag)
@@ -493,7 +406,7 @@ export default function CrmPage() {
                               )
                             })}
                           </div>
-                          <div style={{ marginTop: 8, fontSize: 12, color: '#6b7280' }}>
+                          <div style={{ marginTop: 8, fontSize: 12, color: 'var(--ocean-text-muted)' }}>
                             {customer.totalBookings} bookings · {formatMoney(customer.totalSpent)}
                           </div>
                         </button>
@@ -505,7 +418,7 @@ export default function CrmPage() {
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 980 }}>
                   <thead>
-                    <tr style={{ background: '#fafafa', borderBottom: '1px solid #e5e7eb' }}>
+                    <tr style={{ background: 'var(--ocean-surface)', borderBottom: '1px solid var(--ocean-border)' }}>
                       {['Name', 'Phone', 'Email', 'Last Visit', 'Total Bookings', 'Total Spent', 'Tags', 'Actions'].map(
                         (col) => (
                           <th
@@ -514,7 +427,7 @@ export default function CrmPage() {
                               textAlign: 'left',
                               padding: '12px 14px',
                               fontSize: 12,
-                              color: '#6b7280',
+                              color: 'var(--ocean-text-muted)',
                               fontWeight: 700,
                               letterSpacing: '0.04em',
                               textTransform: 'uppercase',
@@ -535,7 +448,7 @@ export default function CrmPage() {
                           style={{
                             padding: '36px 14px',
                             textAlign: 'center',
-                            color: '#6b7280',
+                            color: 'var(--ocean-text-muted)',
                             fontSize: 14,
                           }}
                         >
@@ -549,7 +462,7 @@ export default function CrmPage() {
                           style={{
                             padding: '36px 14px',
                             textAlign: 'center',
-                            color: '#6b7280',
+                            color: 'var(--ocean-text-muted)',
                             fontSize: 14,
                             lineHeight: 1.55,
                           }}
@@ -564,7 +477,7 @@ export default function CrmPage() {
                           style={{
                             padding: '36px 14px',
                             textAlign: 'center',
-                            color: '#6b7280',
+                            color: 'var(--ocean-text-muted)',
                             fontSize: 14,
                           }}
                         >
@@ -583,14 +496,14 @@ export default function CrmPage() {
                             }}
                             style={{
                               cursor: 'pointer',
-                              background: active ? '#fff1f2' : '#ffffff',
-                              borderBottom: '1px solid #f3f4f6',
+                              background: active ? 'rgba(56, 189, 248, 0.08)' : 'var(--ocean-ink)',
+                              borderBottom: '1px solid var(--ocean-border)',
                             }}
                           >
                             <td style={{ padding: '12px 14px', fontWeight: 600 }}>{customer.name}</td>
-                            <td style={{ padding: '12px 14px', color: '#4b5563', fontSize: 14 }}>{customer.phone}</td>
-                            <td style={{ padding: '12px 14px', color: '#4b5563', fontSize: 14 }}>{customer.email}</td>
-                            <td style={{ padding: '12px 14px', color: '#6b7280', fontSize: 14 }}>{customer.lastVisit}</td>
+                            <td style={{ padding: '12px 14px', color: 'var(--ocean-text-muted)', fontSize: 14 }}>{customer.phone}</td>
+                            <td style={{ padding: '12px 14px', color: 'var(--ocean-text-muted)', fontSize: 14 }}>{customer.email}</td>
+                            <td style={{ padding: '12px 14px', color: 'var(--ocean-text-muted)', fontSize: 14 }}>{customer.lastVisit}</td>
                             <td style={{ padding: '12px 14px', fontWeight: 600 }}>{customer.totalBookings}</td>
                             <td style={{ padding: '12px 14px', fontWeight: 600 }}>{formatMoney(customer.totalSpent)}</td>
                             <td style={{ padding: '12px 14px' }}>
@@ -626,8 +539,8 @@ export default function CrmPage() {
                                 }}
                                 style={{
                                   borderRadius: 8,
-                                  border: '1px solid #d1d5db',
-                                  background: '#fff',
+                                  border: '1px solid var(--ocean-border)',
+                                  background: 'var(--ocean-surface)',
                                   padding: '6px 10px',
                                   fontSize: 12,
                                   fontWeight: 600,
@@ -647,31 +560,38 @@ export default function CrmPage() {
               )}
             </section>
 
-            {selected && (
-              <aside
+            <AnimatePresence mode="wait">
+              {selected ? (
+              <motion.aside
+                key={selected.id}
+                variants={slideInRight}
+                initial="hidden"
+                animate="visible"
+                exit="exit"
                 style={{
                   position: 'sticky',
                   top: 24,
-                  background: '#ffffff',
-                  border: '1px solid #e5e7eb',
+                  background: 'var(--ocean-card)',
+                  border: '1px solid var(--ocean-border)',
                   borderRadius: 16,
                   padding: 16,
                   maxHeight: 'calc(100vh - 120px)',
                   overflow: 'auto',
+                  boxShadow: 'var(--ocean-shadow-md)',
                 }}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
                   <div>
-                    <h2 style={{ margin: 0, fontSize: 18 }}>{selected.name}</h2>
-                    <p style={{ margin: '6px 0 0', color: '#6b7280', fontSize: 13 }}>Customer profile</p>
+                    <h2 style={{ margin: 0, fontSize: 18, color: 'var(--ocean-text)' }}>{selected.name}</h2>
+                    <p style={{ margin: '6px 0 0', color: 'var(--ocean-text-muted)', fontSize: 13 }}>Customer profile</p>
                   </div>
                   <button
                     type="button"
                     onClick={() => setSelectedId(null)}
                     style={{
                       border: 'none',
-                      background: '#f3f4f6',
-                      color: '#6b7280',
+                      background: 'var(--ocean-surface)',
+                      color: 'var(--ocean-text-muted)',
                       borderRadius: 8,
                       width: 32,
                       height: 32,
@@ -712,61 +632,61 @@ export default function CrmPage() {
                     display: 'grid',
                     gap: 10,
                     fontSize: 13,
-                    color: '#4b5563',
+                    color: 'var(--ocean-text-muted)',
                   }}
                 >
                   <div>
-                    <span style={{ color: '#9ca3af', fontWeight: 600 }}>EMAIL</span>
-                    <div style={{ marginTop: 4, fontWeight: 600, color: '#111827' }}>{selected.email}</div>
+                    <span style={{ color: 'var(--ocean-text-subtle)', fontWeight: 600 }}>EMAIL</span>
+                    <div style={{ marginTop: 4, fontWeight: 600, color: 'var(--ocean-text)' }}>{selected.email}</div>
                   </div>
                   <div>
-                    <span style={{ color: '#9ca3af', fontWeight: 600 }}>PHONE</span>
-                    <div style={{ marginTop: 4, fontWeight: 600, color: '#111827' }}>{selected.phone}</div>
+                    <span style={{ color: 'var(--ocean-text-subtle)', fontWeight: 600 }}>PHONE</span>
+                    <div style={{ marginTop: 4, fontWeight: 600, color: 'var(--ocean-text)' }}>{selected.phone}</div>
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                     <div>
-                      <span style={{ color: '#9ca3af', fontWeight: 600 }}>JOINED</span>
-                      <div style={{ marginTop: 4, fontWeight: 600, color: '#111827' }}>{selected.joined}</div>
+                      <span style={{ color: 'var(--ocean-text-subtle)', fontWeight: 600 }}>JOINED</span>
+                      <div style={{ marginTop: 4, fontWeight: 600, color: 'var(--ocean-text)' }}>{selected.joined}</div>
                     </div>
                     <div>
-                      <span style={{ color: '#9ca3af', fontWeight: 600 }}>LAST VISIT</span>
-                      <div style={{ marginTop: 4, fontWeight: 600, color: '#111827' }}>{selected.lastVisit}</div>
+                      <span style={{ color: 'var(--ocean-text-subtle)', fontWeight: 600 }}>LAST VISIT</span>
+                      <div style={{ marginTop: 4, fontWeight: 600, color: 'var(--ocean-text)' }}>{selected.lastVisit}</div>
                     </div>
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                     <div>
-                      <span style={{ color: '#9ca3af', fontWeight: 600 }}>BOOKINGS</span>
-                      <div style={{ marginTop: 4, fontWeight: 700, color: '#111827' }}>{selected.totalBookings}</div>
+                      <span style={{ color: 'var(--ocean-text-subtle)', fontWeight: 600 }}>BOOKINGS</span>
+                      <div style={{ marginTop: 4, fontWeight: 700, color: 'var(--ocean-text)' }}>{selected.totalBookings}</div>
                     </div>
                     <div>
-                      <span style={{ color: '#9ca3af', fontWeight: 600 }}>SPENT</span>
-                      <div style={{ marginTop: 4, fontWeight: 700, color: '#111827' }}>
+                      <span style={{ color: 'var(--ocean-text-subtle)', fontWeight: 600 }}>SPENT</span>
+                      <div style={{ marginTop: 4, fontWeight: 700, color: 'var(--ocean-text)' }}>
                         {formatMoney(selected.totalSpent)}
                       </div>
                     </div>
                   </div>
                   <div>
-                    <span style={{ color: '#9ca3af', fontWeight: 600 }}>PREFERRED STAFF</span>
-                    <div style={{ marginTop: 4, fontWeight: 600, color: '#111827' }}>{selected.preferredStaff}</div>
+                    <span style={{ color: 'var(--ocean-text-subtle)', fontWeight: 600 }}>PREFERRED STAFF</span>
+                    <div style={{ marginTop: 4, fontWeight: 600, color: 'var(--ocean-text)' }}>{selected.preferredStaff}</div>
                   </div>
                 </div>
 
                 <div style={{ marginTop: 16 }}>
-                  <h3 style={{ margin: '0 0 8px', fontSize: 14, color: '#111827' }}>Visit history</h3>
+                  <h3 style={{ margin: '0 0 8px', fontSize: 14, color: 'var(--ocean-text)' }}>Visit history</h3>
                   <div style={{ display: 'grid', gap: 8 }}>
                     {selected.visitHistory.map((visit) => (
                       <div
                         key={`${visit.date}-${visit.service}`}
                         style={{
-                          border: '1px solid #f3f4f6',
+                          border: '1px solid var(--ocean-border)',
                           borderRadius: 10,
                           padding: '8px 10px',
-                          background: '#fafafa',
+                          background: 'var(--ocean-surface)',
                         }}
                       >
-                        <div style={{ fontSize: 12, color: '#6b7280' }}>{visit.date}</div>
+                        <div style={{ fontSize: 12, color: 'var(--ocean-text-muted)' }}>{visit.date}</div>
                         <div style={{ marginTop: 4, fontWeight: 600, fontSize: 13 }}>{visit.service}</div>
-                        <div style={{ marginTop: 4, fontSize: 12, color: '#9ca3af' }}>
+                        <div style={{ marginTop: 4, fontSize: 12, color: 'var(--ocean-text-subtle)' }}>
                           {visit.amount === 0 ? 'Complimentary' : formatMoney(visit.amount)}
                         </div>
                       </div>
@@ -775,7 +695,7 @@ export default function CrmPage() {
                 </div>
 
                 <div style={{ marginTop: 16 }}>
-                  <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#6b7280', marginBottom: 6 }}>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: 'var(--ocean-text-muted)', marginBottom: 6 }}>
                     NOTES
                   </label>
                   <textarea
@@ -787,7 +707,7 @@ export default function CrmPage() {
                       width: '100%',
                       resize: 'vertical',
                       borderRadius: 10,
-                      border: '1px solid #d1d5db',
+                      border: '1px solid var(--ocean-border)',
                       padding: '10px 12px',
                       fontSize: 13,
                       outline: 'none',
@@ -795,11 +715,12 @@ export default function CrmPage() {
                     }}
                   />
                 </div>
-              </aside>
-            )}
+              </motion.aside>
+              ) : null}
+            </AnimatePresence>
           </div>
         </main>
-      </div>
-    </div>
+      )}
+    </DashboardOceanNav>
   )
 }

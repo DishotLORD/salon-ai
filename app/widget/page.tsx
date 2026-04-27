@@ -1,5 +1,6 @@
 'use client'
 
+import { AnimatePresence, motion } from 'framer-motion'
 import { Suspense, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 
@@ -32,6 +33,7 @@ function WidgetPageInner() {
   const messagesContainerRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- new embed target needs fresh conversation
     setConversationId(null)
   }, [businessId])
 
@@ -85,6 +87,7 @@ function WidgetPageInner() {
 
   useEffect(() => {
     if (!businessId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- clear name when no business context
       setBusinessName(null)
       return
     }
@@ -195,28 +198,34 @@ function WidgetPageInner() {
     <div
       style={{
         minHeight: '100vh',
-        background: 'linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%)',
-        fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        background: 'var(--ocean-canvas)',
+        backgroundColor: 'var(--ocean-deep)',
+        color: 'var(--ocean-text)',
       }}
     >
-      <div style={{ padding: 32, color: '#475569' }}>
-        <h1 style={{ margin: 0, fontSize: 30, color: '#0f172a' }}>Widget Preview</h1>
+      <div style={{ padding: 32, color: 'var(--ocean-text-muted)' }}>
+        <h1 style={{ margin: 0, fontSize: 30, color: 'var(--ocean-text)' }}>OceanCore · Widget preview</h1>
         <p style={{ marginTop: 10, maxWidth: 700 }}>
-          This is a standalone chat widget page. Use the purple bubble button in the bottom-right corner to open
-          the assistant.
+          Standalone chat widget. Use the bubble in the bottom-right to open the assistant.
         </p>
       </div>
 
       <div style={{ position: 'fixed', right: 24, bottom: 24, zIndex: 30 }}>
-        {isOpen && (
-          <div
+        <AnimatePresence>
+        {isOpen ? (
+          <motion.div
+            key="widget-panel"
+            initial={{ opacity: 0, y: 16, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 12, scale: 0.96 }}
+            transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
             style={{
               width: 350,
               height: 500,
-              background: '#ffffff',
-              borderRadius: 20,
-              border: '1px solid #e2e8f0',
-              boxShadow: '0 24px 50px rgba(15, 23, 42, 0.22)',
+              background: 'var(--ocean-card)',
+              borderRadius: 'var(--ocean-radius-xl)',
+              border: '1px solid var(--ocean-border)',
+              boxShadow: 'var(--ocean-shadow-lg)',
               marginBottom: 14,
               display: 'flex',
               flexDirection: 'column',
@@ -226,25 +235,25 @@ function WidgetPageInner() {
             <header
               style={{
                 padding: '14px 16px',
-                borderBottom: '1px solid #f1f5f9',
+                borderBottom: '1px solid var(--ocean-border)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
               }}
             >
               <div>
-                <p style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#111827' }}>{headerTitle}</p>
+                <p style={{ margin: 0, fontSize: 16, fontWeight: 700, color: 'var(--ocean-text)' }}>{headerTitle}</p>
                 <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 7 }}>
                   <span
                     style={{
                       width: 8,
                       height: 8,
                       borderRadius: '50%',
-                      background: '#22c55e',
-                      boxShadow: '0 0 0 3px rgba(34, 197, 94, 0.2)',
+                      background: 'var(--ocean-success)',
+                      boxShadow: '0 0 0 3px rgba(74, 222, 128, 0.25)',
                     }}
                   />
-                  <span style={{ fontSize: 12, color: '#4b5563' }}>Online</span>
+                  <span style={{ fontSize: 12, color: 'var(--ocean-text-muted)' }}>Online</span>
                 </div>
               </div>
               <button
@@ -256,8 +265,8 @@ function WidgetPageInner() {
                   width: 30,
                   height: 30,
                   cursor: 'pointer',
-                  background: '#f8fafc',
-                  color: '#64748b',
+                  background: 'var(--ocean-surface)',
+                  color: 'var(--ocean-text-muted)',
                   fontSize: 18,
                   lineHeight: 1,
                 }}
@@ -266,7 +275,10 @@ function WidgetPageInner() {
               </button>
             </header>
 
-            <div ref={messagesContainerRef} style={{ flex: 1, padding: '14px 12px', overflowY: 'auto', background: '#f8fafc' }}>
+            <div
+              ref={messagesContainerRef}
+              style={{ flex: 1, padding: '14px 12px', overflowY: 'auto', background: 'var(--ocean-deep)' }}
+            >
               {messages.map((message) => {
                 const isCustomer = message.sender === 'customer'
                 return (
@@ -285,9 +297,11 @@ function WidgetPageInner() {
                         padding: '9px 12px',
                         fontSize: 14,
                         lineHeight: 1.45,
-                        background: isCustomer ? '#7c3aed' : '#e5e7eb',
-                        color: isCustomer ? '#ffffff' : '#111827',
-                        border: `1px solid ${isCustomer ? '#6d28d9' : '#d1d5db'}`,
+                        background: isCustomer
+                          ? 'linear-gradient(135deg, var(--ocean-sky) 0%, #0ea5e9 100%)'
+                          : 'var(--ocean-surface)',
+                        color: isCustomer ? 'var(--ocean-black)' : 'var(--ocean-text)',
+                        border: `1px solid ${isCustomer ? 'var(--ocean-border-strong)' : 'var(--ocean-border)'}`,
                       }}
                     >
                       {message.text}
@@ -305,9 +319,9 @@ function WidgetPageInner() {
                       padding: '9px 12px',
                       fontSize: 14,
                       lineHeight: 1.45,
-                      background: '#e5e7eb',
-                      color: '#111827',
-                      border: '1px solid #d1d5db',
+                      background: 'var(--ocean-surface)',
+                      color: 'var(--ocean-text)',
+                      border: '1px solid var(--ocean-border)',
                     }}
                   >
                     AI is typing...
@@ -316,7 +330,7 @@ function WidgetPageInner() {
               )}
             </div>
 
-            <footer style={{ borderTop: '1px solid #f1f5f9', padding: 10, background: '#ffffff' }}>
+            <footer style={{ borderTop: '1px solid var(--ocean-border)', padding: 10, background: 'var(--ocean-ink)' }}>
               <div style={{ display: 'flex', gap: 8 }}>
                 <input
                   type="text"
@@ -330,7 +344,7 @@ function WidgetPageInner() {
                   placeholder="Type your message..."
                   style={{
                     flex: 1,
-                    border: '1px solid #cbd5e1',
+                    border: '1px solid var(--ocean-border)',
                     borderRadius: 10,
                     padding: '10px 12px',
                     outline: 'none',
@@ -346,8 +360,9 @@ function WidgetPageInner() {
                     borderRadius: 10,
                     padding: '10px 13px',
                     cursor: isLoading || !draft.trim() ? 'not-allowed' : 'pointer',
-                    background: isLoading || !draft.trim() ? '#c4b5fd' : '#7c3aed',
-                    color: '#fff',
+                    background:
+                      isLoading || !draft.trim() ? 'var(--ocean-surface)' : 'linear-gradient(135deg, var(--ocean-sky) 0%, #0ea5e9 100%)',
+                    color: isLoading || !draft.trim() ? 'var(--ocean-text-subtle)' : 'var(--ocean-black)',
                     fontWeight: 600,
                     fontSize: 13,
                   }}
@@ -356,21 +371,25 @@ function WidgetPageInner() {
                 </button>
               </div>
             </footer>
-          </div>
-        )}
+          </motion.div>
+        ) : null}
+        </AnimatePresence>
 
-        <button
+        <motion.button
           type="button"
           onClick={() => setIsOpen((prev) => !prev)}
+          whileHover={{ scale: 1.06 }}
+          whileTap={{ scale: 0.94 }}
+          layout
           style={{
             width: 60,
             height: 60,
             borderRadius: '50%',
             border: 'none',
             cursor: 'pointer',
-            background: 'linear-gradient(140deg, #8b5cf6, #7c3aed)',
-            color: '#fff',
-            boxShadow: '0 14px 30px rgba(124, 58, 237, 0.45)',
+            background: 'linear-gradient(140deg, var(--ocean-sky), var(--ocean-sand-deep))',
+            color: 'var(--ocean-black)',
+            boxShadow: 'var(--ocean-shadow-glow)',
             display: 'grid',
             placeItems: 'center',
             fontSize: 25,
@@ -378,7 +397,7 @@ function WidgetPageInner() {
           aria-label="Toggle chat widget"
         >
           💬
-        </button>
+        </motion.button>
       </div>
     </div>
   )

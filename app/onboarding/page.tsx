@@ -1,9 +1,11 @@
 'use client'
 
+import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 
 import { supabase } from '@/lib/supabase'
+import { tabContent } from '@/lib/ocean-motion'
 
 const TOTAL_STEPS = 3
 
@@ -19,27 +21,24 @@ type BusinessTypeValue = (typeof businessTypeOptions)[number]['value']
 
 const systemPromptPlaceholder = `Example: You are the AI concierge for [Business Name]. Be warm, concise, and professional. Help clients book appointments, answer questions about services and hours, and offer to connect them with a human for billing or sensitive topics.`
 
-const fontStack =
-  'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
-
 const labelStyle = {
   display: 'block' as const,
   fontSize: 12,
   fontWeight: 700,
-  color: '#6b7280',
+  color: 'var(--ocean-text-muted)',
   letterSpacing: '0.04em',
   marginBottom: 6,
 }
 
 const inputStyle = {
   width: '100%' as const,
-  borderRadius: 10,
-  border: '1px solid #d1d5db',
+  borderRadius: 'var(--ocean-radius-md)',
+  border: '1px solid var(--ocean-border)',
   padding: '12px 13px',
   fontSize: 14,
   outline: 'none' as const,
-  background: '#fff',
-  color: '#111827',
+  background: 'var(--ocean-surface)',
+  color: 'var(--ocean-text)',
 }
 
 export default function OnboardingPage() {
@@ -143,9 +142,8 @@ export default function OnboardingPage() {
           minHeight: '100vh',
           display: 'grid',
           placeItems: 'center',
-          background: 'linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%)',
-          fontFamily: fontStack,
-          color: '#64748b',
+          background: 'var(--ocean-deep)',
+          color: 'var(--ocean-text-muted)',
           fontSize: 14,
         }}
       >
@@ -163,27 +161,33 @@ export default function OnboardingPage() {
         alignItems: 'center',
         justifyContent: 'center',
         padding: '32px 20px 40px',
-        background: 'linear-gradient(180deg, #f8fafc 0%, #f1f5f9 45%, #e8eef4 100%)',
-        fontFamily: fontStack,
-        color: '#111827',
+        background: 'var(--ocean-canvas)',
+        backgroundColor: 'var(--ocean-deep)',
+        color: 'var(--ocean-text)',
       }}
     >
-      <div
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
         style={{
           width: '100%',
           maxWidth: 520,
-          borderRadius: 20,
-          border: '1px solid rgba(226, 232, 240, 0.95)',
-          background: 'rgba(255, 255, 255, 0.92)',
-          boxShadow: '0 24px 48px rgba(15, 23, 42, 0.08), 0 0 0 1px rgba(255, 255, 255, 0.8) inset',
+          borderRadius: 'var(--ocean-radius-xl)',
+          border: '1px solid var(--ocean-border)',
+          background: 'var(--ocean-card)',
+          boxShadow: 'var(--ocean-shadow-lg)',
           padding: '28px 28px 26px',
           backdropFilter: 'blur(12px)',
           WebkitBackdropFilter: 'blur(12px)',
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 22 }}>
-          <img src="/logo.png" alt="Salon AI" width={52} height={52} style={{ display: 'block' }} />
-          <div style={{ fontSize: 18, fontWeight: 700, color: '#111827' }}>Salon AI</div>
+          <img src="/logo.png" alt="OceanCore" width={52} height={52} style={{ display: 'block', borderRadius: 12 }} />
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.2em', color: 'var(--ocean-sky)' }}>OCEANCORE</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--ocean-text)', marginTop: 2 }}>Onboarding</div>
+          </div>
         </div>
 
         <div style={{ marginBottom: 20 }}>
@@ -195,10 +199,10 @@ export default function OnboardingPage() {
               marginBottom: 8,
             }}
           >
-            <span style={{ fontSize: 12, fontWeight: 600, color: '#64748b', letterSpacing: '0.06em' }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--ocean-text-muted)', letterSpacing: '0.06em' }}>
               STEP {step} OF {TOTAL_STEPS}
             </span>
-            <span style={{ fontSize: 12, fontWeight: 600, color: '#94a3b8' }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--ocean-text-subtle)' }}>
               {Math.round(progressPercent)}%
             </span>
           </div>
@@ -206,7 +210,7 @@ export default function OnboardingPage() {
             style={{
               height: 6,
               borderRadius: 999,
-              background: '#e2e8f0',
+              background: 'var(--ocean-surface)',
               overflow: 'hidden',
             }}
           >
@@ -215,13 +219,15 @@ export default function OnboardingPage() {
                 height: '100%',
                 width: `${progressPercent}%`,
                 borderRadius: 999,
-                background: 'linear-gradient(90deg, #dc2626 0%, #ef4444 100%)',
+                background: 'linear-gradient(90deg, var(--ocean-sky) 0%, var(--ocean-sand-deep) 100%)',
                 transition: 'width 0.35s cubic-bezier(0.4, 0, 0.2, 1)',
               }}
             />
           </div>
         </div>
 
+        <AnimatePresence mode="wait">
+          <motion.div key={step} custom={1} variants={tabContent} initial="initial" animate="animate" exit="exit">
         {step === 1 && (
           <>
             <h1
@@ -231,12 +237,12 @@ export default function OnboardingPage() {
                 lineHeight: 1.1,
                 letterSpacing: '-0.02em',
                 fontWeight: 700,
-                color: '#0f172a',
+                color: 'var(--ocean-text)',
               }}
             >
               Tell us about your business
             </h1>
-            <p style={{ margin: '10px 0 0', fontSize: 14, color: '#64748b', lineHeight: 1.5 }}>
+            <p style={{ margin: '10px 0 0', fontSize: 14, color: 'var(--ocean-text-muted)', lineHeight: 1.5 }}>
               We will use this to personalize your workspace and AI assistant.
             </p>
 
@@ -275,12 +281,12 @@ export default function OnboardingPage() {
                 lineHeight: 1.1,
                 letterSpacing: '-0.02em',
                 fontWeight: 700,
-                color: '#0f172a',
+                color: 'var(--ocean-text)',
               }}
             >
               Set up your AI agent
             </h1>
-            <p style={{ margin: '10px 0 0', fontSize: 14, color: '#64748b', lineHeight: 1.5 }}>
+            <p style={{ margin: '10px 0 0', fontSize: 14, color: 'var(--ocean-text-muted)', lineHeight: 1.5 }}>
               Choose how your assistant introduces itself and how it should behave with customers.
             </p>
 
@@ -305,7 +311,7 @@ export default function OnboardingPage() {
                   minHeight: 140,
                   resize: 'vertical' as const,
                   lineHeight: 1.5,
-                  fontFamily: fontStack,
+                    fontFamily: 'inherit',
                 }}
               />
             </div>
@@ -321,12 +327,12 @@ export default function OnboardingPage() {
                 lineHeight: 1.1,
                 letterSpacing: '-0.02em',
                 fontWeight: 700,
-                color: '#0f172a',
+                color: 'var(--ocean-text)',
               }}
             >
               You&apos;re all set!
             </h1>
-            <p style={{ margin: '10px 0 0', fontSize: 14, color: '#64748b', lineHeight: 1.5 }}>
+            <p style={{ margin: '10px 0 0', fontSize: 14, color: 'var(--ocean-text-muted)', lineHeight: 1.5 }}>
               Here is a quick summary. You can change anything later in Settings.
             </p>
 
@@ -335,8 +341,8 @@ export default function OnboardingPage() {
                 marginTop: 22,
                 padding: 18,
                 borderRadius: 14,
-                background: '#f8fafc',
-                border: '1px solid #e2e8f0',
+                background: 'var(--ocean-surface)',
+                border: '1px solid var(--ocean-border)',
                 display: 'grid',
                 gap: 14,
               }}
@@ -348,14 +354,14 @@ export default function OnboardingPage() {
               />
               <SummaryRow label="Agent" value={agentName.trim()} />
               <div>
-                <p style={{ margin: 0, fontSize: 11, fontWeight: 700, color: '#94a3b8', letterSpacing: '0.06em' }}>
+                <p style={{ margin: 0, fontSize: 11, fontWeight: 700, color: 'var(--ocean-text-subtle)', letterSpacing: '0.06em' }}>
                   SYSTEM PROMPT
                 </p>
                 <p
                   style={{
                     margin: '6px 0 0',
                     fontSize: 13,
-                    color: '#475569',
+                    color: 'var(--ocean-text-muted)',
                     lineHeight: 1.55,
                     whiteSpace: 'pre-wrap',
                   }}
@@ -366,9 +372,11 @@ export default function OnboardingPage() {
             </div>
           </>
         )}
+          </motion.div>
+        </AnimatePresence>
 
         {error ? (
-          <p style={{ color: '#dc2626', margin: '18px 0 0', fontSize: 14, lineHeight: 1.45 }}>{error}</p>
+          <p style={{ color: 'var(--ocean-danger)', margin: '18px 0 0', fontSize: 14, lineHeight: 1.45 }}>{error}</p>
         ) : null}
 
         <div
@@ -387,9 +395,9 @@ export default function OnboardingPage() {
             disabled={step === 1 || saving}
             style={{
               borderRadius: 10,
-              border: '1px solid #d1d5db',
-              background: '#fff',
-              color: '#374151',
+              border: '1px solid var(--ocean-border)',
+              background: 'var(--ocean-surface)',
+              color: 'var(--ocean-text)',
               fontWeight: 600,
               fontSize: 14,
               padding: '11px 20px',
@@ -412,9 +420,12 @@ export default function OnboardingPage() {
                 borderRadius: 10,
                 background:
                   saving || (step === 1 && !canGoNextFromStep1) || (step === 2 && !canGoNextFromStep2)
-                    ? '#fca5a5'
-                    : '#dc2626',
-                color: '#fff',
+                    ? 'var(--ocean-surface)'
+                    : 'linear-gradient(135deg, var(--ocean-sky) 0%, #0ea5e9 100%)',
+                color:
+                  saving || (step === 1 && !canGoNextFromStep1) || (step === 2 && !canGoNextFromStep2)
+                    ? 'var(--ocean-text-subtle)'
+                    : 'var(--ocean-black)',
                 fontWeight: 700,
                 fontSize: 14,
                 padding: '11px 22px',
@@ -435,8 +446,8 @@ export default function OnboardingPage() {
               style={{
                 border: 'none',
                 borderRadius: 10,
-                background: saving ? '#fca5a5' : '#dc2626',
-                color: '#fff',
+                background: saving ? 'var(--ocean-surface)' : 'linear-gradient(135deg, var(--ocean-sky) 0%, #0ea5e9 100%)',
+                color: saving ? 'var(--ocean-text-subtle)' : 'var(--ocean-black)',
                 fontWeight: 700,
                 fontSize: 14,
                 padding: '11px 22px',
@@ -448,10 +459,10 @@ export default function OnboardingPage() {
             </button>
           )}
         </div>
-      </div>
+      </motion.div>
 
-      <p style={{ marginTop: 28, fontSize: 12, color: '#94a3b8', letterSpacing: '0.02em' }}>
-        &copy; {new Date().getFullYear()} Salon AI
+      <p style={{ marginTop: 28, fontSize: 12, color: 'var(--ocean-text-subtle)', letterSpacing: '0.02em' }}>
+        &copy; {new Date().getFullYear()} OceanCore
       </p>
     </div>
   )
@@ -460,8 +471,10 @@ export default function OnboardingPage() {
 function SummaryRow({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <p style={{ margin: 0, fontSize: 11, fontWeight: 700, color: '#94a3b8', letterSpacing: '0.06em' }}>{label}</p>
-      <p style={{ margin: '5px 0 0', fontSize: 15, fontWeight: 600, color: '#0f172a' }}>{value}</p>
+      <p style={{ margin: 0, fontSize: 11, fontWeight: 700, color: 'var(--ocean-text-subtle)', letterSpacing: '0.06em' }}>
+        {label}
+      </p>
+      <p style={{ margin: '5px 0 0', fontSize: 15, fontWeight: 600, color: 'var(--ocean-text)' }}>{value}</p>
     </div>
   )
 }

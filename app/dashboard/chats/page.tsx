@@ -1,9 +1,8 @@
 'use client'
 
-import Link from 'next/link'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
-import { DashboardLogoutButton } from '@/components/dashboard-logout-button'
+import { DashboardOceanNav } from '@/components/dashboard-ocean-nav'
 import { supabase } from '@/lib/supabase'
 
 type ConversationStatus = 'Live' | 'Waiting' | 'Resolved' | 'Human'
@@ -109,27 +108,33 @@ function mapDbConversationToConversation(row: DbConversationRow): Conversation {
   }
 }
 
-const navItems = ['Dashboard', 'Chats', 'Bookings', 'CRM', 'Settings']
-const navLinks: Record<string, string> = {
-  Dashboard: '/dashboard',
-  Chats: '/dashboard/chats',
-  Calendar: '/dashboard/bookings',
-  Bookings: '/dashboard/bookings',
-  CRM: '/dashboard/crm',
-  Settings: '/dashboard/settings',
-}
-
 function getStatusStyle(status: ConversationStatus) {
   if (status === 'Live') {
-    return { background: '#dcfce7', color: '#166534', border: '#bbf7d0' }
+    return {
+      background: 'rgba(74, 222, 128, 0.12)',
+      color: 'var(--ocean-success)',
+      border: 'rgba(74, 222, 128, 0.35)',
+    }
   }
   if (status === 'Human') {
-    return { background: '#ffedd5', color: '#9a3412', border: '#fed7aa' }
+    return {
+      background: 'rgba(232, 220, 200, 0.15)',
+      color: 'var(--ocean-sand)',
+      border: 'rgba(232, 220, 200, 0.35)',
+    }
   }
   if (status === 'Waiting') {
-    return { background: '#fef3c7', color: '#92400e', border: '#fde68a' }
+    return {
+      background: 'rgba(251, 191, 36, 0.12)',
+      color: 'var(--ocean-warning)',
+      border: 'rgba(251, 191, 36, 0.35)',
+    }
   }
-  return { background: '#e5e7eb', color: '#374151', border: '#d1d5db' }
+  return {
+    background: 'var(--ocean-surface)',
+    color: 'var(--ocean-text-muted)',
+    border: 'var(--ocean-border)',
+  }
 }
 
 export default function ChatsInboxPage() {
@@ -140,8 +145,6 @@ export default function ChatsInboxPage() {
   const [sendingConversationId, setSendingConversationId] = useState<string | null>(null)
   const [inboxLoaded, setInboxLoaded] = useState(false)
   const [inboxFetchError, setInboxFetchError] = useState(false)
-  const [isMobile, setIsMobile] = useState(false)
-  const [isDrawerOpen, setIsDrawerOpen] = useState(false)
   const [isTakenOver, setIsTakenOver] = useState(false)
   const messagesScrollRef = useRef<HTMLDivElement | null>(null)
   const previousSelectedIdRef = useRef<string>('')
@@ -201,19 +204,6 @@ export default function ChatsInboxPage() {
     }
   }, [])
 
-  useEffect(() => {
-    function syncViewport() {
-      const mobile = window.innerWidth < 768
-      setIsMobile(mobile)
-      if (!mobile) {
-        setIsDrawerOpen(false)
-      }
-    }
-    syncViewport()
-    window.addEventListener('resize', syncViewport)
-    return () => window.removeEventListener('resize', syncViewport)
-  }, [])
-
   const selectedConversation = useMemo(() => {
     if (!selectedId) {
       return null
@@ -224,6 +214,7 @@ export default function ChatsInboxPage() {
   useEffect(() => {
     if (!selectedId) {
       previousSelectedIdRef.current = ''
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset takeover when leaving selection
       setIsTakenOver(false)
       return
     }
@@ -503,132 +494,9 @@ export default function ChatsInboxPage() {
     }
   }
 
-  const sidebar = (
-    <aside
-      style={{
-        width: 258,
-        background: '#ffffff',
-        borderRight: '1px solid #e5e7eb',
-        padding: '24px 14px 20px',
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100vh',
-        overflow: 'hidden',
-      }}
-    >
-      <p
-        style={{
-          fontSize: 11,
-          textTransform: 'uppercase',
-          letterSpacing: '0.2em',
-          color: '#ef4444',
-          margin: '0 12px 6px',
-          fontWeight: 700,
-        }}
-      >
-        Salon AI
-      </p>
-      <div style={{ margin: '0 12px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>Operations</h2>
-        {isMobile && (
-          <button
-            type="button"
-            aria-label="Close menu"
-            onClick={() => setIsDrawerOpen(false)}
-            style={{
-              border: 'none',
-              background: 'transparent',
-              fontSize: 26,
-              lineHeight: 1,
-              color: '#374151',
-              cursor: 'pointer',
-            }}
-          >
-            ×
-          </button>
-        )}
-      </div>
-
-      <nav style={{ display: 'grid', gap: 6 }}>
-        {navItems.map((item) => {
-          const isActive = item === 'Chats'
-          return (
-            <Link
-              key={item}
-              href={navLinks[item] ?? '#'}
-              onClick={() => setIsDrawerOpen(false)}
-              style={{
-                padding: '11px 13px',
-                borderRadius: 10,
-                fontSize: 14,
-                fontWeight: 500,
-                color: isActive ? '#7f1d1d' : '#6b7280',
-                background: isActive ? '#fee2e2' : 'transparent',
-                border: isActive ? '1px solid #fecaca' : '1px solid transparent',
-                textDecoration: 'none',
-              }}
-            >
-              {item}
-            </Link>
-          )
-        })}
-      </nav>
-
-      <div style={{ marginTop: 'auto', padding: '0 8px', display: 'grid', gap: 10 }}>
-        <DashboardLogoutButton />
-        <button
-          type="button"
-          style={{
-            width: '100%',
-            border: 'none',
-            borderRadius: 10,
-            background: '#dc2626',
-            color: '#fff',
-            fontWeight: 600,
-            fontSize: 14,
-            padding: '11px 14px',
-            cursor: 'pointer',
-          }}
-        >
-          Deploy Agent
-        </button>
-      </div>
-    </aside>
-  )
-
   return (
-    <div
-      style={{
-        display: 'flex',
-        height: '100vh',
-        overflow: 'hidden',
-        background: '#f3f4f6',
-        color: '#111827',
-        fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      }}
-    >
-      {!isMobile && sidebar}
-      {isMobile && isDrawerOpen && (
-        <div
-          role="presentation"
-          onClick={() => setIsDrawerOpen(false)}
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(17, 24, 39, 0.45)',
-            zIndex: 40,
-          }}
-        >
-          <div
-            role="presentation"
-            onClick={(e) => e.stopPropagation()}
-            style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 258, boxShadow: '0 12px 24px rgba(0, 0, 0, 0.2)' }}
-          >
-            {sidebar}
-          </div>
-        </div>
-      )}
-
+    <DashboardOceanNav activeNav="Chats" fillViewport>
+      {({ isMobile, openNav }) => (
       <div style={{ flex: 1, display: 'flex', height: '100vh', overflow: 'hidden' }}>
         {isMobile ? null : (
           <section
@@ -638,18 +506,28 @@ export default function ChatsInboxPage() {
               overflow: 'hidden',
               display: 'flex',
               flexDirection: 'column',
-              borderRight: '1px solid #e5e7eb',
-              background: '#ffffff',
+              borderRight: '1px solid var(--ocean-border)',
+              background: 'var(--ocean-card)',
               flexShrink: 0,
             }}
           >
-            <header style={{ padding: 20, flexShrink: 0, borderBottom: '1px solid #f3f4f6' }}>
-              <h1 style={{ margin: 0, fontSize: 18 }}>Chat Inbox</h1>
-              <p style={{ margin: '6px 0 0', color: '#6b7280', fontSize: 13 }}>{conversationList.length} active conversations</p>
+            <header style={{ padding: 20, flexShrink: 0, borderBottom: '1px solid var(--ocean-border)' }}>
+              <h1 style={{ margin: 0, fontSize: 18, color: 'var(--ocean-text)' }}>Chat Inbox</h1>
+              <p style={{ margin: '6px 0 0', color: 'var(--ocean-text-muted)', fontSize: 13 }}>
+                {conversationList.length} active conversations
+              </p>
             </header>
             <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
               {inboxLoaded && !inboxFetchError && conversationList.length === 0 ? (
-                <p style={{ margin: '24px 12px', color: '#6b7280', fontSize: 14, textAlign: 'center', lineHeight: 1.5 }}>
+                <p
+                  style={{
+                    margin: '24px 12px',
+                    color: 'var(--ocean-text-muted)',
+                    fontSize: 14,
+                    textAlign: 'center',
+                    lineHeight: 1.5,
+                  }}
+                >
                   No conversations yet
                 </p>
               ) : null}
@@ -664,8 +542,8 @@ export default function ChatsInboxPage() {
                     style={{
                       width: '100%',
                       textAlign: 'left',
-                      border: `1px solid ${isSelected ? '#fecaca' : '#f3f4f6'}`,
-                      background: isSelected ? '#fef2f2' : '#ffffff',
+                      border: `1px solid ${isSelected ? 'var(--ocean-border-strong)' : 'var(--ocean-border)'}`,
+                      background: isSelected ? 'rgba(56, 189, 248, 0.1)' : 'transparent',
                       borderRadius: 12,
                       padding: '12px 12px',
                       marginBottom: 8,
@@ -673,13 +551,15 @@ export default function ChatsInboxPage() {
                     }}
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <p style={{ margin: 0, fontWeight: 600, color: '#111827', fontSize: 14 }}>{conversation.customerName}</p>
-                      <p style={{ margin: 0, color: '#9ca3af', fontSize: 12 }}>{conversation.time}</p>
+                      <p style={{ margin: 0, fontWeight: 600, color: 'var(--ocean-text)', fontSize: 14 }}>
+                        {conversation.customerName}
+                      </p>
+                      <p style={{ margin: 0, color: 'var(--ocean-text-subtle)', fontSize: 12 }}>{conversation.time}</p>
                     </div>
                     <p
                       style={{
                         margin: '6px 0 9px',
-                        color: '#6b7280',
+                        color: 'var(--ocean-text-muted)',
                         fontSize: 13,
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
@@ -716,7 +596,7 @@ export default function ChatsInboxPage() {
             overflow: 'hidden',
             display: 'flex',
             flexDirection: 'column',
-            background: '#ffffff',
+            background: 'var(--ocean-ink)',
           }}
         >
           {selectedConversation ? (
@@ -725,7 +605,7 @@ export default function ChatsInboxPage() {
                 style={{
                   padding: 16,
                   flexShrink: 0,
-                  borderBottom: '1px solid #e5e7eb',
+                  borderBottom: '1px solid var(--ocean-border)',
                   display: 'flex',
                   justifyContent: 'space-between',
                   alignItems: 'center',
@@ -736,12 +616,12 @@ export default function ChatsInboxPage() {
                   {isMobile && (
                     <button
                       type="button"
-                      onClick={() => setIsDrawerOpen(true)}
+                      onClick={() => openNav()}
                       style={{
                         borderRadius: 8,
-                        border: '1px solid #d1d5db',
-                        background: '#fff',
-                        color: '#374151',
+                        border: '1px solid var(--ocean-border)',
+                        background: 'var(--ocean-surface)',
+                        color: 'var(--ocean-text)',
                         fontWeight: 700,
                         fontSize: 12,
                         padding: '6px 10px',
@@ -753,16 +633,18 @@ export default function ChatsInboxPage() {
                   )}
                   <div>
                     <h2 style={{ margin: 0, fontSize: 18 }}>{selectedConversation.customerName}</h2>
-                    <p style={{ margin: '5px 0 0', color: '#6b7280', fontSize: 13 }}>AI assistant is handling this conversation</p>
+                    <p style={{ margin: '5px 0 0', color: 'var(--ocean-text-muted)', fontSize: 13 }}>
+                      AI assistant is handling this conversation
+                    </p>
                   </div>
                 </div>
                 <span
                   style={{
                     padding: '6px 10px',
                     borderRadius: 999,
-                    border: '1px solid #d1fae5',
-                    background: '#ecfdf5',
-                    color: '#047857',
+                    border: '1px solid rgba(74, 222, 128, 0.35)',
+                    background: 'rgba(74, 222, 128, 0.12)',
+                    color: 'var(--ocean-success)',
                     fontSize: 12,
                     fontWeight: 600,
                   }}
@@ -771,7 +653,10 @@ export default function ChatsInboxPage() {
                 </span>
               </header>
 
-              <div ref={messagesScrollRef} style={{ flex: 1, overflowY: 'auto', padding: 20, background: '#f9fafb' }}>
+              <div
+                ref={messagesScrollRef}
+                style={{ flex: 1, overflowY: 'auto', padding: 20, background: 'var(--ocean-deep)' }}
+              >
                 {selectedConversation.messages.map((message) => {
                   const isAI = message.sender === 'ai'
                   return (
@@ -788,9 +673,9 @@ export default function ChatsInboxPage() {
                           maxWidth: '72%',
                           borderRadius: 12,
                           padding: '10px 12px',
-                          background: isAI ? '#dc2626' : '#ffffff',
-                          border: isAI ? '1px solid #b91c1c' : '1px solid #e5e7eb',
-                          color: isAI ? '#fff' : '#1f2937',
+                          background: isAI ? 'linear-gradient(135deg, var(--ocean-sky) 0%, #0ea5e9 100%)' : 'var(--ocean-surface)',
+                          border: isAI ? '1px solid var(--ocean-border-strong)' : '1px solid var(--ocean-border)',
+                          color: isAI ? 'var(--ocean-black)' : 'var(--ocean-text)',
                         }}
                       >
                         <p style={{ margin: 0, fontSize: 14, lineHeight: 1.4 }}>{message.text}</p>
@@ -815,9 +700,9 @@ export default function ChatsInboxPage() {
                         maxWidth: '72%',
                         borderRadius: 12,
                         padding: '10px 12px',
-                        background: '#fee2e2',
-                        border: '1px solid #fecaca',
-                        color: '#991b1b',
+                        background: 'rgba(248, 113, 113, 0.12)',
+                        border: '1px solid rgba(248, 113, 113, 0.35)',
+                        color: 'var(--ocean-danger)',
                       }}
                     >
                       <p style={{ margin: 0, fontSize: 14, lineHeight: 1.4 }}>AI is typing...</p>
@@ -830,17 +715,17 @@ export default function ChatsInboxPage() {
                 style={{
                   flexShrink: 0,
                   padding: 16,
-                  borderTop: '1px solid #e5e7eb',
-                  background: '#ffffff',
+                  borderTop: '1px solid var(--ocean-border)',
+                  background: 'var(--ocean-card)',
                 }}
               >
                 <div
                   style={{
                     marginBottom: 8,
                     borderRadius: 9,
-                    border: `1px solid ${isTakenOver ? '#fed7aa' : '#d1fae5'}`,
-                    background: isTakenOver ? '#fff7ed' : '#ecfdf5',
-                    color: isTakenOver ? '#9a3412' : '#065f46',
+                    border: `1px solid ${isTakenOver ? 'rgba(251, 191, 36, 0.45)' : 'rgba(74, 222, 128, 0.35)'}`,
+                    background: isTakenOver ? 'rgba(251, 191, 36, 0.1)' : 'rgba(74, 222, 128, 0.1)',
+                    color: isTakenOver ? 'var(--ocean-warning)' : 'var(--ocean-success)',
                     fontSize: 12,
                     fontWeight: 700,
                     padding: '8px 10px',
@@ -867,13 +752,13 @@ export default function ChatsInboxPage() {
                     }
                     style={{
                       flex: 1,
-                      border: '1px solid #d1d5db',
+                      border: '1px solid var(--ocean-border)',
                       borderRadius: 10,
                       padding: '10px 12px',
                       fontSize: 14,
                       outline: 'none',
-                      background: !isTakenOver ? '#f9fafb' : '#ffffff',
-                      color: !isTakenOver ? '#6b7280' : '#111827',
+                      background: !isTakenOver ? 'var(--ocean-surface)' : 'var(--ocean-ink-soft)',
+                      color: !isTakenOver ? 'var(--ocean-text-muted)' : 'var(--ocean-text)',
                     }}
                   />
                   <button
@@ -883,8 +768,11 @@ export default function ChatsInboxPage() {
                     style={{
                       border: 'none',
                       borderRadius: 10,
-                      background: !isTakenOver || isLoading || !draft.trim() ? '#fca5a5' : '#dc2626',
-                      color: '#fff',
+                      background:
+                        !isTakenOver || isLoading || !draft.trim()
+                          ? 'var(--ocean-surface)'
+                          : 'linear-gradient(135deg, var(--ocean-sky) 0%, #0ea5e9 100%)',
+                      color: !isTakenOver || isLoading || !draft.trim() ? 'var(--ocean-text-subtle)' : 'var(--ocean-black)',
                       fontWeight: 600,
                       fontSize: 14,
                       padding: '10px 14px',
@@ -898,9 +786,9 @@ export default function ChatsInboxPage() {
                     onClick={() => void handleTakeOverToggle()}
                     style={{
                       borderRadius: 10,
-                      border: `1px solid ${isTakenOver ? '#fdba74' : '#d1d5db'}`,
-                      background: isTakenOver ? '#fb923c' : '#ffffff',
-                      color: isTakenOver ? '#ffffff' : '#374151',
+                      border: `1px solid ${isTakenOver ? 'rgba(251, 191, 36, 0.5)' : 'var(--ocean-border)'}`,
+                      background: isTakenOver ? 'rgba(251, 191, 36, 0.25)' : 'var(--ocean-surface)',
+                      color: isTakenOver ? 'var(--ocean-warning)' : 'var(--ocean-text)',
                       fontWeight: 600,
                       fontSize: 14,
                       padding: '10px 14px',
@@ -920,7 +808,7 @@ export default function ChatsInboxPage() {
                 alignItems: 'center',
                 justifyContent: 'center',
                 padding: 32,
-                color: '#9ca3af',
+                color: 'var(--ocean-text-muted)',
                 fontSize: 14,
               }}
             >
@@ -929,6 +817,7 @@ export default function ChatsInboxPage() {
           )}
         </section>
       </div>
-    </div>
+      )}
+    </DashboardOceanNav>
   )
 }

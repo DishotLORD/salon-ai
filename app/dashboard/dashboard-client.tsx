@@ -1,19 +1,9 @@
 'use client'
 
-import Link from 'next/link'
-import { useEffect, useState } from 'react'
+import { motion } from 'framer-motion'
 
-import { DashboardLogoutButton } from '@/components/dashboard-logout-button'
-
-const navItems = ['Dashboard', 'Chats', 'Bookings', 'CRM', 'Settings']
-const navLinks: Record<string, string> = {
-  Dashboard: '/dashboard',
-  Chats: '/dashboard/chats',
-  Calendar: '/dashboard/bookings',
-  Bookings: '/dashboard/bookings',
-  CRM: '/dashboard/crm',
-  Settings: '/dashboard/settings',
-}
+import { DashboardOceanNav } from '@/components/dashboard-ocean-nav'
+import { fadeUp, staggerChildren } from '@/lib/ocean-motion'
 
 const revenueBarsZero = [6, 6, 6, 6, 6, 6, 6, 6]
 
@@ -24,6 +14,13 @@ const actions = [
   { icon: '🧠', text: 'Resolved cancellation request with rebook option', time: '53 min ago' },
 ]
 
+const card = {
+  borderRadius: 'var(--ocean-radius-lg)' as const,
+  border: '1px solid var(--ocean-border)',
+  background: 'var(--ocean-card)',
+  boxShadow: 'var(--ocean-shadow-md)',
+}
+
 type DashboardClientProps = {
   businessDisplayName: string
   userEmail: string
@@ -32,185 +29,45 @@ type DashboardClientProps = {
 }
 
 export function DashboardClient({ businessDisplayName, userEmail, activeChats, messageCount }: DashboardClientProps) {
-  const [isMobile, setIsMobile] = useState(false)
-  const [isDrawerOpen, setIsDrawerOpen] = useState(false)
-
-  useEffect(() => {
-    function syncViewport() {
-      const mobile = window.innerWidth < 768
-      setIsMobile(mobile)
-      if (!mobile) {
-        setIsDrawerOpen(false)
-      }
-    }
-    syncViewport()
-    window.addEventListener('resize', syncViewport)
-    return () => window.removeEventListener('resize', syncViewport)
-  }, [])
-
   const revenueDisplay = '$0'
   const bookingsDisplay = '0'
   const satisfactionDisplay = '0%'
 
-  const sidebar = (
-    <aside
-      style={{
-        width: 258,
-        background: '#ffffff',
-        borderRight: '1px solid #e5e7eb',
-        padding: '24px 14px 20px',
-        display: 'flex',
-        flexDirection: 'column',
-        minHeight: '100vh',
-      }}
-    >
-      <p
-        style={{
-          fontSize: 11,
-          textTransform: 'uppercase',
-          letterSpacing: '0.2em',
-          color: '#ef4444',
-          margin: '0 12px 6px',
-        }}
-      >
-        SALON AI
-      </p>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '0 12px 24px' }}>
-        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>Operations</h2>
-        {isMobile && (
-          <button
-            type="button"
-            aria-label="Close menu"
-            onClick={() => setIsDrawerOpen(false)}
-            style={{
-              border: 'none',
-              background: 'transparent',
-              fontSize: 26,
-              lineHeight: 1,
-              color: '#374151',
-              cursor: 'pointer',
-            }}
-          >
-            ×
-          </button>
-        )}
-      </div>
-      <nav style={{ display: 'grid', gap: 6 }}>
-        {navItems.map((item) => {
-          const isActive = item === 'Dashboard'
-          return (
-            <Link
-              key={item}
-              href={navLinks[item] ?? '#'}
-              onClick={() => setIsDrawerOpen(false)}
-              style={{
-                padding: '11px 13px',
-                borderRadius: 10,
-                fontSize: 14,
-                fontWeight: 500,
-                color: isActive ? '#7f1d1d' : '#6b7280',
-                background: isActive ? '#fee2e2' : 'transparent',
-                border: isActive ? '1px solid #fecaca' : '1px solid transparent',
-                textDecoration: 'none',
-              }}
-            >
-              {item}
-            </Link>
-          )
-        })}
-      </nav>
-      <div style={{ marginTop: 'auto', padding: '0 8px', display: 'grid', gap: 10 }}>
-        <DashboardLogoutButton />
-        <button
-          type="button"
-          style={{
-            width: '100%',
-            border: 'none',
-            borderRadius: 10,
-            background: '#dc2626',
-            color: '#fff',
-            fontWeight: 600,
-            fontSize: 14,
-            padding: '11px 14px',
-            cursor: 'pointer',
-          }}
-        >
-          Deploy Agent
-        </button>
-      </div>
-    </aside>
-  )
-
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        background: '#f3f4f6',
-        color: '#111827',
-        fontFamily:
-          'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      }}
-    >
-      <div style={{ display: 'flex', minHeight: '100vh' }}>
-        {!isMobile && sidebar}
-
-        {isMobile && isDrawerOpen && (
-          <div
-            onClick={() => setIsDrawerOpen(false)}
-            role="presentation"
-            style={{
-              position: 'fixed',
-              inset: 0,
-              background: 'rgba(17, 24, 39, 0.45)',
-              zIndex: 40,
-            }}
-          >
-            <div
-              onClick={(e) => e.stopPropagation()}
-              role="presentation"
-              style={{
-                position: 'absolute',
-                left: 0,
-                top: 0,
-                bottom: 0,
-                width: 258,
-                boxShadow: '0 12px 24px rgba(0, 0, 0, 0.2)',
-              }}
-            >
-              {sidebar}
-            </div>
-          </div>
-        )}
-
-        <main style={{ flex: 1, padding: isMobile ? '16px 14px 24px' : '30px 32px 36px' }}>
+    <DashboardOceanNav activeNav="Dashboard">
+      {({ isMobile, openNav }) => (
+        <main style={{ flex: 1, padding: isMobile ? '16px 14px 24px' : '30px 32px 36px', overflow: 'auto' }}>
           {isMobile && (
             <div style={{ marginBottom: 12 }}>
-              <button
+              <motion.button
                 type="button"
                 aria-label="Open menu"
-                onClick={() => setIsDrawerOpen(true)}
+                onClick={openNav}
+                whileHover={{ scale: 1.04 }}
+                whileTap={{ scale: 0.96 }}
                 style={{
-                  border: '1px solid #e5e7eb',
-                  borderRadius: 10,
-                  background: '#fff',
-                  color: '#374151',
-                  width: 40,
-                  height: 40,
-                  fontSize: 23,
+                  border: '1px solid var(--ocean-border)',
+                  borderRadius: 'var(--ocean-radius-md)',
+                  background: 'var(--ocean-surface)',
+                  color: 'var(--ocean-text)',
+                  width: 44,
+                  height: 44,
+                  fontSize: 22,
                   lineHeight: 1,
                   cursor: 'pointer',
                 }}
               >
                 ☰
-              </button>
+              </motion.button>
             </div>
           )}
 
-          <section
+          <motion.section
+            variants={staggerChildren}
+            initial="hidden"
+            animate="visible"
             style={{
-              background: '#ffffff',
-              border: '1px solid #e5e7eb',
-              borderRadius: 18,
+              ...card,
               padding: 24,
               display: 'grid',
               gridTemplateColumns: isMobile ? '1fr' : '1.2fr minmax(240px, 0.8fr)',
@@ -218,13 +75,13 @@ export function DashboardClient({ businessDisplayName, userEmail, activeChats, m
               marginBottom: 20,
             }}
           >
-            <div>
+            <motion.div variants={fadeUp}>
               <div
                 style={{
                   display: 'inline-flex',
-                  background: '#ecfdf5',
-                  color: '#166534',
-                  border: '1px solid #bbf7d0',
+                  background: 'rgba(74, 222, 128, 0.12)',
+                  color: 'var(--ocean-success)',
+                  border: '1px solid rgba(74, 222, 128, 0.35)',
                   padding: '6px 10px',
                   borderRadius: 999,
                   fontSize: 12,
@@ -234,54 +91,61 @@ export function DashboardClient({ businessDisplayName, userEmail, activeChats, m
               >
                 System Status: Healthy
               </div>
-              <h1 style={{ margin: 0, fontSize: isMobile ? 34 : 42, lineHeight: 1.05, letterSpacing: '-0.02em' }}>
+              <h1 style={{ margin: 0, fontSize: isMobile ? 30 : 40, lineHeight: 1.05, letterSpacing: '-0.02em' }}>
                 Welcome back, {businessDisplayName} — your AI is active.
               </h1>
-              <p style={{ margin: '12px 0 0', fontSize: 15, color: '#4b5563', maxWidth: 620 }}>
+              <p style={{ margin: '12px 0 0', fontSize: 15, color: 'var(--ocean-text-muted)', maxWidth: 620 }}>
                 {activeChats} active chats · {messageCount} messages
               </p>
-              <p style={{ margin: '7px 0 0', color: '#9ca3af', fontSize: 13 }}>Welcome back, {userEmail}</p>
-              <div style={{ marginTop: 18, display: 'flex', gap: 10 }}>
-                <button
+              <p style={{ margin: '7px 0 0', color: 'var(--ocean-text-subtle)', fontSize: 13 }}>{userEmail}</p>
+              <div style={{ marginTop: 18, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <motion.button
                   type="button"
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
                   style={{
                     border: 'none',
-                    borderRadius: 10,
-                    background: '#dc2626',
-                    color: '#fff',
-                    fontWeight: 600,
+                    borderRadius: 'var(--ocean-radius-md)',
+                    background: 'linear-gradient(135deg, var(--ocean-sky) 0%, #0ea5e9 100%)',
+                    color: 'var(--ocean-black)',
+                    fontWeight: 700,
                     fontSize: 14,
                     padding: '11px 16px',
                     cursor: 'pointer',
+                    boxShadow: 'var(--ocean-shadow-glow)',
                   }}
                 >
                   Deploy Agent
-                </button>
-                <button
+                </motion.button>
+                <motion.button
                   type="button"
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
                   style={{
-                    borderRadius: 10,
+                    borderRadius: 'var(--ocean-radius-md)',
                     background: 'transparent',
-                    color: '#374151',
+                    color: 'var(--ocean-text)',
                     fontWeight: 600,
                     fontSize: 14,
                     padding: '10px 15px',
-                    border: '1px solid #d1d5db',
+                    border: '1px solid var(--ocean-border-strong)',
                     cursor: 'pointer',
                   }}
                 >
                   View Reports
-                </button>
+                </motion.button>
               </div>
-            </div>
-            <div
+            </motion.div>
+            <motion.div
+              variants={fadeUp}
               style={{
-                borderRadius: 14,
-                background: 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #4c0519 100%)',
+                borderRadius: 'var(--ocean-radius-lg)',
+                background:
+                  'linear-gradient(145deg, var(--ocean-ink) 0%, var(--ocean-surface) 45%, rgba(56, 189, 248, 0.15) 100%)',
                 minHeight: 220,
                 position: 'relative',
                 overflow: 'hidden',
-                border: '1px solid rgba(148, 163, 184, 0.32)',
+                border: '1px solid var(--ocean-border)',
               }}
             >
               <div
@@ -289,33 +153,33 @@ export function DashboardClient({ businessDisplayName, userEmail, activeChats, m
                   position: 'absolute',
                   inset: 0,
                   backgroundImage:
-                    'linear-gradient(rgba(255,255,255,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.06) 1px, transparent 1px)',
+                    'linear-gradient(rgba(125,211,252,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(125,211,252,0.06) 1px, transparent 1px)',
                   backgroundSize: '28px 28px',
-                  opacity: 0.22,
+                  opacity: 0.35,
                 }}
               />
               <div
                 style={{
                   position: 'absolute',
-                  width: 144,
-                  height: 144,
+                  width: 160,
+                  height: 160,
                   borderRadius: 999,
-                  background: 'radial-gradient(circle, rgba(248,113,113,0.45) 0%, rgba(248,113,113,0) 70%)',
-                  filter: 'blur(6px)',
-                  top: -28,
-                  right: -18,
+                  background: 'radial-gradient(circle, rgba(232,220,200,0.25) 0%, transparent 70%)',
+                  filter: 'blur(8px)',
+                  top: -40,
+                  right: -20,
                 }}
               />
               <div
                 style={{
                   position: 'absolute',
-                  width: 164,
-                  height: 164,
+                  width: 180,
+                  height: 180,
                   borderRadius: 999,
-                  background: 'radial-gradient(circle, rgba(99,102,241,0.32) 0%, rgba(99,102,241,0) 72%)',
-                  filter: 'blur(10px)',
-                  bottom: -44,
-                  left: -30,
+                  background: 'radial-gradient(circle, rgba(56,189,248,0.35) 0%, transparent 72%)',
+                  filter: 'blur(12px)',
+                  bottom: -50,
+                  left: -40,
                 }}
               />
               <div
@@ -329,42 +193,48 @@ export function DashboardClient({ businessDisplayName, userEmail, activeChats, m
               >
                 <div
                   style={{
-                    borderRadius: 12,
+                    borderRadius: 'var(--ocean-radius-md)',
                     padding: '12px 14px',
-                    border: '1px solid rgba(255,255,255,0.18)',
-                    background: 'rgba(15, 23, 42, 0.45)',
-                    backdropFilter: 'blur(3px)',
-                    color: '#fff',
+                    border: '1px solid var(--ocean-border-strong)',
+                    background: 'rgba(6, 16, 24, 0.55)',
+                    backdropFilter: 'blur(8px)',
+                    color: 'var(--ocean-text)',
                   }}
                 >
                   <p style={{ margin: 0, fontSize: 18, fontWeight: 700, letterSpacing: '-0.01em' }}>AI Agent Active</p>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, color: '#d1fae5', fontSize: 12 }}>
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      marginTop: 6,
+                      color: 'var(--ocean-sky-bright)',
+                      fontSize: 12,
+                    }}
+                  >
                     <span
                       style={{
                         width: 9,
                         height: 9,
                         borderRadius: 999,
-                        background: '#22c55e',
-                        boxShadow: '0 0 0 6px rgba(34, 197, 94, 0.18)',
+                        background: 'var(--ocean-success)',
+                        boxShadow: '0 0 0 6px rgba(74, 222, 128, 0.2)',
                       }}
                     />
                     Live monitoring enabled
                   </div>
                 </div>
               </div>
-            </div>
-          </section>
+            </motion.div>
+          </motion.section>
 
           <section style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, minmax(0, 1fr))', gap: 14 }}>
-            <article
-              style={{
-                borderRadius: 14,
-                border: '1px solid #e5e7eb',
-                background: '#ffffff',
-                padding: 16,
-              }}
+            <motion.article
+              whileHover={{ y: -2 }}
+              transition={{ duration: 0.2 }}
+              style={{ ...card, padding: 16 }}
             >
-              <p style={{ margin: 0, color: '#6b7280', fontSize: 13 }}>Estimated Revenue</p>
+              <p style={{ margin: 0, color: 'var(--ocean-text-muted)', fontSize: 13 }}>Estimated Revenue</p>
               <p style={{ margin: '8px 0 14px', fontSize: 30, fontWeight: 700 }}>{revenueDisplay}</p>
               <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: 74 }}>
                 {revenueBarsZero.map((bar, idx) => (
@@ -374,22 +244,22 @@ export function DashboardClient({ businessDisplayName, userEmail, activeChats, m
                       flex: 1,
                       borderRadius: 6,
                       height: `${bar}%`,
-                      background: idx > 4 ? '#dc2626' : '#fca5a5',
+                      background:
+                        idx > 4
+                          ? 'linear-gradient(180deg, var(--ocean-sky-bright), var(--ocean-sky))'
+                          : 'rgba(56, 189, 248, 0.35)',
                     }}
                   />
                 ))}
               </div>
-            </article>
+            </motion.article>
 
-            <article
-              style={{
-                borderRadius: 14,
-                border: '1px solid #e5e7eb',
-                background: '#ffffff',
-                padding: 16,
-              }}
+            <motion.article
+              whileHover={{ y: -2 }}
+              transition={{ duration: 0.2 }}
+              style={{ ...card, padding: 16 }}
             >
-              <p style={{ margin: 0, color: '#6b7280', fontSize: 13 }}>Total Bookings</p>
+              <p style={{ margin: 0, color: 'var(--ocean-text-muted)', fontSize: 13 }}>Total Bookings</p>
               <p style={{ margin: '8px 0 16px', fontSize: 30, fontWeight: 700 }}>{bookingsDisplay}</p>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 {['A', 'M', 'J', 'S', '+12'].map((item, idx) => (
@@ -403,33 +273,30 @@ export function DashboardClient({ businessDisplayName, userEmail, activeChats, m
                       placeItems: 'center',
                       fontSize: 12,
                       fontWeight: 700,
-                      color: idx === 4 ? '#b91c1c' : '#1f2937',
-                      background: idx === 4 ? '#fee2e2' : '#f3f4f6',
-                      border: '1px solid #e5e7eb',
+                      color: idx === 4 ? 'var(--ocean-sand-deep)' : 'var(--ocean-text)',
+                      background: idx === 4 ? 'rgba(232, 220, 200, 0.2)' : 'var(--ocean-surface)',
+                      border: '1px solid var(--ocean-border)',
                     }}
                   >
                     {item}
                   </span>
                 ))}
               </div>
-            </article>
+            </motion.article>
 
-            <article
-              style={{
-                borderRadius: 14,
-                border: '1px solid #e5e7eb',
-                background: '#ffffff',
-                padding: 16,
-              }}
+            <motion.article
+              whileHover={{ y: -2 }}
+              transition={{ duration: 0.2 }}
+              style={{ ...card, padding: 16 }}
             >
-              <p style={{ margin: 0, color: '#6b7280', fontSize: 13 }}>Satisfaction Rate</p>
+              <p style={{ margin: 0, color: 'var(--ocean-text-muted)', fontSize: 13 }}>Satisfaction Rate</p>
               <p style={{ margin: '8px 0 10px', fontSize: 30, fontWeight: 700 }}>{satisfactionDisplay}</p>
               <div
                 style={{
                   width: '100%',
                   height: 10,
                   borderRadius: 999,
-                  background: '#e5e7eb',
+                  background: 'var(--ocean-surface)',
                   overflow: 'hidden',
                 }}
               >
@@ -438,12 +305,12 @@ export function DashboardClient({ businessDisplayName, userEmail, activeChats, m
                     width: '0%',
                     height: '100%',
                     borderRadius: 999,
-                    background: 'linear-gradient(90deg, #f87171, #dc2626)',
+                    background: 'linear-gradient(90deg, var(--ocean-sky), var(--ocean-sand-deep))',
                   }}
                 />
               </div>
-              <p style={{ margin: '8px 0 0', color: '#6b7280', fontSize: 12 }}>No trend data yet</p>
-            </article>
+              <p style={{ margin: '8px 0 0', color: 'var(--ocean-text-muted)', fontSize: 12 }}>No trend data yet</p>
+            </motion.article>
           </section>
 
           <section
@@ -454,111 +321,95 @@ export function DashboardClient({ businessDisplayName, userEmail, activeChats, m
               gap: 14,
             }}
           >
-            <article
-              style={{
-                borderRadius: 14,
-                border: '1px solid #e5e7eb',
-                background: '#ffffff',
-                overflow: 'hidden',
-              }}
-            >
-              <div style={{ padding: '16px 18px', borderBottom: '1px solid #f1f5f9' }}>
+            <article style={{ ...card, overflow: 'hidden' }}>
+              <div style={{ padding: '16px 18px', borderBottom: '1px solid var(--ocean-border)' }}>
                 <h3 style={{ margin: 0, fontSize: 18 }}>Recent AI Actions</h3>
               </div>
               <div style={{ padding: '4px 14px 14px' }}>
                 {actions.map((action) => (
-                  <div
+                  <motion.div
                     key={`${action.text}-${action.time}`}
+                    initial={{ opacity: 0, x: -6 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ duration: 0.2 }}
+                    whileHover={{ backgroundColor: 'rgba(56, 189, 248, 0.06)' }}
                     style={{
                       display: 'grid',
                       gridTemplateColumns: 'auto 1fr auto',
                       gap: 10,
                       alignItems: 'center',
-                      borderBottom: '1px solid #f3f4f6',
-                      padding: '12px 4px',
+                      borderBottom: '1px solid var(--ocean-border)',
+                      padding: '12px 8px',
+                      borderRadius: 'var(--ocean-radius-sm)',
                     }}
                   >
-                    <span
+                    <motion.span
+                      whileHover={{ rotate: [0, -8, 8, 0], scale: 1.05 }}
+                      transition={{ duration: 0.45 }}
                       style={{
-                        width: 34,
-                        height: 34,
+                        width: 36,
+                        height: 36,
                         borderRadius: 10,
                         display: 'grid',
                         placeItems: 'center',
-                        background: '#f9fafb',
-                        border: '1px solid #e5e7eb',
+                        background: 'var(--ocean-surface)',
+                        border: '1px solid var(--ocean-border)',
                       }}
                     >
                       {action.icon}
-                    </span>
-                    <p style={{ margin: 0, fontSize: 14, color: '#1f2937' }}>{action.text}</p>
-                    <span style={{ margin: 0, fontSize: 12, color: '#9ca3af' }}>{action.time}</span>
-                  </div>
+                    </motion.span>
+                    <p style={{ margin: 0, fontSize: 14, color: 'var(--ocean-text)' }}>{action.text}</p>
+                    <span style={{ margin: 0, fontSize: 12, color: 'var(--ocean-text-subtle)' }}>{action.time}</span>
+                  </motion.div>
                 ))}
               </div>
             </article>
 
             <article
               style={{
-                borderRadius: 14,
-                background: 'linear-gradient(165deg, #1e3a8a 0%, #172554 65%, #0b173d 100%)',
-                color: '#dbeafe',
+                borderRadius: 'var(--ocean-radius-lg)',
+                background: 'linear-gradient(165deg, var(--ocean-surface) 0%, var(--ocean-ink) 70%, var(--ocean-black) 100%)',
+                color: 'var(--ocean-text)',
                 padding: 18,
                 display: 'flex',
                 flexDirection: 'column',
                 justifyContent: 'space-between',
                 minHeight: 220,
+                border: '1px solid var(--ocean-border)',
+                boxShadow: 'var(--ocean-shadow-md)',
               }}
             >
               <div>
-                <p style={{ margin: 0, fontSize: 20, fontWeight: 700, color: '#eff6ff', letterSpacing: '-0.01em' }}>AI Agent</p>
-                <p style={{ margin: '8px 0 0', fontSize: 13, color: '#86efac', fontWeight: 600 }}>● Online</p>
+                <p style={{ margin: 0, fontSize: 20, fontWeight: 700, letterSpacing: '-0.01em' }}>AI Agent</p>
+                <p style={{ margin: '8px 0 0', fontSize: 13, color: 'var(--ocean-success)', fontWeight: 600 }}>● Online</p>
               </div>
               <div style={{ marginTop: 16, display: 'grid', gap: 8 }}>
-                <div
-                  style={{
-                    background: 'rgba(255, 255, 255, 0.1)',
-                    borderRadius: 10,
-                    padding: '10px 12px',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                  }}
-                >
-                  <span style={{ fontSize: 12, color: '#bfdbfe' }}>Messages today</span>
-                  <span style={{ fontSize: 14, fontWeight: 700, color: '#eff6ff' }}>{messageCount}</span>
-                </div>
-                <div
-                  style={{
-                    background: 'rgba(255, 255, 255, 0.1)',
-                    borderRadius: 10,
-                    padding: '10px 12px',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                  }}
-                >
-                  <span style={{ fontSize: 12, color: '#bfdbfe' }}>Response time</span>
-                  <span style={{ fontSize: 14, fontWeight: 700, color: '#eff6ff' }}>&lt; 1s</span>
-                </div>
-                <div
-                  style={{
-                    background: 'rgba(255, 255, 255, 0.1)',
-                    borderRadius: 10,
-                    padding: '10px 12px',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                  }}
-                >
-                  <span style={{ fontSize: 12, color: '#bfdbfe' }}>Conversations handled</span>
-                  <span style={{ fontSize: 14, fontWeight: 700, color: '#eff6ff' }}>{activeChats}</span>
-                </div>
+                {[
+                  ['Messages today', String(messageCount)],
+                  ['Response time', '< 1s'],
+                  ['Conversations handled', String(activeChats)],
+                ].map(([label, value]) => (
+                  <div
+                    key={String(label)}
+                    style={{
+                      background: 'rgba(56, 189, 248, 0.08)',
+                      borderRadius: 'var(--ocean-radius-md)',
+                      padding: '10px 12px',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      border: '1px solid var(--ocean-border)',
+                    }}
+                  >
+                    <span style={{ fontSize: 12, color: 'var(--ocean-text-muted)' }}>{label}</span>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--ocean-sky-bright)' }}>{value}</span>
+                  </div>
+                ))}
               </div>
             </article>
           </section>
         </main>
-      </div>
-    </div>
+      )}
+    </DashboardOceanNav>
   )
 }

@@ -1,26 +1,152 @@
 @import "tailwindcss";
 
+/* -------------------------------------------------------------------------- */
+/* OceanCore — global design tokens (Step 1)                                  */
+/* Palette: deep blue, sky/cyan, sand, black. Use var(--ocean-*) in UI.       */
+/* -------------------------------------------------------------------------- */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Core canvas & ink */
+  --ocean-black: #070b12;
+  --ocean-ink: #0e1624;
+  --ocean-ink-soft: #152238;
+  --ocean-text: #e8f1ff;
+  --ocean-text-muted: #94a8c4;
+  --ocean-text-subtle: #6b7f9c;
+
+  /* Blues (depth → surface) */
+  --ocean-deep: #061018;
+  --ocean-mid: #0c1a2e;
+  --ocean-surface: #102338;
+  --ocean-surface-hover: #153047;
+  --ocean-border: rgba(125, 211, 252, 0.14);
+  --ocean-border-strong: rgba(125, 211, 252, 0.28);
+
+  /* Sky / голубой accents */
+  --ocean-sky: #38bdf8;
+  --ocean-sky-bright: #7dd3fc;
+  --ocean-sky-glow: rgba(56, 189, 248, 0.35);
+  --ocean-sky-muted: rgba(125, 211, 252, 0.12);
+
+  /* Sand / песочный warmth */
+  --ocean-sand: #e8dcc8;
+  --ocean-sand-soft: #f0e8da;
+  --ocean-sand-deep: #c4b59a;
+  --ocean-sand-glow: rgba(232, 220, 200, 0.14);
+
+  /* Functional (semantic) */
+  --ocean-primary: var(--ocean-sky);
+  --ocean-primary-hover: var(--ocean-sky-bright);
+  --ocean-accent-warm: var(--ocean-sand);
+  --ocean-danger: #f87171;
+  --ocean-success: #4ade80;
+  --ocean-warning: #fbbf24;
+
+  /* Layout surfaces */
+  --ocean-canvas: radial-gradient(
+      120% 80% at 50% -20%,
+      rgba(56, 189, 248, 0.12) 0%,
+      transparent 55%
+    ),
+    linear-gradient(180deg, var(--ocean-deep) 0%, var(--ocean-mid) 45%, var(--ocean-black) 100%);
+  --ocean-card: linear-gradient(
+      145deg,
+      rgba(16, 35, 56, 0.92) 0%,
+      rgba(12, 26, 46, 0.88) 100%
+    );
+  --ocean-card-border: var(--ocean-border);
+
+  /* Elevation */
+  --ocean-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --ocean-shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45), 0 0 0 1px var(--ocean-border);
+  --ocean-shadow-lg: 0 24px 48px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--ocean-border-strong);
+  --ocean-shadow-glow: 0 0 40px var(--ocean-sky-glow);
+
+  /* Radius */
+  --ocean-radius-sm: 8px;
+  --ocean-radius-md: 12px;
+  --ocean-radius-lg: 16px;
+  --ocean-radius-xl: 22px;
+  --ocean-radius-full: 9999px;
+
+  /* Motion (used by Framer Motion + CSS in later steps) */
+  --ocean-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ocean-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ocean-duration-fast: 150ms;
+  --ocean-duration-base: 220ms;
+  --ocean-duration-slow: 360ms;
+
+  /* Legacy aliases — keep Next/Tailwind theme mapping working */
+  --background: var(--ocean-deep);
+  --foreground: var(--ocean-text);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* OceanCore is dark-first; dark prefs keep same tokens for consistency */
+    --background: var(--ocean-deep);
+    --foreground: var(--ocean-text);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --ocean-duration-fast: 0.01ms;
+    --ocean-duration-base: 0.01ms;
+    --ocean-duration-slow: 0.01ms;
+  }
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-ocean-black: var(--ocean-black);
+  --color-ocean-ink: var(--ocean-ink);
+  --color-ocean-ink-soft: var(--ocean-ink-soft);
+  --color-ocean-text: var(--ocean-text);
+  --color-ocean-text-muted: var(--ocean-text-muted);
+  --color-ocean-deep: var(--ocean-deep);
+  --color-ocean-mid: var(--ocean-mid);
+  --color-ocean-surface: var(--ocean-surface);
+  --color-ocean-surface-hover: var(--ocean-surface-hover);
+  --color-ocean-border: var(--ocean-border);
+  --color-ocean-sky: var(--ocean-sky);
+  --color-ocean-sky-bright: var(--ocean-sky-bright);
+  --color-ocean-sand: var(--ocean-sand);
+  --color-ocean-sand-soft: var(--ocean-sand-soft);
+  --color-ocean-sand-deep: var(--ocean-sand-deep);
+  --color-ocean-primary: var(--ocean-primary);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  color-scheme: dark;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  margin: 0;
+  min-height: 100%;
+  background: var(--ocean-canvas);
+  background-color: var(--ocean-deep);
+  color: var(--ocean-text);
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: var(--ocean-sky-muted);
+  color: var(--ocean-text);
+}
+
+:focus-visible {
+  outline: 2px solid var(--ocean-sky);
+  outline-offset: 2px;
 }

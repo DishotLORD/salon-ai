@@ -1,10 +1,12 @@
 'use client'
 
-import { Suspense, useEffect, useState } from 'react'
+import { motion } from 'framer-motion'
 import Link from 'next/link'
+import { Suspense, useEffect, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 
 import { supabase } from '@/lib/supabase'
+import { fadeUp, staggerChildren } from '@/lib/ocean-motion'
 
 type AuthMode = 'login' | 'register'
 
@@ -14,13 +16,9 @@ function LoginContent() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const [authMode, setAuthMode] = useState<AuthMode>('login')
   const [isMobile, setIsMobile] = useState(false)
 
-  useEffect(() => {
-    const mode = searchParams.get('mode')
-    setAuthMode(mode === 'signup' ? 'register' : 'login')
-  }, [searchParams])
+  const authMode: AuthMode = searchParams.get('mode') === 'signup' ? 'register' : 'login'
 
   useEffect(() => {
     function syncViewport() {
@@ -83,23 +81,45 @@ function LoginContent() {
     }
   }
 
+  const input = {
+    display: 'block' as const,
+    width: '100%',
+    padding: '12px 14px',
+    borderRadius: 'var(--ocean-radius-md)',
+    border: '1px solid var(--ocean-border)',
+    background: 'var(--ocean-surface)',
+    color: 'var(--ocean-text)',
+    fontSize: 14,
+    outline: 'none' as const,
+  }
+
+  const label = {
+    display: 'block' as const,
+    fontSize: 11,
+    fontWeight: 700,
+    color: 'var(--ocean-text-muted)',
+    letterSpacing: '0.06em',
+    marginBottom: 6,
+  }
+
   return (
     <div
       style={{
         minHeight: '100vh',
-        background: '#ffffff',
         display: 'flex',
         flexDirection: isMobile ? 'column' : 'row',
-        fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }}
     >
-      <section
+      <motion.section
+        initial={{ opacity: 0, x: isMobile ? 0 : -24 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
         style={{
           flex: 1,
-          minHeight: isMobile ? 240 : '100vh',
+          minHeight: isMobile ? 260 : '100vh',
           background:
-            'radial-gradient(circle at 18% 18%, rgba(220, 38, 38, 0.28), transparent 48%), linear-gradient(155deg, #0f172a 0%, #111827 52%, #3f0b0b 100%)',
-          color: '#e5e7eb',
+            'linear-gradient(160deg, var(--ocean-black) 0%, var(--ocean-ink) 42%, var(--ocean-surface) 100%)',
+          color: 'var(--ocean-text)',
           display: 'flex',
           flexDirection: 'column',
           justifyContent: 'center',
@@ -113,105 +133,90 @@ function LoginContent() {
             position: 'absolute',
             inset: 0,
             backgroundImage:
-              'linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px)',
-            backgroundSize: '28px 28px',
+              'radial-gradient(ellipse 80% 50% at 20% -10%, rgba(56, 189, 248, 0.25), transparent), radial-gradient(ellipse 60% 40% at 100% 100%, rgba(232, 220, 200, 0.12), transparent)',
             pointerEvents: 'none',
           }}
         />
-        <div style={{ position: 'relative', zIndex: 1, maxWidth: 520 }}>
-          <div>
-            <div style={{ fontSize: 42, fontWeight: 800, letterSpacing: '-0.02em', color: '#ffffff' }}>Salon AI</div>
-            <div style={{ marginTop: 10, width: 40, height: 3, background: '#dc2626' }} />
-          </div>
-          <p
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            opacity: 0.2,
+            backgroundImage:
+              'linear-gradient(rgba(125,211,252,0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(125,211,252,0.08) 1px, transparent 1px)',
+            backgroundSize: '32px 32px',
+            pointerEvents: 'none',
+          }}
+        />
+        <motion.div
+          variants={staggerChildren}
+          initial="hidden"
+          animate="visible"
+          style={{ position: 'relative', zIndex: 1, maxWidth: 520 }}
+        >
+          <motion.div variants={fadeUp}>
+            <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.28em', color: 'var(--ocean-sky)' }}>
+              OCEANCORE
+            </div>
+            <div style={{ marginTop: 10, width: 48, height: 3, borderRadius: 2, background: 'var(--ocean-sand)' }} />
+          </motion.div>
+          <motion.p
+            variants={fadeUp}
             style={{
-              margin: '16px 0 0',
-              fontSize: isMobile ? 20 : 28,
-              lineHeight: 1.2,
-              color: '#f3f4f6',
-              fontWeight: 600,
+              margin: '18px 0 0',
+              fontSize: isMobile ? 22 : 30,
+              lineHeight: 1.15,
+              fontWeight: 700,
+              letterSpacing: '-0.02em',
             }}
           >
-            AI-powered operations for modern salons
-          </p>
-          <div style={{ marginTop: 24, display: 'grid', gap: 10, color: '#d1d5db', fontSize: 15 }}>
+            Calm operations. Clear conversations. Deep automation.
+          </motion.p>
+          <motion.div variants={fadeUp} style={{ marginTop: 26, display: 'grid', gap: 12, color: 'var(--ocean-text-muted)', fontSize: 15 }}>
             <p style={{ margin: 0 }}>• Smart booking assistant</p>
             <p style={{ margin: 0 }}>• Automated client follow-ups</p>
             <p style={{ margin: 0 }}>• Real-time business insights</p>
-          </div>
-        </div>
-      </section>
+          </motion.div>
+        </motion.div>
+      </motion.section>
 
-      <section
+      <motion.section
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, delay: 0.08, ease: [0.22, 1, 0.36, 1] }}
         style={{
           flex: 1,
           minHeight: isMobile ? 'auto' : '100vh',
-          background: '#ffffff',
+          background: 'var(--ocean-mid)',
           display: 'grid',
           placeItems: 'center',
-          padding: isMobile ? '22px 16px 30px' : '32px',
+          padding: isMobile ? '28px 18px 36px' : '32px',
+          borderLeft: isMobile ? 'none' : '1px solid var(--ocean-border)',
         }}
       >
         <div style={{ width: '100%', maxWidth: 400 }}>
-          <h1 style={{ margin: 0, fontSize: 34, lineHeight: 1.1, letterSpacing: '-0.02em', color: '#111827' }}>
-            {authMode === 'login' ? 'Welcome Back' : 'Create Account'}
-          </h1>
-          <p style={{ margin: '8px 0 0', color: '#6b7280', fontSize: 15 }}>
-            {authMode === 'login' ? 'Securely access your dashboard' : 'Create your Salon AI account'}
-          </p>
+          <motion.div key={authMode} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
+            <h1 style={{ margin: 0, fontSize: 32, lineHeight: 1.1, letterSpacing: '-0.02em', color: 'var(--ocean-text)' }}>
+              {authMode === 'login' ? 'Welcome back' : 'Create account'}
+            </h1>
+            <p style={{ margin: '10px 0 0', color: 'var(--ocean-text-muted)', fontSize: 15 }}>
+              {authMode === 'login' ? 'Sign in to your OceanCore workspace' : 'Start your OceanCore workspace'}
+            </p>
+          </motion.div>
 
-          <div style={{ marginTop: 22 }}>
-            <label
-              style={{
-                display: 'block',
-                fontSize: 12,
-                fontWeight: 700,
-                color: '#4b5563',
-                letterSpacing: '0.04em',
-                marginBottom: 6,
-              }}
-            >
-              BUSINESS EMAIL
-            </label>
+          <div style={{ marginTop: 26 }}>
+            <label style={label}>BUSINESS EMAIL</label>
             <input
               type="email"
               placeholder="name@business.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              style={{
-                display: 'block',
-                width: '100%',
-                marginBottom: 14,
-                padding: '12px 13px',
-                borderRadius: 10,
-                border: '1px solid #d1d5db',
-                fontSize: 14,
-                outline: 'none',
-              }}
+              style={{ ...input, marginBottom: 16 }}
             />
 
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                marginBottom: 6,
-              }}
-            >
-              <label
-                style={{
-                  display: 'block',
-                  fontSize: 12,
-                  fontWeight: 700,
-                  color: '#4b5563',
-                  letterSpacing: '0.04em',
-                }}
-              >
-                PASSWORD
-              </label>
-              <a href="#" style={{ fontSize: 12, color: '#dc2626', textDecoration: 'none', fontWeight: 600 }}>
-                Forgot?
-              </a>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <label style={{ ...label, marginBottom: 0 }}>PASSWORD</label>
+              <span style={{ fontSize: 12, color: 'var(--ocean-sky)', fontWeight: 600 }}>Forgot?</span>
             </div>
 
             <input
@@ -219,58 +224,53 @@ function LoginContent() {
               placeholder="••••••••"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              style={{
-                display: 'block',
-                width: '100%',
-                marginBottom: 12,
-                padding: '12px 13px',
-                borderRadius: 10,
-                border: '1px solid #d1d5db',
-                fontSize: 14,
-                outline: 'none',
-              }}
+              style={{ ...input, marginBottom: 12 }}
             />
           </div>
 
-          {error && <p style={{ color: '#dc2626', margin: '0 0 12px', fontSize: 14 }}>{error}</p>}
+          {error ? <p style={{ color: 'var(--ocean-danger)', margin: '0 0 12px', fontSize: 14 }}>{error}</p> : null}
 
-          <button
+          <motion.button
             type="button"
             onClick={handlePrimaryAction}
             disabled={loading}
+            whileHover={{ scale: loading ? 1 : 1.02 }}
+            whileTap={{ scale: loading ? 1 : 0.98 }}
             style={{
               width: '100%',
               border: 'none',
-              borderRadius: 10,
+              borderRadius: 'var(--ocean-radius-md)',
               padding: '12px 14px',
-              background: '#dc2626',
-              color: '#fff',
+              background: loading ? 'var(--ocean-surface)' : 'linear-gradient(135deg, var(--ocean-sky) 0%, #0ea5e9 100%)',
+              color: loading ? 'var(--ocean-text-subtle)' : 'var(--ocean-black)',
               fontWeight: 700,
               fontSize: 14,
               cursor: loading ? 'not-allowed' : 'pointer',
-              opacity: loading ? 0.72 : 1,
+              boxShadow: loading ? 'none' : 'var(--ocean-shadow-glow)',
             }}
           >
             {loading
               ? authMode === 'login'
-                ? 'Signing In...'
-                : 'Creating account...'
+                ? 'Signing in…'
+                : 'Creating account…'
               : authMode === 'login'
-                ? 'Sign In'
+                ? 'Sign in'
                 : 'Register'}
-          </button>
+          </motion.button>
 
-          <button
+          <motion.button
             type="button"
             onClick={() => void handleGoogleSignIn()}
             disabled={loading}
+            whileHover={{ scale: loading ? 1 : 1.02 }}
+            whileTap={{ scale: loading ? 1 : 0.98 }}
             style={{
-              marginTop: 10,
+              marginTop: 12,
               width: '100%',
-              borderRadius: 10,
-              border: '1px solid #d1d5db',
-              background: '#fff',
-              color: '#374151',
+              borderRadius: 'var(--ocean-radius-md)',
+              border: '1px solid var(--ocean-border-strong)',
+              background: 'var(--ocean-surface)',
+              color: 'var(--ocean-text)',
               padding: '10px 12px',
               fontSize: 14,
               fontWeight: 600,
@@ -295,34 +295,38 @@ function LoginContent() {
               }}
             />
             Google
-          </button>
+          </motion.button>
 
-          <p style={{ margin: '14px 0 0', fontSize: 13, color: '#6b7280', textAlign: 'center' }}>
+          <p style={{ margin: '16px 0 0', fontSize: 13, color: 'var(--ocean-text-muted)', textAlign: 'center' }}>
             {authMode === 'login' ? (
               <>
-                New to Salon AI?{' '}
-                <Link href="/auth/login?mode=signup" style={{ color: '#dc2626', fontWeight: 600, textDecoration: 'none' }}>
+                New to OceanCore?{' '}
+                <Link href="/auth/login?mode=signup" style={{ color: 'var(--ocean-sky-bright)', fontWeight: 600, textDecoration: 'none' }}>
                   Sign up
                 </Link>
               </>
             ) : (
               <>
                 Already have an account?{' '}
-                <Link href="/auth/login" style={{ color: '#dc2626', fontWeight: 600, textDecoration: 'none' }}>
+                <Link href="/auth/login" style={{ color: 'var(--ocean-sky-bright)', fontWeight: 600, textDecoration: 'none' }}>
                   Sign in
                 </Link>
               </>
             )}
           </p>
         </div>
-      </section>
+      </motion.section>
     </div>
   )
 }
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={<div style={{ minHeight: '100vh', background: '#0f172a' }} />}>
+    <Suspense
+      fallback={
+        <div style={{ minHeight: '100vh', background: 'var(--ocean-deep)' }} />
+      }
+    >
       <LoginContent />
     </Suspense>
   )

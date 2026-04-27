@@ -1,20 +1,11 @@
 'use client'
 
-import Link from 'next/link'
+import { AnimatePresence, motion } from 'framer-motion'
 
-import { DashboardLogoutButton } from '@/components/dashboard-logout-button'
+import { DashboardOceanNav } from '@/components/dashboard-ocean-nav'
+import { tabContent } from '@/lib/ocean-motion'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '@/lib/supabase'
-
-const navItems = ['Dashboard', 'Chats', 'Bookings', 'CRM', 'Settings']
-const navLinks: Record<string, string> = {
-  Dashboard: '/dashboard',
-  Chats: '/dashboard/chats',
-  Calendar: '/dashboard/bookings',
-  Bookings: '/dashboard/bookings',
-  CRM: '/dashboard/crm',
-  Settings: '/dashboard/settings',
-}
 
 type TabId = 'general' | 'ai' | 'notifications' | 'widget' | 'billing'
 
@@ -79,8 +70,6 @@ export default function SettingsPage() {
 
   const [widgetOrigin, setWidgetOrigin] = useState('')
   const [widgetCopied, setWidgetCopied] = useState(false)
-  const [isMobile, setIsMobile] = useState(false)
-  const [isDrawerOpen, setIsDrawerOpen] = useState(false)
 
   const tabs = useMemo(
     () =>
@@ -103,6 +92,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- origin only available on client
       setWidgetOrigin(window.location.origin)
     }
   }, [])
@@ -157,19 +147,6 @@ export default function SettingsPage() {
         window.clearTimeout(saveToastTimerRef.current)
       }
     }
-  }, [])
-
-  useEffect(() => {
-    function syncViewport() {
-      const mobile = window.innerWidth < 768
-      setIsMobile(mobile)
-      if (!mobile) {
-        setIsDrawerOpen(false)
-      }
-    }
-    syncViewport()
-    window.addEventListener('resize', syncViewport)
-    return () => window.removeEventListener('resize', syncViewport)
   }, [])
 
   const handleSave = async () => {
@@ -257,7 +234,7 @@ export default function SettingsPage() {
     display: 'block' as const,
     fontSize: 12,
     fontWeight: 700,
-    color: '#6b7280',
+    color: 'var(--ocean-text-muted)',
     letterSpacing: '0.04em',
     marginBottom: 6,
   }
@@ -265,106 +242,16 @@ export default function SettingsPage() {
   const inputStyle = {
     width: '100%',
     borderRadius: 10,
-    border: '1px solid #d1d5db',
+    border: '1px solid var(--ocean-border)',
     padding: '10px 12px',
     fontSize: 14,
-    outline: 'none',
-    background: '#fff',
+    outline: 'none' as const,
+    background: 'var(--ocean-surface)',
+    color: 'var(--ocean-text)',
   }
 
-  const sidebar = (
-    <aside
-      style={{
-        width: 258,
-        background: '#ffffff',
-        borderRight: '1px solid #e5e7eb',
-        padding: '24px 14px 20px',
-        display: 'flex',
-        flexDirection: 'column',
-        minHeight: '100vh',
-      }}
-    >
-      <p
-        style={{
-          fontSize: 11,
-          textTransform: 'uppercase',
-          letterSpacing: '0.2em',
-          color: '#ef4444',
-          margin: '0 12px 6px',
-          fontWeight: 700,
-        }}
-      >
-        Salon AI
-      </p>
-      <div style={{ margin: '0 12px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>Operations</h2>
-        {isMobile && (
-          <button
-            type="button"
-            aria-label="Close menu"
-            onClick={() => setIsDrawerOpen(false)}
-            style={{ border: 'none', background: 'transparent', fontSize: 26, lineHeight: 1, color: '#374151', cursor: 'pointer' }}
-          >
-            ×
-          </button>
-        )}
-      </div>
-      <nav style={{ display: 'grid', gap: 6 }}>
-        {navItems.map((item) => {
-          const isActive = item === 'Settings'
-          return (
-            <Link
-              key={item}
-              href={navLinks[item] ?? '#'}
-              onClick={() => setIsDrawerOpen(false)}
-              style={{
-                padding: '11px 13px',
-                borderRadius: 10,
-                fontSize: 14,
-                fontWeight: 500,
-                color: isActive ? '#7f1d1d' : '#6b7280',
-                background: isActive ? '#fee2e2' : 'transparent',
-                border: isActive ? '1px solid #fecaca' : '1px solid transparent',
-                textDecoration: 'none',
-              }}
-            >
-              {item}
-            </Link>
-          )
-        })}
-      </nav>
-      <div style={{ marginTop: 'auto', padding: '0 8px', display: 'grid', gap: 10 }}>
-        <DashboardLogoutButton />
-        <button
-          type="button"
-          style={{
-            width: '100%',
-            border: 'none',
-            borderRadius: 10,
-            background: '#dc2626',
-            color: '#fff',
-            fontWeight: 600,
-            fontSize: 14,
-            padding: '11px 14px',
-            cursor: 'pointer',
-          }}
-        >
-          Deploy Agent
-        </button>
-      </div>
-    </aside>
-  )
-
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        background: '#f3f4f6',
-        color: '#111827',
-        fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-        position: 'relative',
-      }}
-    >
+    <>
       {showSaveToast && (
         <div
           role="status"
@@ -376,50 +263,54 @@ export default function SettingsPage() {
             pointerEvents: 'none',
             padding: '12px 18px',
             borderRadius: 12,
-            background: '#ecfdf5',
-            border: '1px solid #bbf7d0',
-            color: '#166534',
+            background: 'rgba(74, 222, 128, 0.15)',
+            border: '1px solid rgba(74, 222, 128, 0.4)',
+            color: 'var(--ocean-success)',
             fontSize: 14,
             fontWeight: 700,
-            boxShadow: '0 10px 30px rgba(15, 23, 42, 0.12)',
+            boxShadow: 'var(--ocean-shadow-lg)',
           }}
         >
           Saved!
         </div>
       )}
-      <div style={{ display: 'flex', minHeight: '100vh' }}>
-        {!isMobile && sidebar}
-        {isMobile && isDrawerOpen && (
-          <div role="presentation" onClick={() => setIsDrawerOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(17, 24, 39, 0.45)', zIndex: 40 }}>
-            <div role="presentation" onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 258, boxShadow: '0 12px 24px rgba(0, 0, 0, 0.2)' }}>
-              {sidebar}
-            </div>
-          </div>
-        )}
-
-        <main style={{ flex: 1, padding: isMobile ? '16px 14px 24px' : '30px 32px 36px' }}>
+      <DashboardOceanNav activeNav="Settings">
+        {({ isMobile, openNav }) => (
+        <main style={{ flex: 1, padding: isMobile ? '16px 14px 24px' : '30px 32px 36px', overflow: 'auto', position: 'relative' }}>
           {isMobile && (
             <div style={{ marginBottom: 12 }}>
-              <button
+              <motion.button
                 type="button"
                 aria-label="Open menu"
-                onClick={() => setIsDrawerOpen(true)}
-                style={{ border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff', color: '#374151', width: 40, height: 40, fontSize: 23, lineHeight: 1, cursor: 'pointer' }}
+                onClick={openNav}
+                whileHover={{ scale: 1.04 }}
+                whileTap={{ scale: 0.96 }}
+                style={{
+                  border: '1px solid var(--ocean-border)',
+                  borderRadius: 'var(--ocean-radius-md)',
+                  background: 'var(--ocean-surface)',
+                  color: 'var(--ocean-text)',
+                  width: 44,
+                  height: 44,
+                  fontSize: 22,
+                  lineHeight: 1,
+                  cursor: 'pointer',
+                }}
               >
                 ☰
-              </button>
+              </motion.button>
             </div>
           )}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'flex-end', flexDirection: isMobile ? 'column' : 'row', gap: 16 }}>
             <div>
-              <h1 style={{ margin: 0, fontSize: 30, letterSpacing: '-0.02em' }}>Settings</h1>
-              <p style={{ margin: '8px 0 0', color: '#6b7280', fontSize: 14 }}>
+              <h1 style={{ margin: 0, fontSize: 30, letterSpacing: '-0.02em', color: 'var(--ocean-text)' }}>Settings</h1>
+              <p style={{ margin: '8px 0 0', color: 'var(--ocean-text-muted)', fontSize: 14 }}>
                 Configure your business profile, AI behavior, and operational preferences.
               </p>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
               {saveError ? (
-                <span style={{ color: '#b91c1c', fontSize: 13, fontWeight: 600, textAlign: 'right', maxWidth: 320 }}>
+                <span style={{ color: 'var(--ocean-danger)', fontSize: 13, fontWeight: 600, textAlign: 'right', maxWidth: 320 }}>
                   {saveError}
                 </span>
               ) : null}
@@ -430,8 +321,11 @@ export default function SettingsPage() {
                 style={{
                   border: 'none',
                   borderRadius: 10,
-                  background: isLoading || isSaving ? '#f87171' : '#dc2626',
-                  color: '#fff',
+                  background:
+                    isLoading || isSaving
+                      ? 'var(--ocean-surface)'
+                      : 'linear-gradient(135deg, var(--ocean-sky) 0%, #0ea5e9 100%)',
+                  color: isLoading || isSaving ? 'var(--ocean-text-subtle)' : 'var(--ocean-black)',
                   fontWeight: 700,
                   fontSize: 14,
                   padding: '10px 16px',
@@ -448,7 +342,7 @@ export default function SettingsPage() {
               marginTop: 16,
               display: 'flex',
               gap: 8,
-              borderBottom: '1px solid #e5e7eb',
+              borderBottom: '1px solid var(--ocean-border)',
               paddingBottom: 10,
               overflowX: isMobile ? 'auto' : 'visible',
               whiteSpace: isMobile ? 'nowrap' : 'normal',
@@ -468,9 +362,9 @@ export default function SettingsPage() {
                     cursor: 'pointer',
                     fontWeight: 700,
                     fontSize: 13,
-                    color: active ? '#7f1d1d' : '#6b7280',
-                    background: active ? '#fee2e2' : 'transparent',
-                    borderBottom: active ? '2px solid #dc2626' : '2px solid transparent',
+                    color: active ? 'var(--ocean-sky-bright)' : 'var(--ocean-text-muted)',
+                    background: active ? 'rgba(56, 189, 248, 0.12)' : 'transparent',
+                    borderBottom: active ? '2px solid var(--ocean-sky)' : '2px solid transparent',
                     flexShrink: 0,
                   }}
                 >
@@ -483,30 +377,40 @@ export default function SettingsPage() {
           <section
             style={{
               marginTop: 16,
-              background: '#ffffff',
-              border: '1px solid #e5e7eb',
+              background: 'var(--ocean-card)',
+              border: '1px solid var(--ocean-border)',
               borderRadius: 16,
               padding: 18,
             }}
           >
             {isLoading && (
               <div style={{ display: 'grid', gap: 12 }}>
-                <p style={{ margin: 0, color: '#6b7280', fontSize: 14 }}>Loading...</p>
+                <p style={{ margin: 0, color: 'var(--ocean-text-muted)', fontSize: 14 }}>Loading...</p>
                 {Array.from({ length: 6 }).map((_, idx) => (
                   <div
                     key={`settings-skeleton-${idx}`}
                     style={{
                       height: idx % 3 === 0 ? 44 : 38,
                       borderRadius: 10,
-                      background: '#f3f4f6',
-                      border: '1px solid #eceff3',
+                      background: 'var(--ocean-surface)',
+                      border: '1px solid var(--ocean-border)',
                     }}
                   />
                 ))}
               </div>
             )}
 
-            {!isLoading && activeTab === 'general' && (
+            <AnimatePresence mode="wait">
+              {!isLoading ? (
+                <motion.div
+                  key={activeTab}
+                  custom={1}
+                  variants={tabContent}
+                  initial="initial"
+                  animate="animate"
+                  exit="exit"
+                >
+            {activeTab === 'general' && (
               <div style={{ display: 'grid', gap: 14 }}>
                 <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 14 }}>
                   <div>
@@ -550,7 +454,7 @@ export default function SettingsPage() {
 
                 <div>
                   <label style={fieldLabelStyle}>WORKING HOURS</label>
-                  <div style={{ border: '1px solid #f3f4f6', borderRadius: 12, overflow: 'hidden' }}>
+                  <div style={{ border: '1px solid var(--ocean-border)', borderRadius: 12, overflow: 'hidden' }}>
                     {dayOrder.map((day) => {
                       const row = hours[day.key]
                       return (
@@ -562,12 +466,12 @@ export default function SettingsPage() {
                             gap: 10,
                             alignItems: 'center',
                             padding: '10px 12px',
-                            borderBottom: '1px solid #f3f4f6',
-                            background: '#fafafa',
+                            borderBottom: '1px solid var(--ocean-border)',
+                            background: 'var(--ocean-surface)',
                           }}
                         >
                           <div style={{ fontWeight: 700, fontSize: 13 }}>{day.label}</div>
-                          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#4b5563' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ocean-text-muted)' }}>
                             <input
                               type="checkbox"
                               checked={row.closed}
@@ -612,7 +516,7 @@ export default function SettingsPage() {
               </div>
             )}
 
-            {!isLoading && activeTab === 'ai' && (
+            {activeTab === 'ai' && (
               <div style={{ display: 'grid', gap: 14 }}>
                 <div>
                   <label style={fieldLabelStyle}>SYSTEM PROMPT</label>
@@ -648,11 +552,11 @@ export default function SettingsPage() {
                 <div>
                   <label style={fieldLabelStyle}>ESCALATION RULES</label>
                   <div style={{ display: 'grid', gap: 10 }}>
-                    <label style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 14, color: '#374151' }}>
+                    <label style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 14, color: 'var(--ocean-text)' }}>
                       <input type="checkbox" checked={escalateAngry} onChange={(e) => setEscalateAngry(e.target.checked)} />
                       Angry customer
                     </label>
-                    <label style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 14, color: '#374151' }}>
+                    <label style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 14, color: 'var(--ocean-text)' }}>
                       <input
                         type="checkbox"
                         checked={escalatePricing}
@@ -660,7 +564,7 @@ export default function SettingsPage() {
                       />
                       Custom pricing
                     </label>
-                    <label style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 14, color: '#374151' }}>
+                    <label style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 14, color: 'var(--ocean-text)' }}>
                       <input
                         type="checkbox"
                         checked={escalateMedical}
@@ -676,9 +580,9 @@ export default function SettingsPage() {
                     type="button"
                     style={{
                       borderRadius: 10,
-                      border: '1px solid #d1d5db',
-                      background: '#fff',
-                      color: '#111827',
+                      border: '1px solid var(--ocean-border)',
+                      background: 'var(--ocean-surface)',
+                      color: 'var(--ocean-text)',
                       fontWeight: 700,
                       fontSize: 14,
                       padding: '10px 14px',
@@ -691,13 +595,13 @@ export default function SettingsPage() {
               </div>
             )}
 
-            {!isLoading && activeTab === 'notifications' && (
+            {activeTab === 'notifications' && (
               <div style={{ display: 'grid', gap: 14, maxWidth: 720 }}>
-                <label style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 14, color: '#374151' }}>
+                <label style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 14, color: 'var(--ocean-text)' }}>
                   <input type="checkbox" checked={emailNotifs} onChange={(e) => setEmailNotifs(e.target.checked)} />
                   Email notifications for new bookings
                 </label>
-                <label style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 14, color: '#374151' }}>
+                <label style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 14, color: 'var(--ocean-text)' }}>
                   <input type="checkbox" checked={smsNotifs} onChange={(e) => setSmsNotifs(e.target.checked)} />
                   SMS alerts for urgent escalations
                 </label>
@@ -712,13 +616,13 @@ export default function SettingsPage() {
               </div>
             )}
 
-            {!isLoading && activeTab === 'widget' && (
+            {activeTab === 'widget' && (
               <div style={{ display: 'grid', gap: 20, maxWidth: 800 }}>
                 <div>
-                  <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: '#0f172a', letterSpacing: '-0.02em' }}>
+                  <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: 'var(--ocean-text)', letterSpacing: '-0.02em' }}>
                     Embed your AI widget
                   </h2>
-                  <p style={{ margin: '8px 0 0', color: '#6b7280', fontSize: 14, lineHeight: 1.55 }}>
+                  <p style={{ margin: '8px 0 0', color: 'var(--ocean-text-muted)', fontSize: 14, lineHeight: 1.55 }}>
                     Add this code to your website to enable the AI chat widget
                   </p>
                 </div>
@@ -740,9 +644,9 @@ export default function SettingsPage() {
                         }}
                         style={{
                           borderRadius: 10,
-                          border: '1px solid #d1d5db',
-                          background: widgetCopied ? '#ecfdf5' : '#fff',
-                          color: widgetCopied ? '#166534' : '#374151',
+                          border: '1px solid var(--ocean-border)',
+                          background: widgetCopied ? 'rgba(74, 222, 128, 0.15)' : 'var(--ocean-surface)',
+                          color: widgetCopied ? 'var(--ocean-success)' : 'var(--ocean-text)',
                           fontWeight: 600,
                           fontSize: 13,
                           padding: '8px 14px',
@@ -758,12 +662,12 @@ export default function SettingsPage() {
                         margin: 0,
                         padding: '14px 16px',
                         borderRadius: 12,
-                        background: '#0f172a',
-                        color: '#e2e8f0',
+                        background: 'var(--ocean-black)',
+                        color: 'var(--ocean-text)',
                         fontSize: 13,
                         lineHeight: 1.5,
                         overflowX: 'auto',
-                        border: '1px solid #1e293b',
+                        border: '1px solid var(--ocean-border)',
                         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
                       }}
                     >
@@ -771,7 +675,7 @@ export default function SettingsPage() {
                     </pre>
                   </div>
                 ) : (
-                  <p style={{ margin: 0, color: '#6b7280', fontSize: 14 }}>
+                  <p style={{ margin: 0, color: 'var(--ocean-text-muted)', fontSize: 14 }}>
                     {!businessRowId
                       ? 'Save your business profile first so we can generate your widget embed code.'
                       : 'Loading embed URL…'}
@@ -779,10 +683,10 @@ export default function SettingsPage() {
                 )}
 
                 <div>
-                  <p style={{ margin: '0 0 12px', fontSize: 12, fontWeight: 700, color: '#6b7280', letterSpacing: '0.04em' }}>
+                  <p style={{ margin: '0 0 12px', fontSize: 12, fontWeight: 700, color: 'var(--ocean-text-muted)', letterSpacing: '0.04em' }}>
                     PREVIEW
                   </p>
-                  <p style={{ margin: '0 0 14px', fontSize: 14, fontWeight: 600, color: '#374151' }}>
+                  <p style={{ margin: '0 0 14px', fontSize: 14, fontWeight: 600, color: 'var(--ocean-text)' }}>
                     Your widget will appear like this
                   </p>
                   <div
@@ -790,8 +694,8 @@ export default function SettingsPage() {
                       position: 'relative',
                       height: 200,
                       borderRadius: 14,
-                      border: '1px solid #e2e8f0',
-                      background: 'linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)',
+                      border: '1px solid var(--ocean-border)',
+                      background: 'linear-gradient(180deg, var(--ocean-card) 0%, var(--ocean-surface) 100%)',
                       overflow: 'hidden',
                     }}
                   >
@@ -800,8 +704,8 @@ export default function SettingsPage() {
                         position: 'absolute',
                         inset: 12,
                         borderRadius: 10,
-                        border: '1px dashed #cbd5e1',
-                        background: '#fff',
+                        border: '1px dashed var(--ocean-border-strong)',
+                        background: 'var(--ocean-surface)',
                       }}
                     />
                     <div
@@ -812,8 +716,8 @@ export default function SettingsPage() {
                         width: 132,
                         height: 96,
                         borderRadius: 12,
-                        background: '#ffffff',
-                        border: '1px solid #e2e8f0',
+                        background: 'var(--ocean-ink)',
+                        border: '1px solid var(--ocean-border)',
                         boxShadow: '0 10px 28px rgba(15, 23, 42, 0.12)',
                         display: 'flex',
                         flexDirection: 'column',
@@ -823,20 +727,20 @@ export default function SettingsPage() {
                       <div
                         style={{
                           padding: '8px 10px',
-                          borderBottom: '1px solid #f1f5f9',
+                          borderBottom: '1px solid var(--ocean-border)',
                           fontSize: 11,
                           fontWeight: 700,
-                          color: '#111827',
+                          color: 'var(--ocean-text)',
                         }}
                       >
                         {businessName?.trim() || 'AI Assistant'}
                       </div>
-                      <div style={{ flex: 1, padding: 8, background: '#f8fafc' }}>
+                      <div style={{ flex: 1, padding: 8, background: 'var(--ocean-deep)' }}>
                         <div
                           style={{
                             height: 8,
                             width: '72%',
-                            background: '#e5e7eb',
+                            background: 'var(--ocean-border)',
                             borderRadius: 4,
                             marginBottom: 6,
                           }}
@@ -845,7 +749,7 @@ export default function SettingsPage() {
                           style={{
                             height: 8,
                             width: '48%',
-                            background: '#ede9fe',
+                            background: 'rgba(56, 189, 248, 0.15)',
                             borderRadius: 4,
                           }}
                         />
@@ -859,7 +763,7 @@ export default function SettingsPage() {
                         width: 40,
                         height: 40,
                         borderRadius: '50%',
-                        background: 'linear-gradient(135deg, #7c3aed 0%, #dc2626 100%)',
+                        background: 'linear-gradient(135deg, var(--ocean-sky) 0%, var(--ocean-sand-deep) 100%)',
                         boxShadow: '0 6px 16px rgba(124, 58, 237, 0.4)',
                         display: 'grid',
                         placeItems: 'center',
@@ -878,7 +782,7 @@ export default function SettingsPage() {
                     style={{
                       margin: 0,
                       paddingLeft: 22,
-                      color: '#4b5563',
+                      color: 'var(--ocean-text-muted)',
                       fontSize: 14,
                       lineHeight: 1.65,
                     }}
@@ -891,7 +795,7 @@ export default function SettingsPage() {
               </div>
             )}
 
-            {!isLoading && activeTab === 'billing' && (
+            {activeTab === 'billing' && (
               <div style={{ display: 'grid', gap: 14, maxWidth: 720 }}>
                 <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 14 }}>
                   <div>
@@ -914,14 +818,18 @@ export default function SettingsPage() {
                     />
                   </div>
                 </div>
-                <p style={{ margin: 0, color: '#6b7280', fontSize: 13 }}>
+                <p style={{ margin: 0, color: 'var(--ocean-text-muted)', fontSize: 13 }}>
                   Billing is mock-only in this preview. Save Changes will not charge a card.
                 </p>
               </div>
             )}
+                </motion.div>
+              ) : null}
+            </AnimatePresence>
           </section>
         </main>
-      </div>
-    </div>
+        )}
+      </DashboardOceanNav>
+    </>
   )
 }

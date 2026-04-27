@@ -1,9 +1,9 @@
 'use client'
 
-import Link from 'next/link'
+import { motion } from 'framer-motion'
 import { useEffect, useState } from 'react'
 
-import { DashboardLogoutButton } from '@/components/dashboard-logout-button'
+import { DashboardOceanNav } from '@/components/dashboard-ocean-nav'
 import { supabase } from '@/lib/supabase'
 
 type BookingStatus = 'confirmed' | 'pending' | 'cancelled'
@@ -20,16 +20,6 @@ type WeekBooking = {
   hour: number
   /** Minutes within the hour for display */
   minute: number
-}
-
-const navItems = ['Dashboard', 'Chats', 'Bookings', 'CRM', 'Settings']
-const navLinks: Record<string, string> = {
-  Dashboard: '/dashboard',
-  Chats: '/dashboard/chats',
-  Calendar: '/dashboard/bookings',
-  Bookings: '/dashboard/bookings',
-  CRM: '/dashboard/crm',
-  Settings: '/dashboard/settings',
 }
 
 function startOfWeekMonday(date: Date) {
@@ -62,12 +52,24 @@ function formatTime(hour: number, minute: number) {
 
 function statusStyle(status: BookingStatus) {
   if (status === 'confirmed') {
-    return { bg: '#ecfdf5', border: '#bbf7d0', color: '#166534' }
+    return {
+      bg: 'rgba(74, 222, 128, 0.12)',
+      border: 'rgba(74, 222, 128, 0.35)',
+      color: 'var(--ocean-success)',
+    }
   }
   if (status === 'pending') {
-    return { bg: '#fffbeb', border: '#fde68a', color: '#92400e' }
+    return {
+      bg: 'rgba(251, 191, 36, 0.12)',
+      border: 'rgba(251, 191, 36, 0.35)',
+      color: 'var(--ocean-warning)',
+    }
   }
-  return { bg: '#fef2f2', border: '#fecaca', color: '#991b1b' }
+  return {
+    bg: 'rgba(248, 113, 113, 0.12)',
+    border: 'rgba(248, 113, 113, 0.35)',
+    color: 'var(--ocean-danger)',
+  }
 }
 
 function normalizeStatus(raw: string | null | undefined): BookingStatus {
@@ -114,8 +116,6 @@ function mapRowsToWeekBookings(rows: AppointmentRow[], nameById: Map<string, str
 
 export default function BookingsPage() {
   const [weekBookings, setWeekBookings] = useState<WeekBooking[]>([])
-  const [isMobile, setIsMobile] = useState(false)
-  const [isDrawerOpen, setIsDrawerOpen] = useState(false)
 
   const today = new Date()
   const monday = startOfWeekMonday(today)
@@ -195,175 +195,38 @@ export default function BookingsPage() {
     }
   }, [])
 
-  useEffect(() => {
-    function syncViewport() {
-      const mobile = window.innerWidth < 768
-      setIsMobile(mobile)
-      if (!mobile) {
-        setIsDrawerOpen(false)
-      }
-    }
-    syncViewport()
-    window.addEventListener('resize', syncViewport)
-    return () => window.removeEventListener('resize', syncViewport)
-  }, [])
-
   const todayIndex = (today.getDay() + 6) % 7
   const todaysBookings = weekBookings
     .filter((b) => b.dayIndex === todayIndex)
     .sort((a, b) => a.hour * 60 + a.minute - (b.hour * 60 + b.minute))
   const mobileListBookings = [...weekBookings].sort((a, b) => a.dayIndex - b.dayIndex || a.hour * 60 + a.minute - (b.hour * 60 + b.minute))
 
-  const sidebar = (
-    <aside
-      style={{
-        width: 258,
-        background: '#ffffff',
-        borderRight: '1px solid #e5e7eb',
-        padding: '24px 14px 20px',
-        display: 'flex',
-        flexDirection: 'column',
-        minHeight: '100vh',
-      }}
-    >
-      <p
-        style={{
-          fontSize: 11,
-          textTransform: 'uppercase',
-          letterSpacing: '0.2em',
-          color: '#ef4444',
-          margin: '0 12px 6px',
-          fontWeight: 700,
-        }}
-      >
-        Salon AI
-      </p>
-      <div style={{ margin: '0 12px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>Operations</h2>
-        {isMobile && (
-          <button
-            type="button"
-            aria-label="Close menu"
-            onClick={() => setIsDrawerOpen(false)}
-            style={{
-              border: 'none',
-              background: 'transparent',
-              fontSize: 26,
-              lineHeight: 1,
-              color: '#374151',
-              cursor: 'pointer',
-            }}
-          >
-            ×
-          </button>
-        )}
-      </div>
-      <nav style={{ display: 'grid', gap: 6 }}>
-        {navItems.map((item) => {
-          const isActive = item === 'Bookings'
-          return (
-            <Link
-              key={item}
-              href={navLinks[item] ?? '#'}
-              onClick={() => setIsDrawerOpen(false)}
-              style={{
-                padding: '11px 13px',
-                borderRadius: 10,
-                fontSize: 14,
-                fontWeight: 500,
-                color: isActive ? '#7f1d1d' : '#6b7280',
-                background: isActive ? '#fee2e2' : 'transparent',
-                border: isActive ? '1px solid #fecaca' : '1px solid transparent',
-                textDecoration: 'none',
-              }}
-            >
-              {item}
-            </Link>
-          )
-        })}
-      </nav>
-      <div style={{ marginTop: 'auto', padding: '0 8px', display: 'grid', gap: 10 }}>
-        <DashboardLogoutButton />
-        <button
-          type="button"
-          style={{
-            width: '100%',
-            border: 'none',
-            borderRadius: 10,
-            background: '#dc2626',
-            color: '#fff',
-            fontWeight: 600,
-            fontSize: 14,
-            padding: '11px 14px',
-            cursor: 'pointer',
-          }}
-        >
-          Deploy Agent
-        </button>
-      </div>
-    </aside>
-  )
-
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        background: '#f3f4f6',
-        color: '#111827',
-        fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      }}
-    >
-      <div style={{ display: 'flex', minHeight: '100vh' }}>
-        {!isMobile && sidebar}
-        {isMobile && isDrawerOpen && (
-          <div
-            role="presentation"
-            onClick={() => setIsDrawerOpen(false)}
-            style={{
-              position: 'fixed',
-              inset: 0,
-              background: 'rgba(17, 24, 39, 0.45)',
-              zIndex: 40,
-            }}
-          >
-            <div
-              role="presentation"
-              onClick={(e) => e.stopPropagation()}
-              style={{
-                position: 'absolute',
-                left: 0,
-                top: 0,
-                bottom: 0,
-                width: 258,
-                boxShadow: '0 12px 24px rgba(0, 0, 0, 0.2)',
-              }}
-            >
-              {sidebar}
-            </div>
-          </div>
-        )}
-
-        <main style={{ flex: 1, padding: isMobile ? '16px 14px 24px' : '30px 32px 36px' }}>
+    <DashboardOceanNav activeNav="Bookings">
+      {({ isMobile, openNav }) => (
+        <main style={{ flex: 1, padding: isMobile ? '16px 14px 24px' : '30px 32px 36px', overflow: 'auto' }}>
           {isMobile && (
             <div style={{ marginBottom: 12 }}>
-              <button
+              <motion.button
                 type="button"
                 aria-label="Open menu"
-                onClick={() => setIsDrawerOpen(true)}
+                onClick={openNav}
+                whileHover={{ scale: 1.04 }}
+                whileTap={{ scale: 0.96 }}
                 style={{
-                  border: '1px solid #e5e7eb',
-                  borderRadius: 10,
-                  background: '#fff',
-                  color: '#374151',
-                  width: 40,
-                  height: 40,
-                  fontSize: 23,
+                  border: '1px solid var(--ocean-border)',
+                  borderRadius: 'var(--ocean-radius-md)',
+                  background: 'var(--ocean-surface)',
+                  color: 'var(--ocean-text)',
+                  width: 44,
+                  height: 44,
+                  fontSize: 22,
                   lineHeight: 1,
                   cursor: 'pointer',
                 }}
               >
                 ☰
-              </button>
+              </motion.button>
             </div>
           )}
           <div
@@ -377,8 +240,8 @@ export default function BookingsPage() {
             }}
           >
             <div>
-              <h1 style={{ margin: 0, fontSize: 30, letterSpacing: '-0.02em' }}>Bookings</h1>
-              <p style={{ margin: '8px 0 0', color: '#6b7280', fontSize: 14 }}>
+              <h1 style={{ margin: 0, fontSize: 30, letterSpacing: '-0.02em', color: 'var(--ocean-text)' }}>Bookings</h1>
+              <p style={{ margin: '8px 0 0', color: 'var(--ocean-text-muted)', fontSize: 14 }}>
                 Week of {monday.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} –{' '}
                 {addDays(monday, 6).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
               </p>
@@ -389,9 +252,9 @@ export default function BookingsPage() {
                   defaultValue="this-week"
                   style={{
                     borderRadius: 10,
-                    border: '1px solid #d1d5db',
-                    background: '#fff',
-                    color: '#374151',
+                    border: '1px solid var(--ocean-border)',
+                    background: 'var(--ocean-surface)',
+                    color: 'var(--ocean-text)',
                     padding: '10px 12px',
                     fontSize: 14,
                     fontWeight: 600,
@@ -402,28 +265,31 @@ export default function BookingsPage() {
                   <option value="this-month">This month</option>
                 </select>
               )}
-              <button
+              <motion.button
                 type="button"
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
                 style={{
                   border: 'none',
                   borderRadius: 10,
-                  background: '#dc2626',
-                  color: '#fff',
+                  background: 'linear-gradient(135deg, var(--ocean-sky) 0%, #0ea5e9 100%)',
+                  color: 'var(--ocean-black)',
                   fontWeight: 700,
                   fontSize: 14,
                   padding: '10px 14px',
                   cursor: 'pointer',
+                  boxShadow: 'var(--ocean-shadow-glow)',
                 }}
               >
                 New Booking
-              </button>
+              </motion.button>
             </div>
           </div>
 
           <section
             style={{
-              background: '#ffffff',
-              border: '1px solid #e5e7eb',
+              background: 'var(--ocean-card)',
+              border: '1px solid var(--ocean-border)',
               borderRadius: 16,
               padding: 16,
               marginBottom: 14,
@@ -435,10 +301,10 @@ export default function BookingsPage() {
                   <div
                     style={{
                       borderRadius: 12,
-                      border: '1px solid #f3f4f6',
-                      background: '#fafafa',
+                      border: '1px solid var(--ocean-border)',
+                      background: 'var(--ocean-surface)',
                       padding: '14px 12px',
-                      color: '#6b7280',
+                      color: 'var(--ocean-text-muted)',
                       fontSize: 14,
                     }}
                   >
@@ -453,15 +319,15 @@ export default function BookingsPage() {
                       key={booking.id}
                       style={{
                         borderRadius: 12,
-                        border: '1px solid #f3f4f6',
-                        background: '#fafafa',
+                        border: '1px solid var(--ocean-border)',
+                        background: 'var(--ocean-surface)',
                         padding: '12px 12px',
                         display: 'grid',
                         gap: 5,
                       }}
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
-                        <div style={{ fontWeight: 700, color: '#111827' }}>{booking.customerName}</div>
+                        <div style={{ fontWeight: 700, color: 'var(--ocean-text)' }}>{booking.customerName}</div>
                         <span
                           style={{
                             padding: '4px 8px',
@@ -477,10 +343,10 @@ export default function BookingsPage() {
                           {booking.status}
                         </span>
                       </div>
-                      <div style={{ color: '#4b5563', fontSize: 14 }}>{booking.service}</div>
+                      <div style={{ color: 'var(--ocean-text-muted)', fontSize: 14 }}>{booking.service}</div>
                       <div
                         style={{
-                          color: '#6b7280',
+                          color: 'var(--ocean-text-muted)',
                           fontSize: 13,
                           fontWeight: 600,
                         }}
@@ -498,7 +364,7 @@ export default function BookingsPage() {
                   style={{
                     display: 'grid',
                     gridTemplateColumns: '92px repeat(7, minmax(0, 1fr))',
-                    borderBottom: '1px solid #e5e7eb',
+                    borderBottom: '1px solid var(--ocean-border)',
                   }}
                 >
                   <div />
@@ -510,11 +376,11 @@ export default function BookingsPage() {
                         style={{
                           padding: '10px 8px',
                           textAlign: 'center',
-                          borderLeft: '1px solid #f3f4f6',
-                          background: isToday ? '#fef2f2' : 'transparent',
+                          borderLeft: '1px solid var(--ocean-border)',
+                          background: isToday ? 'rgba(56, 189, 248, 0.08)' : 'transparent',
                         }}
                       >
-                        <div style={{ fontSize: 12, color: '#6b7280' }}>
+                        <div style={{ fontSize: 12, color: 'var(--ocean-text-muted)' }}>
                           {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][idx]}
                         </div>
                         <div style={{ marginTop: 4, fontWeight: 700, fontSize: 14 }}>{d.getDate()}</div>
@@ -530,11 +396,11 @@ export default function BookingsPage() {
                       style={{
                         display: 'grid',
                         gridTemplateColumns: '92px repeat(7, minmax(0, 1fr))',
-                        borderBottom: '1px solid #f3f4f6',
+                        borderBottom: '1px solid var(--ocean-border)',
                         minHeight: 52,
                       }}
                     >
-                      <div style={{ padding: '10px 10px', color: '#6b7280', fontSize: 12, fontWeight: 600 }}>
+                      <div style={{ padding: '10px 10px', color: 'var(--ocean-text-muted)', fontSize: 12, fontWeight: 600 }}>
                         {formatHour(hour)}
                       </div>
                       {weekDays.map((d, dayIdx) => {
@@ -544,29 +410,29 @@ export default function BookingsPage() {
                           <div
                             key={`${hour}-${dayIdx}`}
                             style={{
-                              borderLeft: '1px solid #f3f4f6',
+                              borderLeft: '1px solid var(--ocean-border)',
                               padding: 6,
-                              background: isToday ? '#fffafa' : '#ffffff',
+                              background: isToday ? 'rgba(56, 189, 248, 0.06)' : 'var(--ocean-ink)',
                             }}
                           >
                             {booking && (
                               <div
                                 style={{
                                   borderRadius: 10,
-                                  border: '1px solid #e5e7eb',
-                                  background: '#f9fafb',
+                                  border: '1px solid var(--ocean-border)',
+                                  background: 'var(--ocean-surface)',
                                   padding: '6px 8px',
                                 }}
                               >
-                                <div style={{ fontSize: 12, fontWeight: 700, color: '#111827' }}>
+                                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--ocean-text)' }}>
                                   {booking.customerName}
                                 </div>
-                                <div style={{ marginTop: 2, fontSize: 11, color: '#6b7280' }}>{booking.service}</div>
+                                <div style={{ marginTop: 2, fontSize: 11, color: 'var(--ocean-text-muted)' }}>{booking.service}</div>
                                 <div
                                   style={{
                                     marginTop: 4,
                                     fontSize: 11,
-                                    color: '#9ca3af',
+                                    color: 'var(--ocean-text-subtle)',
                                     textTransform: 'capitalize',
                                   }}
                                 >
@@ -586,15 +452,15 @@ export default function BookingsPage() {
 
           <section
             style={{
-              background: '#ffffff',
-              border: '1px solid #e5e7eb',
+              background: 'var(--ocean-card)',
+              border: '1px solid var(--ocean-border)',
               borderRadius: 16,
               padding: 16,
             }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h2 style={{ margin: 0, fontSize: 18 }}>Today&apos;s bookings</h2>
-              <span style={{ color: '#6b7280', fontSize: 13 }}>
+              <span style={{ color: 'var(--ocean-text-muted)', fontSize: 13 }}>
                 {today.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}
               </span>
             </div>
@@ -612,16 +478,16 @@ export default function BookingsPage() {
                       alignItems: 'center',
                       padding: '12px 12px',
                       borderRadius: 12,
-                      border: '1px solid #f3f4f6',
-                      background: '#fafafa',
+                      border: '1px solid var(--ocean-border)',
+                      background: 'var(--ocean-surface)',
                     }}
                   >
                     <div style={{ fontWeight: 700 }}>{booking.customerName}</div>
-                    <div style={{ color: '#4b5563', fontSize: 14 }}>{booking.service}</div>
-                    <div style={{ color: '#6b7280', fontSize: 13, fontWeight: 600 }}>
+                    <div style={{ color: 'var(--ocean-text-muted)', fontSize: 14 }}>{booking.service}</div>
+                    <div style={{ color: 'var(--ocean-text-muted)', fontSize: 13, fontWeight: 600 }}>
                       {formatTime(booking.hour, booking.minute)}
                     </div>
-                    <div style={{ color: '#6b7280', fontSize: 13 }}>{booking.staff}</div>
+                    <div style={{ color: 'var(--ocean-text-muted)', fontSize: 13 }}>{booking.staff}</div>
                     <span
                       style={{
                         justifySelf: isMobile ? 'start' : 'end',
@@ -643,7 +509,7 @@ export default function BookingsPage() {
             </div>
           </section>
         </main>
-      </div>
-    </div>
+      )}
+    </DashboardOceanNav>
   )
 }
