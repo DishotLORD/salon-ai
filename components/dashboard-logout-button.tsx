@@ -181,18 +181,18 @@ export function DashboardLogoutButton() {
       <motion.button
         type="button"
         onClick={() => setOpen(true)}
-        whileHover={{ scale: 1.02 }}
+        whileHover={{ color: '#64748b' }}
         whileTap={{ scale: 0.98 }}
         style={{
           width: '100%',
-          borderRadius: 'var(--ocean-radius-md)',
-          border: '1px solid var(--ocean-border)',
-          background: 'var(--ocean-surface)',
-          color: 'var(--ocean-text)',
-          fontWeight: 600,
-          fontSize: 14,
-          padding: '11px 14px',
+          border: 'none',
+          background: 'transparent',
+          color: '#475569',
+          fontWeight: 500,
+          fontSize: 13,
+          padding: '8px 4px',
           cursor: 'pointer',
+          textAlign: 'center',
         }}
       >
         Log out

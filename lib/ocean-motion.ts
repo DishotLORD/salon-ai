@@ -2,9 +2,9 @@ import type { Transition, Variants } from 'framer-motion'
 
 /** Align with app/globals.css --ocean-duration-* */
 export const oceanDurations = {
-  fast: 0.15,
-  base: 0.22,
-  slow: 0.36,
+  fast: 0.12,
+  base: 0.15,
+  slow: 0.22,
 } as const
 
 export const oceanEase = {
@@ -42,7 +42,7 @@ export const fadeIn: Variants = {
 export const staggerChildren: Variants = {
   hidden: {},
   visible: {
-    transition: { staggerChildren: 0.06, delayChildren: 0.04 },
+    transition: { staggerChildren: 0, delayChildren: 0 },
   },
 }
 
@@ -84,7 +84,7 @@ export const modalContent: Variants = {
     opacity: 1,
     scale: 1,
     y: 0,
-    transition: { duration: oceanDurations.base, ease: oceanEase.spring },
+    transition: { duration: oceanDurations.base, ease: oceanEase.out },
   },
 }
 

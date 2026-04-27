@@ -150,3 +150,12 @@ body {
   outline: 2px solid var(--ocean-sky);
   outline-offset: 2px;
 }
+
+/* Custom cursor (desktop, fine pointer only — toggled by CustomCursor) */
+html.ocean-cursor-active {
+  cursor: none;
+}
+
+html.ocean-cursor-active .ocean-custom-cursor-dot {
+  display: block !important;
+}

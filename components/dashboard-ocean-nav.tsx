@@ -20,6 +20,13 @@ const navLinks: Record<OceanDashboardNavId, string> = {
   Settings: '/dashboard/settings',
 }
 
+const letters = ['O', 'c', 'e', 'a', 'n']
+
+const SIDEBAR_BG = '#0f172a'
+const SIDEBAR_BORDER = '1px solid rgba(255, 255, 255, 0.06)'
+
+const navHoverTransition = { duration: 0.15, ease: [0, 0, 0.2, 1] as const }
+
 export type OceanNavRenderProps = {
   isMobile: boolean
   openNav: () => void
@@ -36,6 +43,7 @@ type DashboardOceanNavProps = {
 export function DashboardOceanNav({ activeNav, fillViewport, children }: DashboardOceanNavProps) {
   const [isMobile, setIsMobile] = useState(false)
   const [isDrawerOpen, setDrawerOpen] = useState(false)
+  const [hoveredNavId, setHoveredNavId] = useState<OceanDashboardNavId | null>(null)
 
   useEffect(() => {
     function syncViewport() {
@@ -59,102 +67,174 @@ export function DashboardOceanNav({ activeNav, fillViewport, children }: Dashboa
   )
 
   const sidebar = (
-    <aside
+    <motion.aside
+      initial={{ x: -10 }}
+      animate={{ x: 0 }}
+      transition={{ duration: 0.2, ease: [0, 0, 0.2, 1] }}
       style={{
+        position: 'relative',
         width: 268,
-        background: 'var(--ocean-card)',
-        borderRight: '1px solid var(--ocean-border)',
-        padding: '24px 14px 20px',
+        background: SIDEBAR_BG,
+        borderRight: SIDEBAR_BORDER,
+        padding: 0,
         display: 'flex',
         flexDirection: 'column',
         height: fillViewport ? '100%' : 'auto',
         minHeight: fillViewport ? '100%' : '100vh',
-        boxShadow: 'var(--ocean-shadow-sm)',
+        boxSizing: 'border-box',
       }}
     >
-      <p
+      {isMobile && (
+        <motion.button
+          type="button"
+          aria-label="Close menu"
+          onClick={closeNav}
+          whileHover={{ opacity: 0.85 }}
+          whileTap={{ scale: 0.95 }}
+          style={{
+            position: 'absolute',
+            top: 16,
+            right: 16,
+            zIndex: 2,
+            border: 'none',
+            background: 'rgba(255, 255, 255, 0.08)',
+            borderRadius: 8,
+            fontSize: 20,
+            lineHeight: 1,
+            color: '#e2e8f0',
+            cursor: 'pointer',
+            width: 36,
+            height: 36,
+            display: 'grid',
+            placeItems: 'center',
+          }}
+        >
+          ×
+        </motion.button>
+      )}
+
+      <motion.div
         style={{
-          fontSize: 11,
-          textTransform: 'uppercase',
-          letterSpacing: '0.22em',
-          color: 'var(--ocean-sky)',
-          margin: '0 12px 6px',
-          fontWeight: 700,
+          textAlign: 'center',
+          padding: '32px 0 24px',
+          width: '100%',
         }}
+        aria-label="OceanCore"
       >
-        OceanCore
-      </p>
-      <div style={{ margin: '0 12px 22px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h2 style={{ margin: 0, fontSize: 19, fontWeight: 700, color: 'var(--ocean-text)' }}>Operations</h2>
-        {isMobile && (
-          <button
-            type="button"
-            aria-label="Close menu"
-            onClick={closeNav}
-            style={{
-              border: 'none',
-              background: 'rgba(56, 189, 248, 0.1)',
-              borderRadius: 10,
-              fontSize: 22,
-              lineHeight: 1,
-              color: 'var(--ocean-text)',
-              cursor: 'pointer',
-              width: 40,
-              height: 40,
-            }}
-          >
-            ×
-          </button>
-        )}
-      </div>
-      <nav style={{ display: 'grid', gap: 6 }}>
-        {navItems.map((item) => {
-          const isActive = item === activeNav
-          return (
-            <Link
-              key={item}
-              href={navLinks[item]}
-              onClick={closeNav}
+        <div style={{ display: 'inline-flex', alignItems: 'baseline', lineHeight: 1, justifyContent: 'center' }}>
+          {letters.map((letter, i) => (
+            <motion.span
+              key={`${letter}-${i}`}
+              animate={{ y: [0, -6, 0] }}
+              transition={{
+                duration: 1.8,
+                repeat: Infinity,
+                delay: i * 0.15,
+                ease: 'easeInOut',
+              }}
               style={{
-                padding: '11px 13px',
-                borderRadius: 'var(--ocean-radius-md)',
-                fontSize: 14,
-                fontWeight: 600,
-                color: isActive ? 'var(--ocean-sky-bright)' : 'var(--ocean-text-muted)',
-                background: isActive ? 'rgba(56, 189, 248, 0.12)' : 'transparent',
-                border: isActive ? '1px solid var(--ocean-border-strong)' : '1px solid transparent',
-                textDecoration: 'none',
-                transition: `background var(--ocean-duration-fast) var(--ocean-ease-out), border-color var(--ocean-duration-fast) var(--ocean-ease-out), color var(--ocean-duration-fast) var(--ocean-ease-out)`,
+                fontSize: 30,
+                fontWeight: 700,
+                color: '#38bdf8',
+                letterSpacing: '-0.03em',
+                fontFamily: 'Georgia, serif',
+                display: 'inline-block',
               }}
             >
-              {item}
-            </Link>
+              {letter}
+            </motion.span>
+          ))}
+          <motion.span
+            style={{
+              fontSize: 18,
+              fontWeight: 300,
+              color: '#475569',
+              letterSpacing: '0.05em',
+              fontFamily: 'Georgia, serif',
+            }}
+          >
+            Core
+          </motion.span>
+        </div>
+      </motion.div>
+
+      <nav style={{ display: 'flex', flexDirection: 'column', gap: 0, width: '100%' }}>
+        {navItems.map((item) => {
+          const isActive = item === activeNav
+          const isHovered = hoveredNavId === item
+
+          let color = '#64748b'
+          if (isActive) {
+            color = '#38bdf8'
+          } else if (isHovered) {
+            color = '#e2e8f0'
+          }
+
+          return (
+            <motion.div
+              key={item}
+              style={{ width: '100%' }}
+              whileHover={{ x: 4 }}
+              transition={navHoverTransition}
+            >
+              <Link
+                href={navLinks[item]}
+                onClick={closeNav}
+                onMouseEnter={() => setHoveredNavId(item)}
+                onMouseLeave={() => setHoveredNavId(null)}
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  boxSizing: 'border-box',
+                  padding: '10px 20px',
+                  fontSize: 14,
+                  fontWeight: 500,
+                  color,
+                  textDecoration: 'none',
+                  background: isActive ? 'rgba(56, 189, 248, 0.08)' : 'transparent',
+                  borderLeft: isActive ? '3px solid #38bdf8' : '3px solid transparent',
+                  transition: 'color 0.15s ease, background 0.15s ease',
+                }}
+              >
+                {item}
+              </Link>
+            </motion.div>
           )
         })}
       </nav>
-      <div style={{ marginTop: 'auto', padding: '0 8px', display: 'grid', gap: 10 }}>
+
+      <div
+        style={{
+          marginTop: 'auto',
+          padding: '20px 16px 24px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 12,
+          width: '100%',
+          boxSizing: 'border-box',
+        }}
+      >
         <DashboardLogoutButton />
         <motion.button
           type="button"
-          whileHover={{ scale: 1.02 }}
+          whileHover={{ scale: 1.02, opacity: 0.95 }}
           whileTap={{ scale: 0.98 }}
           style={{
             width: '100%',
             border: 'none',
-            borderRadius: 'var(--ocean-radius-md)',
-            background: 'linear-gradient(135deg, var(--ocean-sky) 0%, #0ea5e9 100%)',
-            color: 'var(--ocean-black)',
-            fontWeight: 700,
-            fontSize: 14,
-            padding: '11px 14px',
+            borderRadius: 8,
+            background: '#0ea5e9',
+            color: '#ffffff',
+            fontWeight: 600,
+            fontSize: 13,
+            padding: '10px',
             cursor: 'pointer',
-            boxShadow: 'var(--ocean-shadow-glow)',
           }}
         >
           Deploy Agent
         </motion.button>
       </div>
-    </aside>
+    </motion.aside>
   )
 
   const outer: CSSProperties = {
@@ -216,7 +296,7 @@ export function DashboardOceanNav({ activeNav, fillViewport, children }: Dashboa
                   top: 0,
                   bottom: 0,
                   width: 268,
-                  boxShadow: 'var(--ocean-shadow-lg)',
+                  boxShadow: '0 12px 40px rgba(0, 0, 0, 0.35)',
                 }}
               >
                 {sidebar}

@@ -1,9 +1,8 @@
 'use client'
 
-import { AnimatePresence, motion } from 'framer-motion'
+import { motion } from 'framer-motion'
 
 import { DashboardOceanNav } from '@/components/dashboard-ocean-nav'
-import { tabContent } from '@/lib/ocean-motion'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 
@@ -400,16 +399,8 @@ export default function SettingsPage() {
               </div>
             )}
 
-            <AnimatePresence mode="wait">
-              {!isLoading ? (
-                <motion.div
-                  key={activeTab}
-                  custom={1}
-                  variants={tabContent}
-                  initial="initial"
-                  animate="animate"
-                  exit="exit"
-                >
+            {!isLoading ? (
+              <div key={activeTab}>
             {activeTab === 'general' && (
               <div style={{ display: 'grid', gap: 14 }}>
                 <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 14 }}>
@@ -823,9 +814,8 @@ export default function SettingsPage() {
                 </p>
               </div>
             )}
-                </motion.div>
-              ) : null}
-            </AnimatePresence>
+              </div>
+            ) : null}
           </section>
         </main>
         )}

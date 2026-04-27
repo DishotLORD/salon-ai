@@ -1,9 +1,8 @@
 'use client'
 
-import { AnimatePresence, motion } from 'framer-motion'
+import { motion } from 'framer-motion'
 
 import { DashboardOceanNav } from '@/components/dashboard-ocean-nav'
-import { slideInRight } from '@/lib/ocean-motion'
 import { supabase } from '@/lib/supabase'
 import { useEffect, useMemo, useState } from 'react'
 
@@ -560,14 +559,9 @@ background: 'var(--ocean-card)',
               )}
             </section>
 
-            <AnimatePresence mode="wait">
-              {selected ? (
-              <motion.aside
+            {selected ? (
+              <aside
                 key={selected.id}
-                variants={slideInRight}
-                initial="hidden"
-                animate="visible"
-                exit="exit"
                 style={{
                   position: 'sticky',
                   top: 24,
@@ -715,9 +709,8 @@ background: 'var(--ocean-card)',
                     }}
                   />
                 </div>
-              </motion.aside>
-              ) : null}
-            </AnimatePresence>
+              </aside>
+            ) : null}
           </div>
         </main>
       )}
