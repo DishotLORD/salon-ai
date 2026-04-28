@@ -247,7 +247,7 @@ function LoginPreviewContent() {
           zIndex: 0,
         }}
       >
-        <source src="/ocean.mp4" type="video/mp4" />
+        <source src="https://ffophqyrencnuxpkwlqk.supabase.co/storage/v1/object/public/media/ocean.mp4" type="video/mp4" />
       </video>
 
       <div
