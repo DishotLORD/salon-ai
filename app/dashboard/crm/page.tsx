@@ -1,10 +1,11 @@
 'use client'
 
-import { motion } from 'framer-motion'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
+import { useEffect, useMemo, useState } from 'react'
 
 import { DashboardOceanNav } from '@/components/dashboard-ocean-nav'
+import { oceanTransition, slideInRight } from '@/lib/ocean-motion'
 import { supabase } from '@/lib/supabase'
-import { useEffect, useMemo, useState } from 'react'
 
 type CustomerTag = 'VIP' | 'Regular' | 'New' | 'At Risk'
 
@@ -22,31 +23,40 @@ type Customer = {
   visitHistory: { date: string; service: string; amount: number }[]
 }
 
+const glassCard = {
+  background: 'rgba(8,20,40,0.5)',
+  border: '1px solid rgba(255,255,255,0.07)',
+  borderRadius: 16,
+  backdropFilter: 'blur(16px)',
+  WebkitBackdropFilter: 'blur(16px)',
+  boxShadow: '0 20px 60px rgba(0,0,0,0.28)',
+}
+
 function formatDisplayDate(value: string) {
-  const d = new Date(value)
-  if (Number.isNaN(d.getTime())) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
     return value
   }
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 function parseTags(raw: unknown): CustomerTag[] {
   const valid: CustomerTag[] = ['VIP', 'Regular', 'New', 'At Risk']
-  let arr: unknown[] = []
+  let values: unknown[] = []
   if (Array.isArray(raw)) {
-    arr = raw
+    values = raw
   } else if (typeof raw === 'string') {
     try {
       const parsed = JSON.parse(raw) as unknown
-      arr = Array.isArray(parsed) ? parsed : []
+      values = Array.isArray(parsed) ? parsed : []
     } catch {
-      arr = []
+      values = []
     }
   }
   const out: CustomerTag[] = []
-  for (const item of arr) {
-    const s = String(item).trim()
-    const match = valid.find((v) => v.toLowerCase() === s.toLowerCase())
+  for (const value of values) {
+    const normalized = String(value).trim()
+    const match = valid.find((item) => item.toLowerCase() === normalized.toLowerCase())
     if (match) {
       out.push(match)
     }
@@ -62,10 +72,10 @@ function parseVisitHistory(raw: unknown): { date: string; service: string; amoun
     if (typeof entry !== 'object' || entry === null) {
       return { date: '—', service: '—', amount: 0 }
     }
-    const o = entry as Record<string, unknown>
-    const dateRaw = o.date != null ? String(o.date) : ''
-    const service = o.service != null ? String(o.service) : '—'
-    const amount = Number(o.amount) || 0
+    const object = entry as Record<string, unknown>
+    const dateRaw = object.date != null ? String(object.date) : ''
+    const service = object.service != null ? String(object.service) : '—'
+    const amount = Number(object.amount) || 0
     return {
       date: dateRaw ? formatDisplayDate(dateRaw) : '—',
       service,
@@ -96,41 +106,51 @@ function tagStyle(tag: CustomerTag) {
   switch (tag) {
     case 'VIP':
       return {
-        bg: 'rgba(232, 220, 200, 0.2)',
-        border: 'rgba(232, 220, 200, 0.45)',
-        color: 'var(--ocean-sand)',
+        bg: 'rgba(232,220,200,0.18)',
+        border: 'rgba(232,220,200,0.28)',
+        color: '#f5e6c8',
       }
     case 'Regular':
       return {
-        bg: 'rgba(56, 189, 248, 0.1)',
-        border: 'var(--ocean-border-strong)',
-        color: 'var(--ocean-sky-bright)',
+        bg: 'rgba(56,189,248,0.12)',
+        border: 'rgba(56,189,248,0.25)',
+        color: '#38bdf8',
       }
     case 'New':
       return {
-        bg: 'rgba(74, 222, 128, 0.12)',
-        border: 'rgba(74, 222, 128, 0.35)',
-        color: 'var(--ocean-success)',
+        bg: 'rgba(74,222,128,0.12)',
+        border: 'rgba(74,222,128,0.25)',
+        color: '#4ade80',
       }
     case 'At Risk':
       return {
-        bg: 'rgba(248, 113, 113, 0.12)',
-        border: 'rgba(248, 113, 113, 0.35)',
-        color: 'var(--ocean-danger)',
+        bg: 'rgba(248,113,113,0.12)',
+        border: 'rgba(248,113,113,0.25)',
+        color: '#f87171',
       }
     default:
       return {
-        bg: 'var(--ocean-surface)',
-        border: 'var(--ocean-border)',
-        color: 'var(--ocean-text-muted)',
+        bg: 'rgba(255,255,255,0.06)',
+        border: 'rgba(255,255,255,0.1)',
+        color: 'rgba(255,255,255,0.55)',
       }
   }
 }
 
 function formatMoney(amount: number) {
-  return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(
-    amount
-  )
+  return new Intl.NumberFormat(undefined, {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0,
+  }).format(amount)
+}
+
+function getInitials(name: string) {
+  return name
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part.charAt(0).toUpperCase())
+    .join('')
 }
 
 export default function CrmPage() {
@@ -139,6 +159,7 @@ export default function CrmPage() {
   const [query, setQuery] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [notes, setNotes] = useState('')
+  const reduceMotion = useReducedMotion()
 
   useEffect(() => {
     let cancelled = false
@@ -180,7 +201,7 @@ export default function CrmPage() {
 
       if (!cancelled) {
         if (!error && rows) {
-          setCustomers(rows.map((r) => mapDbCustomerRow(r as Record<string, unknown>)))
+          setCustomers(rows.map((row) => mapDbCustomerRow(row as Record<string, unknown>)))
         } else {
           setCustomers([])
         }
@@ -195,331 +216,365 @@ export default function CrmPage() {
     }
   }, [])
 
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- clear draft notes when switching customer
-    setNotes('')
-  }, [selectedId])
-
-  useEffect(() => {
-    if (selectedId && !customers.some((c) => c.id === selectedId)) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- drop stale selection after data refresh
-      setSelectedId(null)
-    }
-  }, [customers, selectedId])
-
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    if (!q) {
+    const value = query.trim().toLowerCase()
+    if (!value) {
       return customers
     }
     return customers.filter(
-      (c) =>
-        c.name.toLowerCase().includes(q) ||
-        c.email.toLowerCase().includes(q) ||
-        c.phone.toLowerCase().includes(q)
+      (customer) =>
+        customer.name.toLowerCase().includes(value) ||
+        customer.email.toLowerCase().includes(value) ||
+        customer.phone.toLowerCase().includes(value),
     )
   }, [customers, query])
 
-  const selected = customers.find((c) => c.id === selectedId) ?? null
+  const selected = customers.find((customer) => customer.id === selectedId) ?? null
 
   const stats = useMemo(() => {
     const total = customers.length
     const now = new Date()
-    const newThisMonth = customers.filter((c) => {
-      const joined = new Date(c.joined)
-      return !Number.isNaN(joined.getTime()) && joined.getFullYear() === now.getFullYear() && joined.getMonth() === now.getMonth()
+    const newThisMonth = customers.filter((customer) => {
+      const joined = new Date(customer.joined)
+      return (
+        !Number.isNaN(joined.getTime()) &&
+        joined.getFullYear() === now.getFullYear() &&
+        joined.getMonth() === now.getMonth()
+      )
     }).length
-    const returning = customers.filter((c) => c.totalBookings >= 5).length
-    const avgSpend = Math.round(customers.reduce((sum, c) => sum + c.totalSpent, 0) / Math.max(total, 1))
+    const returning = customers.filter((customer) => customer.totalBookings >= 5).length
+    const avgSpend = Math.round(
+      customers.reduce((sum, customer) => sum + customer.totalSpent, 0) / Math.max(total, 1),
+    )
     return { total, newThisMonth, returning, avgSpend }
   }, [customers])
 
   return (
     <DashboardOceanNav activeNav="CRM">
       {({ isMobile, openNav }) => (
-        <main style={{ flex: 1, padding: isMobile ? '16px 14px 24px' : '30px 32px 36px', overflow: 'auto' }}>
-          {isMobile && (
-            <div style={{ marginBottom: 12 }}>
-              <motion.button
-                type="button"
-                aria-label="Open menu"
-                onClick={openNav}
-                whileHover={{ scale: 1.04 }}
-                whileTap={{ scale: 0.96 }}
-                style={{
-                  border: '1px solid var(--ocean-border)',
-                  borderRadius: 'var(--ocean-radius-md)',
-                  background: 'var(--ocean-surface)',
-                  color: 'var(--ocean-text)',
-                  width: 44,
-                  height: 44,
-                  fontSize: 22,
-                  lineHeight: 1,
-                  cursor: 'pointer',
-                }}
-              >
-                ☰
-              </motion.button>
-            </div>
-          )}
-          <div
+        <main style={{ display: 'grid', gap: 20, position: 'relative' }}>
+          {isMobile ? (
+            <motion.button
+              type="button"
+              onClick={openNav}
+              whileTap={reduceMotion ? undefined : { scale: 0.98 }}
+              style={{
+                width: 44,
+                height: 44,
+                borderRadius: 14,
+                border: '1px solid rgba(255,255,255,0.12)',
+                background: 'rgba(5,20,40,0.5)',
+                color: 'white',
+                fontSize: 22,
+                cursor: 'pointer',
+              }}
+            >
+              ☰
+            </motion.button>
+          ) : null}
+
+          <motion.section
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={oceanTransition(reduceMotion, { duration: 0.24 })}
             style={{
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: isMobile ? 'flex-start' : 'center',
               flexDirection: isMobile ? 'column' : 'row',
-              gap: 12,
-              marginBottom: 16,
+              gap: 16,
             }}
           >
             <div>
-              <h1 style={{ margin: 0, fontSize: 30, letterSpacing: '-0.02em', color: 'var(--ocean-text)' }}>Customers</h1>
-              <p style={{ margin: '8px 0 0', color: 'var(--ocean-text-muted)', fontSize: 14 }}>
-                Search, segment, and nurture your best clients.
+              <h1
+                style={{
+                  margin: 0,
+                  color: 'white',
+                  fontSize: 32,
+                  fontWeight: 700,
+                  fontFamily: 'var(--font-playfair)',
+                  letterSpacing: '-0.03em',
+                }}
+              >
+                Customers
+              </h1>
+              <p style={{ margin: '8px 0 0', color: 'rgba(255,255,255,0.42)', fontSize: 14 }}>
+                Search, segment, and grow relationships with every visitor OceanCore meets.
               </p>
             </div>
-            <div style={{ display: 'flex', gap: 10, alignItems: 'center', width: isMobile ? '100%' : 'auto' }}>
-              <input
-                type="search"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search name, email, phone..."
+
+            <div style={{ display: 'flex', gap: 10, width: isMobile ? '100%' : 'auto', flexWrap: 'wrap' }}>
+              <div
                 style={{
-                  width: isMobile ? '100%' : 320,
-                  maxWidth: isMobile ? '100%' : '42vw',
-                  borderRadius: 10,
-                  border: '1px solid var(--ocean-border)',
-                  padding: '10px 12px',
-                  fontSize: 14,
-                  outline: 'none',
-                  background: 'var(--ocean-surface)',
+                  ...glassCard,
+                  borderRadius: 16,
+                  padding: '0 14px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  minWidth: isMobile ? '100%' : 320,
                 }}
-              />
-              <button
+              >
+                <input
+                  type="search"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Search name, email, phone..."
+                  style={{
+                    width: '100%',
+                    height: 48,
+                    background: 'transparent',
+                    border: 'none',
+                    outline: 'none',
+                    color: 'white',
+                    fontSize: 14,
+                  }}
+                />
+              </div>
+              <motion.button
                 type="button"
+                whileHover={reduceMotion ? undefined : { y: -2 }}
+                whileTap={reduceMotion ? undefined : { scale: 0.98 }}
                 style={{
                   border: 'none',
-                  borderRadius: 10,
-                  background: 'linear-gradient(135deg, var(--ocean-sky) 0%, #0ea5e9 100%)',
-                  color: 'var(--ocean-black)',
+                  borderRadius: 16,
+                  padding: '12px 16px',
+                  background: 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)',
+                  color: 'white',
                   fontWeight: 700,
-                  fontSize: 14,
-                  padding: '10px 14px',
+                  fontSize: 13,
+                  boxShadow: '0 10px 28px rgba(14,165,233,0.28)',
                   cursor: 'pointer',
-                  whiteSpace: 'nowrap',
                 }}
               >
                 Add Customer
-              </button>
+              </motion.button>
             </div>
-          </div>
+          </motion.section>
 
           <section
             style={{
               display: 'grid',
               gridTemplateColumns: isMobile ? 'repeat(2, minmax(0, 1fr))' : 'repeat(4, minmax(0, 1fr))',
-              gap: 12,
-              marginBottom: 14,
+              gap: 14,
             }}
           >
             {[
-              { label: 'Total Customers', value: stats.total.toString() },
-              { label: 'New This Month', value: stats.newThisMonth.toString() },
+              { label: 'Total', value: stats.total.toString() },
+              { label: 'New', value: stats.newThisMonth.toString() },
               { label: 'Returning', value: stats.returning.toString() },
-              { label: 'Average Spend', value: formatMoney(stats.avgSpend) },
-            ].map((stat) => (
-              <div
-                key={stat.label}
-                style={{
-background: 'var(--ocean-card)',
-              border: '1px solid var(--ocean-border)',
-                  borderRadius: 14,
-                  padding: 14,
-                }}
+              { label: 'Avg Spend', value: formatMoney(stats.avgSpend) },
+            ].map((item, index) => (
+              <motion.div
+                key={item.label}
+                initial={{ opacity: 0, scale: 0.97, y: 10 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                transition={oceanTransition(reduceMotion, { delay: 0.05 + index * 0.06, duration: 0.2 })}
+                style={{ ...glassCard, padding: 16 }}
               >
-                <p style={{ margin: 0, color: 'var(--ocean-text-muted)', fontSize: 13 }}>{stat.label}</p>
-                <p style={{ margin: '8px 0 0', fontSize: 26, fontWeight: 700 }}>{stat.value}</p>
-              </div>
+                <div
+                  style={{
+                    color: 'rgba(255,255,255,0.42)',
+                    fontSize: 11,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.16em',
+                  }}
+                >
+                  {item.label}
+                </div>
+                <div style={{ marginTop: 10, color: 'white', fontSize: 28, fontWeight: 700 }}>{item.value}</div>
+              </motion.div>
             ))}
           </section>
 
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: isMobile ? 'minmax(0, 1fr)' : selected ? 'minmax(0, 1fr) 360px' : 'minmax(0, 1fr)',
-              gap: 14,
-              alignItems: 'start',
-            }}
-          >
-            <section
-              style={{
-background: 'var(--ocean-card)',
-              border: '1px solid var(--ocean-border)',
-                borderRadius: 16,
-                overflow: 'hidden',
-              }}
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr)', gap: 16 }}>
+            <motion.section
+              initial={{ opacity: 0, scale: 0.98, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              transition={oceanTransition(reduceMotion, { delay: 0.08, duration: 0.24 })}
+              style={{ ...glassCard, overflow: 'hidden' }}
             >
               {isMobile ? (
                 <div style={{ padding: 12, display: 'grid', gap: 10 }}>
                   {crmLoading ? (
-                    <div style={{ padding: 24, textAlign: 'center', color: 'var(--ocean-text-muted)', fontSize: 14 }}>Loading customers...</div>
+                    <div style={{ padding: 24, color: 'rgba(255,255,255,0.45)', textAlign: 'center' }}>
+                      Loading customers...
+                    </div>
                   ) : customers.length === 0 ? (
-                    <div style={{ padding: 24, textAlign: 'center', color: 'var(--ocean-text-muted)', fontSize: 14, lineHeight: 1.55 }}>
-                      No customers yet. They will appear here when they chat with your AI.
+                    <div style={{ padding: 24, color: 'rgba(255,255,255,0.45)', textAlign: 'center', lineHeight: 1.6 }}>
+                      No customers yet. They’ll appear here when they chat with your AI.
                     </div>
                   ) : filtered.length === 0 ? (
-                    <div style={{ padding: 24, textAlign: 'center', color: 'var(--ocean-text-muted)', fontSize: 14 }}>No matching customers.</div>
+                    <div style={{ padding: 24, color: 'rgba(255,255,255,0.45)', textAlign: 'center' }}>
+                      No matching customers.
+                    </div>
                   ) : (
-                    filtered.map((customer) => {
-                      const active = customer.id === selectedId
-                      return (
-                        <button
-                          key={customer.id}
-                          type="button"
-                          onClick={() => {
-                            setSelectedId(customer.id)
-                            setNotes('')
-                          }}
-                          style={{
-                            border: `1px solid ${active ? 'var(--ocean-border-strong)' : 'var(--ocean-border)'}`,
-                            background: active ? 'rgba(56, 189, 248, 0.1)' : 'var(--ocean-ink)',
-                            borderRadius: 12,
-                            padding: 12,
-                            textAlign: 'left',
-                            cursor: 'pointer',
-                          }}
-                        >
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-                            <div style={{ fontWeight: 700, color: 'var(--ocean-text)' }}>{customer.name}</div>
-                            <div style={{ fontSize: 12, color: 'var(--ocean-text-muted)' }}>{customer.lastVisit}</div>
+                    filtered.map((customer) => (
+                      <button
+                        key={customer.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedId(customer.id)
+                          setNotes('')
+                        }}
+                        style={{
+                          width: '100%',
+                          borderRadius: 18,
+                          border: `1px solid ${
+                            customer.id === selectedId ? 'rgba(56,189,248,0.24)' : 'rgba(255,255,255,0.08)'
+                          }`,
+                          background:
+                            customer.id === selectedId ? 'rgba(56,189,248,0.08)' : 'rgba(255,255,255,0.03)',
+                          padding: 14,
+                          textAlign: 'left',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                          <div
+                            style={{
+                              width: 40,
+                              height: 40,
+                              borderRadius: '50%',
+                              display: 'grid',
+                              placeItems: 'center',
+                              background: 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)',
+                              color: 'white',
+                              fontSize: 12,
+                              fontWeight: 700,
+                            }}
+                          >
+                            {getInitials(customer.name)}
                           </div>
-                          <div style={{ marginTop: 6, color: 'var(--ocean-text-muted)', fontSize: 13 }}>{customer.email}</div>
-                          <div style={{ marginTop: 3, color: 'var(--ocean-text-muted)', fontSize: 13 }}>{customer.phone}</div>
-                          <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                            {customer.tags.map((tag) => {
-                              const t = tagStyle(tag)
-                              return (
-                                <span key={tag} style={{ fontSize: 11, fontWeight: 700, padding: '4px 8px', borderRadius: 999, border: `1px solid ${t.border}`, background: t.bg, color: t.color }}>
-                                  {tag}
-                                </span>
-                              )
-                            })}
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ color: 'white', fontSize: 14, fontWeight: 700 }}>{customer.name}</div>
+                            <div style={{ marginTop: 4, color: 'rgba(255,255,255,0.42)', fontSize: 12 }}>
+                              {customer.email}
+                            </div>
                           </div>
-                          <div style={{ marginTop: 8, fontSize: 12, color: 'var(--ocean-text-muted)' }}>
-                            {customer.totalBookings} bookings · {formatMoney(customer.totalSpent)}
-                          </div>
-                        </button>
-                      )
-                    })
+                        </div>
+                      </button>
+                    ))
                   )}
                 </div>
               ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 980 }}>
-                  <thead>
-                    <tr style={{ background: 'var(--ocean-surface)', borderBottom: '1px solid var(--ocean-border)' }}>
-                      {['Name', 'Phone', 'Email', 'Last Visit', 'Total Bookings', 'Total Spent', 'Tags', 'Actions'].map(
-                        (col) => (
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 960 }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                        {['Customer', 'Email', 'Phone', 'Last Visit', 'Bookings', 'Spent', 'Tags'].map((column) => (
                           <th
-                            key={col}
+                            key={column}
                             style={{
+                              padding: '16px 18px',
                               textAlign: 'left',
-                              padding: '12px 14px',
-                              fontSize: 12,
-                              color: 'var(--ocean-text-muted)',
+                              color: 'rgba(255,255,255,0.35)',
+                              fontSize: 11,
                               fontWeight: 700,
-                              letterSpacing: '0.04em',
                               textTransform: 'uppercase',
-                              whiteSpace: 'nowrap',
+                              letterSpacing: '0.16em',
                             }}
                           >
-                            {col}
+                            {column}
                           </th>
-                        )
-                      )}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {crmLoading ? (
-                      <tr>
-                        <td
-                          colSpan={8}
-                          style={{
-                            padding: '36px 14px',
-                            textAlign: 'center',
-                            color: 'var(--ocean-text-muted)',
-                            fontSize: 14,
-                          }}
-                        >
-                          Loading customers...
-                        </td>
+                        ))}
                       </tr>
-                    ) : customers.length === 0 ? (
-                      <tr>
-                        <td
-                          colSpan={8}
-                          style={{
-                            padding: '36px 14px',
-                            textAlign: 'center',
-                            color: 'var(--ocean-text-muted)',
-                            fontSize: 14,
-                            lineHeight: 1.55,
-                          }}
-                        >
-                          No customers yet. They will appear here when they chat with your AI.
-                        </td>
-                      </tr>
-                    ) : filtered.length === 0 ? (
-                      <tr>
-                        <td
-                          colSpan={8}
-                          style={{
-                            padding: '36px 14px',
-                            textAlign: 'center',
-                            color: 'var(--ocean-text-muted)',
-                            fontSize: 14,
-                          }}
-                        >
-                          No matching customers.
-                        </td>
-                      </tr>
-                    ) : (
-                      filtered.map((customer) => {
-                        const active = customer.id === selectedId
-                        return (
+                    </thead>
+                    <tbody>
+                      {crmLoading ? (
+                        <tr>
+                          <td colSpan={7} style={{ padding: 32, textAlign: 'center', color: 'rgba(255,255,255,0.45)' }}>
+                            Loading customers...
+                          </td>
+                        </tr>
+                      ) : customers.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} style={{ padding: 32, textAlign: 'center', color: 'rgba(255,255,255,0.45)' }}>
+                            No customers yet. They’ll appear here when they chat with your AI.
+                          </td>
+                        </tr>
+                      ) : filtered.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} style={{ padding: 32, textAlign: 'center', color: 'rgba(255,255,255,0.45)' }}>
+                            No matching customers.
+                          </td>
+                        </tr>
+                      ) : (
+                        filtered.map((customer) => (
                           <tr
                             key={customer.id}
+                            onMouseEnter={(event) => {
+                              if (customer.id !== selectedId) {
+                                event.currentTarget.style.background = 'rgba(255,255,255,0.04)'
+                              }
+                            }}
+                            onMouseLeave={(event) => {
+                              if (customer.id !== selectedId) {
+                                event.currentTarget.style.background = 'transparent'
+                              }
+                            }}
                             onClick={() => {
                               setSelectedId(customer.id)
                               setNotes('')
                             }}
                             style={{
                               cursor: 'pointer',
-                              background: active ? 'rgba(56, 189, 248, 0.08)' : 'var(--ocean-ink)',
-                              borderBottom: '1px solid var(--ocean-border)',
+                              borderBottom: '1px solid rgba(255,255,255,0.05)',
+                              background:
+                                customer.id === selectedId ? 'rgba(56,189,248,0.08)' : 'transparent',
+                              transition: 'background-color 0.2s cubic-bezier(0.4,0,0.2,1)',
                             }}
                           >
-                            <td style={{ padding: '12px 14px', fontWeight: 600 }}>{customer.name}</td>
-                            <td style={{ padding: '12px 14px', color: 'var(--ocean-text-muted)', fontSize: 14 }}>{customer.phone}</td>
-                            <td style={{ padding: '12px 14px', color: 'var(--ocean-text-muted)', fontSize: 14 }}>{customer.email}</td>
-                            <td style={{ padding: '12px 14px', color: 'var(--ocean-text-muted)', fontSize: 14 }}>{customer.lastVisit}</td>
-                            <td style={{ padding: '12px 14px', fontWeight: 600 }}>{customer.totalBookings}</td>
-                            <td style={{ padding: '12px 14px', fontWeight: 600 }}>{formatMoney(customer.totalSpent)}</td>
-                            <td style={{ padding: '12px 14px' }}>
+                            <td style={{ padding: '16px 18px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                                <div
+                                  style={{
+                                    width: 38,
+                                    height: 38,
+                                    borderRadius: '50%',
+                                    display: 'grid',
+                                    placeItems: 'center',
+                                    background: 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)',
+                                    color: 'white',
+                                    fontSize: 12,
+                                    fontWeight: 700,
+                                  }}
+                                >
+                                  {getInitials(customer.name)}
+                                </div>
+                                <div>
+                                  <div style={{ color: 'white', fontSize: 13, fontWeight: 700 }}>{customer.name}</div>
+                                  <div style={{ marginTop: 4, color: 'rgba(255,255,255,0.38)', fontSize: 12 }}>
+                                    Joined {customer.joined}
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
+                            <td style={{ padding: '16px 18px', color: 'rgba(255,255,255,0.68)', fontSize: 13 }}>
+                              {customer.email}
+                            </td>
+                            <td style={{ padding: '16px 18px', color: 'rgba(255,255,255,0.68)', fontSize: 13 }}>
+                              {customer.phone}
+                            </td>
+                            <td style={{ padding: '16px 18px', color: 'rgba(255,255,255,0.68)', fontSize: 13 }}>
+                              {customer.lastVisit}
+                            </td>
+                            <td style={{ padding: '16px 18px', color: 'white', fontWeight: 700 }}>{customer.totalBookings}</td>
+                            <td style={{ padding: '16px 18px', color: 'white', fontWeight: 700 }}>{formatMoney(customer.totalSpent)}</td>
+                            <td style={{ padding: '16px 18px' }}>
                               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                                 {customer.tags.map((tag) => {
-                                  const t = tagStyle(tag)
+                                  const tint = tagStyle(tag)
                                   return (
                                     <span
                                       key={tag}
                                       style={{
-                                        fontSize: 11,
-                                        fontWeight: 700,
-                                        padding: '4px 8px',
+                                        padding: '5px 8px',
                                         borderRadius: 999,
-                                        border: `1px solid ${t.border}`,
-                                        background: t.bg,
-                                        color: t.color,
+                                        border: `1px solid ${tint.border}`,
+                                        background: tint.bg,
+                                        color: tint.color,
+                                        fontSize: 10,
+                                        fontWeight: 700,
                                       }}
                                     >
                                       {tag}
@@ -528,90 +583,73 @@ background: 'var(--ocean-card)',
                                 })}
                               </div>
                             </td>
-                            <td style={{ padding: '12px 14px' }}>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  setSelectedId(customer.id)
-                                  setNotes('')
-                                }}
-                                style={{
-                                  borderRadius: 8,
-                                  border: '1px solid var(--ocean-border)',
-                                  background: 'var(--ocean-surface)',
-                                  padding: '6px 10px',
-                                  fontSize: 12,
-                                  fontWeight: 600,
-                                  cursor: 'pointer',
-                                }}
-                              >
-                                View
-                              </button>
-                            </td>
                           </tr>
-                        )
-                      })
-                    )}
-                  </tbody>
-                </table>
-              </div>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               )}
-            </section>
+            </motion.section>
+          </div>
 
+          <AnimatePresence>
             {selected ? (
-              <aside
+              <motion.aside
                 key={selected.id}
+                initial="hidden"
+                animate="visible"
+                exit="exit"
+                variants={slideInRight}
+                transition={oceanTransition(reduceMotion, { duration: 0.22 })}
                 style={{
-                  position: 'sticky',
-                  top: 24,
-                  background: 'var(--ocean-card)',
-                  border: '1px solid var(--ocean-border)',
-                  borderRadius: 16,
-                  padding: 16,
-                  maxHeight: 'calc(100vh - 120px)',
-                  overflow: 'auto',
-                  boxShadow: 'var(--ocean-shadow-md)',
+                  ...glassCard,
+                  position: isMobile ? 'relative' : 'fixed',
+                  top: isMobile ? 'auto' : 32,
+                  right: isMobile ? 'auto' : 32,
+                  width: isMobile ? '100%' : 360,
+                  maxHeight: isMobile ? 'none' : 'calc(100vh - 64px)',
+                  overflowY: 'auto',
+                  padding: 18,
+                  zIndex: 30,
                 }}
               >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
                   <div>
-                    <h2 style={{ margin: 0, fontSize: 18, color: 'var(--ocean-text)' }}>{selected.name}</h2>
-                    <p style={{ margin: '6px 0 0', color: 'var(--ocean-text-muted)', fontSize: 13 }}>Customer profile</p>
+                    <div style={{ color: 'white', fontSize: 20, fontWeight: 700 }}>{selected.name}</div>
+                    <div style={{ marginTop: 6, color: 'rgba(255,255,255,0.42)', fontSize: 13 }}>Customer profile</div>
                   </div>
                   <button
                     type="button"
                     onClick={() => setSelectedId(null)}
                     style={{
-                      border: 'none',
-                      background: 'var(--ocean-surface)',
-                      color: 'var(--ocean-text-muted)',
-                      borderRadius: 8,
-                      width: 32,
-                      height: 32,
+                      width: 34,
+                      height: 34,
+                      borderRadius: 12,
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      background: 'rgba(255,255,255,0.04)',
+                      color: 'rgba(255,255,255,0.72)',
                       cursor: 'pointer',
-                      fontSize: 16,
-                      lineHeight: 1,
                     }}
                   >
                     ×
                   </button>
                 </div>
 
-                <div style={{ marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                <div style={{ marginTop: 14, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                   {selected.tags.map((tag) => {
-                    const t = tagStyle(tag)
+                    const tint = tagStyle(tag)
                     return (
                       <span
                         key={tag}
                         style={{
-                          fontSize: 11,
-                          fontWeight: 700,
-                          padding: '4px 8px',
+                          padding: '5px 8px',
                           borderRadius: 999,
-                          border: `1px solid ${t.border}`,
-                          background: t.bg,
-                          color: t.color,
+                          border: `1px solid ${tint.border}`,
+                          background: tint.bg,
+                          color: tint.color,
+                          fontSize: 10,
+                          fontWeight: 700,
                         }}
                       >
                         {tag}
@@ -620,98 +658,133 @@ background: 'var(--ocean-card)',
                   })}
                 </div>
 
-                <div
-                  style={{
-                    marginTop: 14,
-                    display: 'grid',
-                    gap: 10,
-                    fontSize: 13,
-                    color: 'var(--ocean-text-muted)',
-                  }}
-                >
-                  <div>
-                    <span style={{ color: 'var(--ocean-text-subtle)', fontWeight: 600 }}>EMAIL</span>
-                    <div style={{ marginTop: 4, fontWeight: 600, color: 'var(--ocean-text)' }}>{selected.email}</div>
-                  </div>
-                  <div>
-                    <span style={{ color: 'var(--ocean-text-subtle)', fontWeight: 600 }}>PHONE</span>
-                    <div style={{ marginTop: 4, fontWeight: 600, color: 'var(--ocean-text)' }}>{selected.phone}</div>
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                    <div>
-                      <span style={{ color: 'var(--ocean-text-subtle)', fontWeight: 600 }}>JOINED</span>
-                      <div style={{ marginTop: 4, fontWeight: 600, color: 'var(--ocean-text)' }}>{selected.joined}</div>
-                    </div>
-                    <div>
-                      <span style={{ color: 'var(--ocean-text-subtle)', fontWeight: 600 }}>LAST VISIT</span>
-                      <div style={{ marginTop: 4, fontWeight: 600, color: 'var(--ocean-text)' }}>{selected.lastVisit}</div>
-                    </div>
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                    <div>
-                      <span style={{ color: 'var(--ocean-text-subtle)', fontWeight: 600 }}>BOOKINGS</span>
-                      <div style={{ marginTop: 4, fontWeight: 700, color: 'var(--ocean-text)' }}>{selected.totalBookings}</div>
-                    </div>
-                    <div>
-                      <span style={{ color: 'var(--ocean-text-subtle)', fontWeight: 600 }}>SPENT</span>
-                      <div style={{ marginTop: 4, fontWeight: 700, color: 'var(--ocean-text)' }}>
-                        {formatMoney(selected.totalSpent)}
-                      </div>
-                    </div>
-                  </div>
-                  <div>
-                    <span style={{ color: 'var(--ocean-text-subtle)', fontWeight: 600 }}>PREFERRED STAFF</span>
-                    <div style={{ marginTop: 4, fontWeight: 600, color: 'var(--ocean-text)' }}>{selected.preferredStaff}</div>
-                  </div>
-                </div>
-
-                <div style={{ marginTop: 16 }}>
-                  <h3 style={{ margin: '0 0 8px', fontSize: 14, color: 'var(--ocean-text)' }}>Visit history</h3>
-                  <div style={{ display: 'grid', gap: 8 }}>
-                    {selected.visitHistory.map((visit) => (
+                <div style={{ marginTop: 18, display: 'grid', gap: 12 }}>
+                  {[
+                    { label: 'Email', value: selected.email || '—' },
+                    { label: 'Phone', value: selected.phone },
+                    { label: 'Joined', value: selected.joined },
+                    { label: 'Last visit', value: selected.lastVisit },
+                    { label: 'Preferred staff', value: selected.preferredStaff },
+                  ].map((item) => (
+                    <div
+                      key={item.label}
+                      style={{
+                        borderRadius: 16,
+                        border: '1px solid rgba(255,255,255,0.08)',
+                        background: 'rgba(255,255,255,0.04)',
+                        padding: '12px 14px',
+                      }}
+                    >
                       <div
-                        key={`${visit.date}-${visit.service}`}
                         style={{
-                          border: '1px solid var(--ocean-border)',
-                          borderRadius: 10,
-                          padding: '8px 10px',
-                          background: 'var(--ocean-surface)',
+                          color: 'rgba(255,255,255,0.38)',
+                          fontSize: 10,
+                          fontWeight: 700,
+                          letterSpacing: '0.16em',
+                          textTransform: 'uppercase',
                         }}
                       >
-                        <div style={{ fontSize: 12, color: 'var(--ocean-text-muted)' }}>{visit.date}</div>
-                        <div style={{ marginTop: 4, fontWeight: 600, fontSize: 13 }}>{visit.service}</div>
-                        <div style={{ marginTop: 4, fontSize: 12, color: 'var(--ocean-text-subtle)' }}>
-                          {visit.amount === 0 ? 'Complimentary' : formatMoney(visit.amount)}
-                        </div>
+                        {item.label}
                       </div>
-                    ))}
+                      <div style={{ marginTop: 6, color: 'white', fontSize: 14, fontWeight: 600 }}>{item.value}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ marginTop: 18, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div
+                    style={{
+                      borderRadius: 16,
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      background: 'rgba(255,255,255,0.04)',
+                      padding: '12px 14px',
+                    }}
+                  >
+                    <div style={{ color: 'rgba(255,255,255,0.38)', fontSize: 10, letterSpacing: '0.16em', textTransform: 'uppercase' }}>
+                      Bookings
+                    </div>
+                    <div style={{ marginTop: 6, color: 'white', fontSize: 22, fontWeight: 700 }}>{selected.totalBookings}</div>
+                  </div>
+                  <div
+                    style={{
+                      borderRadius: 16,
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      background: 'rgba(255,255,255,0.04)',
+                      padding: '12px 14px',
+                    }}
+                  >
+                    <div style={{ color: 'rgba(255,255,255,0.38)', fontSize: 10, letterSpacing: '0.16em', textTransform: 'uppercase' }}>
+                      Total spent
+                    </div>
+                    <div style={{ marginTop: 6, color: 'white', fontSize: 22, fontWeight: 700 }}>
+                      {formatMoney(selected.totalSpent)}
+                    </div>
                   </div>
                 </div>
 
-                <div style={{ marginTop: 16 }}>
-                  <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: 'var(--ocean-text-muted)', marginBottom: 6 }}>
-                    NOTES
+                <div style={{ marginTop: 18 }}>
+                  <div style={{ color: 'white', fontSize: 14, fontWeight: 700 }}>Visit history</div>
+                  <div style={{ marginTop: 12, display: 'grid', gap: 10 }}>
+                    {selected.visitHistory.length === 0 ? (
+                      <div style={{ color: 'rgba(255,255,255,0.42)', fontSize: 13 }}>No visits recorded yet.</div>
+                    ) : (
+                      selected.visitHistory.map((visit) => (
+                        <div
+                          key={`${visit.date}-${visit.service}`}
+                          style={{
+                            borderRadius: 16,
+                            border: '1px solid rgba(255,255,255,0.08)',
+                            background: 'rgba(255,255,255,0.04)',
+                            padding: '12px 14px',
+                          }}
+                        >
+                          <div style={{ color: 'rgba(255,255,255,0.38)', fontSize: 11 }}>{visit.date}</div>
+                          <div style={{ marginTop: 6, color: 'white', fontSize: 13, fontWeight: 700 }}>{visit.service}</div>
+                          <div style={{ marginTop: 4, color: 'rgba(255,255,255,0.55)', fontSize: 12 }}>
+                            {visit.amount === 0 ? 'Complimentary' : formatMoney(visit.amount)}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div style={{ marginTop: 18 }}>
+                  <label
+                    style={{
+                      display: 'block',
+                      color: 'rgba(255,255,255,0.42)',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      letterSpacing: '0.16em',
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    Notes
                   </label>
                   <textarea
                     value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
-                    placeholder="Add a note about preferences, objections, or follow-ups..."
+                    onChange={(event) => setNotes(event.target.value)}
+                    placeholder="Add a note about preferences, follow-ups, or objections..."
                     rows={5}
                     style={{
                       width: '100%',
+                      marginTop: 10,
+                      borderRadius: 16,
+                      border: '1px solid rgba(255,255,255,0.1)',
+                      background: 'rgba(255,255,255,0.04)',
+                      color: 'white',
+                      padding: '12px 14px',
                       resize: 'vertical',
-                      borderRadius: 10,
-                      border: '1px solid var(--ocean-border)',
-                      padding: '10px 12px',
-                      fontSize: 13,
                       outline: 'none',
                       fontFamily: 'inherit',
+                      fontSize: 13,
                     }}
                   />
                 </div>
-              </aside>
+              </motion.aside>
             ) : null}
-          </div>
+          </AnimatePresence>
         </main>
       )}
     </DashboardOceanNav>

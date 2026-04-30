@@ -141,6 +141,15 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+.login-ocean-page::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 10, 30, 0.35);
+  pointer-events: none;
+  z-index: 1;
+}
+
 ::selection {
   background: var(--ocean-sky-muted);
   color: var(--ocean-text);
@@ -150,4 +159,3 @@ body {
   outline: 2px solid var(--ocean-sky);
   outline-offset: 2px;
 }
-

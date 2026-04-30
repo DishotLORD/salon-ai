@@ -220,7 +220,7 @@ function LoginContent() {
     : 'Slip back into your command deck and let the ocean carry the busywork.'
 
   return (
-    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#020c1b] px-6 py-10 text-white">
+    <main className="login-ocean-page relative flex min-h-screen items-center justify-center overflow-hidden bg-[#020c1b] px-6 py-10 text-white">
       <video
         autoPlay
         muted
@@ -237,11 +237,6 @@ function LoginContent() {
       >
         <source src="https://ffophqyrencnuxpkwlqk.supabase.co/storage/v1/object/public/media/ocean.mp4" type="video/mp4" />
       </video>
-
-      <div
-        className="pointer-events-none absolute inset-0"
-        style={{ background: 'rgba(0,10,30,0.35)', zIndex: 1 }}
-      />
 
       <div className="pointer-events-none absolute left-6 top-6 z-10 text-[11px] uppercase tracking-[0.4em] text-white/[0.08]">
         OceanCore

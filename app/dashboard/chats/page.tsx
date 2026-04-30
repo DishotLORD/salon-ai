@@ -1,8 +1,10 @@
 'use client'
 
+import { motion, useReducedMotion } from 'framer-motion'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { DashboardOceanNav } from '@/components/dashboard-ocean-nav'
+import { oceanTransition } from '@/lib/ocean-motion'
 import { supabase } from '@/lib/supabase'
 
 type ConversationStatus = 'Live' | 'Waiting' | 'Resolved' | 'Human'
@@ -37,6 +39,15 @@ type DbConversationRow = {
   status: string | null
   updated_at: string | null
   messages: DbMessageRow[] | null
+}
+
+const panelStyle = {
+  background: 'rgba(8,20,40,0.5)',
+  border: '1px solid rgba(255,255,255,0.07)',
+  borderRadius: 16,
+  backdropFilter: 'blur(16px)',
+  WebkitBackdropFilter: 'blur(16px)',
+  boxShadow: '0 20px 60px rgba(0,0,0,0.28)',
 }
 
 function normalizeStatus(raw: string | null | undefined): ConversationStatus {
@@ -93,7 +104,7 @@ function mapDbMessageToMessage(row: DbMessageRow): Message {
 
 function mapDbConversationToConversation(row: DbConversationRow): Conversation {
   const ordered = [...(row.messages ?? [])].sort(
-    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
   )
   const last = ordered[ordered.length - 1]
   const preview = last?.content ?? 'No messages yet'
@@ -111,30 +122,38 @@ function mapDbConversationToConversation(row: DbConversationRow): Conversation {
 function getStatusStyle(status: ConversationStatus) {
   if (status === 'Live') {
     return {
-      background: 'rgba(74, 222, 128, 0.12)',
-      color: 'var(--ocean-success)',
-      border: 'rgba(74, 222, 128, 0.35)',
+      background: 'rgba(56,189,248,0.15)',
+      color: '#38bdf8',
+      border: 'rgba(56,189,248,0.28)',
     }
   }
   if (status === 'Human') {
     return {
-      background: 'rgba(232, 220, 200, 0.15)',
-      color: 'var(--ocean-sand)',
-      border: 'rgba(232, 220, 200, 0.35)',
+      background: 'rgba(251,191,36,0.12)',
+      color: '#fbbf24',
+      border: 'rgba(251,191,36,0.28)',
     }
   }
   if (status === 'Waiting') {
     return {
-      background: 'rgba(251, 191, 36, 0.12)',
-      color: 'var(--ocean-warning)',
-      border: 'rgba(251, 191, 36, 0.35)',
+      background: 'rgba(167,139,250,0.14)',
+      color: '#c4b5fd',
+      border: 'rgba(167,139,250,0.3)',
     }
   }
   return {
-    background: 'var(--ocean-surface)',
-    color: 'var(--ocean-text-muted)',
-    border: 'var(--ocean-border)',
+    background: 'rgba(255,255,255,0.06)',
+    color: 'rgba(255,255,255,0.55)',
+    border: 'rgba(255,255,255,0.1)',
   }
+}
+
+function getInitials(name: string) {
+  return name
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part.charAt(0).toUpperCase())
+    .join('')
 }
 
 export default function ChatsInboxPage() {
@@ -145,9 +164,8 @@ export default function ChatsInboxPage() {
   const [sendingConversationId, setSendingConversationId] = useState<string | null>(null)
   const [inboxLoaded, setInboxLoaded] = useState(false)
   const [inboxFetchError, setInboxFetchError] = useState(false)
-  const [isTakenOver, setIsTakenOver] = useState(false)
   const messagesScrollRef = useRef<HTMLDivElement | null>(null)
-  const previousSelectedIdRef = useRef<string>('')
+  const reduceMotion = useReducedMotion()
 
   useEffect(() => {
     let cancelled = false
@@ -167,7 +185,7 @@ export default function ChatsInboxPage() {
             content,
             created_at
           )
-        `
+        `,
         )
         .order('updated_at', { ascending: false })
         .order('created_at', { referencedTable: 'messages', ascending: true })
@@ -213,20 +231,6 @@ export default function ChatsInboxPage() {
 
   useEffect(() => {
     if (!selectedId) {
-      previousSelectedIdRef.current = ''
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset takeover when leaving selection
-      setIsTakenOver(false)
-      return
-    }
-    if (previousSelectedIdRef.current === selectedId) {
-      return
-    }
-    previousSelectedIdRef.current = selectedId
-    setIsTakenOver(selectedConversation?.status === 'Human')
-  }, [selectedId, selectedConversation?.status])
-
-  useEffect(() => {
-    if (!selectedId) {
       return
     }
 
@@ -252,7 +256,7 @@ export default function ChatsInboxPage() {
               if (conversation.id !== selectedId) {
                 return conversation
               }
-              if (conversation.messages.some((m) => m.id === incoming.id)) {
+              if (conversation.messages.some((message) => message.id === incoming.id)) {
                 return conversation
               }
               return {
@@ -261,16 +265,16 @@ export default function ChatsInboxPage() {
                 preview: incoming.text,
                 time: formatRelativeTime(inserted.created_at),
               }
-            })
+            }),
           )
-        }
+        },
       )
       .subscribe()
 
     return () => {
       void supabase.removeChannel(channel)
     }
-  }, [selectedId])
+  }, [selectedId, selectedConversation])
 
   useEffect(() => {
     if (!selectedConversation) {
@@ -281,22 +285,25 @@ export default function ChatsInboxPage() {
       return
     }
     container.scrollTop = container.scrollHeight
-  }, [selectedConversation?.id, selectedConversation?.messages.length])
+  }, [selectedConversation])
+
+  const isTakenOver = selectedConversation?.status === 'Human'
 
   const handleTakeOverToggle = async () => {
-    if (!selectedId) {
+    if (!selectedId || !selectedConversation) {
       return
     }
-    const next = !isTakenOver
+    const next = selectedConversation.status !== 'Human'
     const status = next ? 'human' : 'active'
     const { error } = await supabase.from('conversations').update({ status }).eq('id', selectedId)
     if (error) {
       console.error(error)
       return
     }
-    setIsTakenOver(next)
     setConversationList((prev) =>
-      prev.map((c) => (c.id === selectedId ? { ...c, status: next ? 'Human' : 'Live' } : c))
+      prev.map((conversation) =>
+        conversation.id === selectedId ? { ...conversation, status: next ? 'Human' : 'Live' } : conversation,
+      ),
     )
   }
 
@@ -345,8 +352,8 @@ export default function ChatsInboxPage() {
                   time: 'now',
                   status: 'Live',
                 }
-              : conversation
-          )
+              : conversation,
+          ),
         )
       } finally {
         setIsLoading(false)
@@ -390,8 +397,8 @@ export default function ChatsInboxPage() {
               time: 'now',
               status: 'Live',
             }
-          : conversation
-      )
+          : conversation,
+      ),
     )
     setDraft('')
 
@@ -449,8 +456,8 @@ export default function ChatsInboxPage() {
                 preview: aiText,
                 time: 'now',
               }
-            : conversation
-        )
+            : conversation,
+        ),
       )
     } catch {
       const fallbackText = 'I could not reach the AI service right now. Please try again.'
@@ -485,8 +492,8 @@ export default function ChatsInboxPage() {
                 preview: fallbackMessage.text,
                 time: 'now',
               }
-            : conversation
-        )
+            : conversation,
+        ),
       )
     } finally {
       setIsLoading(false)
@@ -494,329 +501,557 @@ export default function ChatsInboxPage() {
     }
   }
 
+  const badge = selectedConversation ? getStatusStyle(selectedConversation.status) : getStatusStyle('Live')
+
   return (
     <DashboardOceanNav activeNav="Chats" fillViewport>
       {({ isMobile, openNav }) => (
-      <div style={{ flex: 1, display: 'flex', height: '100vh', overflow: 'hidden' }}>
-        {isMobile ? null : (
-          <section
+        <div
+          style={{
+            height: '100%',
+            display: 'grid',
+            gridTemplateColumns: isMobile ? '1fr' : '300px minmax(0, 1fr) 320px',
+            gap: 16,
+            overflow: 'hidden',
+          }}
+        >
+          <motion.section
+            initial={{ opacity: 0, scale: 0.97, x: -10 }}
+            animate={{ opacity: 1, scale: 1, x: 0 }}
+            transition={oceanTransition(reduceMotion, { duration: 0.24 })}
             style={{
-              width: 300,
-              height: '100vh',
-              overflow: 'hidden',
+              ...panelStyle,
+              height: '100%',
               display: 'flex',
               flexDirection: 'column',
-              borderRight: '1px solid var(--ocean-border)',
-              background: 'var(--ocean-card)',
-              flexShrink: 0,
+              overflow: 'hidden',
             }}
           >
-            <header style={{ padding: 20, flexShrink: 0, borderBottom: '1px solid var(--ocean-border)' }}>
-              <h1 style={{ margin: 0, fontSize: 18, color: 'var(--ocean-text)' }}>Chat Inbox</h1>
-              <p style={{ margin: '6px 0 0', color: 'var(--ocean-text-muted)', fontSize: 13 }}>
-                {conversationList.length} active conversations
-              </p>
-            </header>
-            <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
-              {inboxLoaded && !inboxFetchError && conversationList.length === 0 ? (
-                <p
+            <div
+              style={{
+                padding: '22px 20px 16px',
+                borderBottom: '1px solid rgba(255,255,255,0.06)',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: 12,
+              }}
+            >
+              <div>
+                <h1 style={{ margin: 0, color: 'white', fontSize: 18, fontWeight: 700 }}>Chat Inbox</h1>
+                <p style={{ margin: '6px 0 0', color: 'rgba(255,255,255,0.4)', fontSize: 13 }}>
+                  {conversationList.length} active
+                </p>
+              </div>
+              {isMobile ? (
+                <motion.button
+                  type="button"
+                  onClick={openNav}
+                  whileTap={reduceMotion ? undefined : { scale: 0.98 }}
                   style={{
-                    margin: '24px 12px',
-                    color: 'var(--ocean-text-muted)',
-                    fontSize: 14,
-                    textAlign: 'center',
-                    lineHeight: 1.5,
+                    width: 38,
+                    height: 38,
+                    borderRadius: 12,
+                    border: '1px solid rgba(255,255,255,0.12)',
+                    background: 'rgba(255,255,255,0.04)',
+                    color: 'white',
+                    fontSize: 18,
+                    cursor: 'pointer',
                   }}
                 >
-                  No conversations yet
-                </p>
+                  ☰
+                </motion.button>
+              ) : (
+                <span
+                  style={{
+                    borderRadius: 999,
+                    padding: '7px 10px',
+                    background: 'rgba(56,189,248,0.14)',
+                    color: '#38bdf8',
+                    fontSize: 11,
+                    fontWeight: 700,
+                  }}
+                >
+                  19 active
+                </span>
+              )}
+            </div>
+
+            <div style={{ padding: 10, overflowY: 'auto', flex: 1 }}>
+              {inboxFetchError ? (
+                <div style={{ padding: 20, color: 'rgba(255,255,255,0.55)', fontSize: 14, lineHeight: 1.5 }}>
+                  We couldn’t load the inbox right now.
+                </div>
               ) : null}
-              {conversationList.map((conversation) => {
+
+              {inboxLoaded && !inboxFetchError && conversationList.length === 0 ? (
+                <div style={{ padding: 20, color: 'rgba(255,255,255,0.55)', fontSize: 14, lineHeight: 1.5 }}>
+                  No conversations yet.
+                </div>
+              ) : null}
+
+              {conversationList.map((conversation, index) => {
                 const isSelected = conversation.id === selectedId
-                const badge = getStatusStyle(conversation.status)
+                const statusStyle = getStatusStyle(conversation.status)
+
                 return (
-                  <button
+                  <motion.button
                     key={conversation.id}
                     type="button"
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={oceanTransition(reduceMotion, { delay: 0.04 + index * 0.03, duration: 0.16 })}
+                    whileHover={reduceMotion ? undefined : { backgroundColor: 'rgba(255,255,255,0.04)' }}
                     onClick={() => setSelectedId(conversation.id)}
                     style={{
                       width: '100%',
-                      textAlign: 'left',
-                      border: `1px solid ${isSelected ? 'var(--ocean-border-strong)' : 'var(--ocean-border)'}`,
-                      background: isSelected ? 'rgba(56, 189, 248, 0.1)' : 'transparent',
-                      borderRadius: 12,
-                      padding: '12px 12px',
                       marginBottom: 8,
+                      padding: '13px 12px',
+                      borderRadius: 16,
+                      borderLeft: isSelected ? '2px solid #38bdf8' : '2px solid transparent',
+                      borderTop: '1px solid rgba(255,255,255,0.06)',
+                      borderRight: '1px solid rgba(255,255,255,0.06)',
+                      borderBottom: '1px solid rgba(255,255,255,0.06)',
+                      background: isSelected ? 'rgba(56,189,248,0.08)' : 'transparent',
+                      color: 'inherit',
+                      textAlign: 'left',
                       cursor: 'pointer',
                     }}
                   >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <p style={{ margin: 0, fontWeight: 600, color: 'var(--ocean-text)', fontSize: 14 }}>
-                        {conversation.customerName}
-                      </p>
-                      <p style={{ margin: 0, color: 'var(--ocean-text-subtle)', fontSize: 12 }}>{conversation.time}</p>
+                    <div style={{ display: 'grid', gridTemplateColumns: '42px 1fr auto', gap: 12, alignItems: 'center' }}>
+                      <div
+                        style={{
+                          width: 42,
+                          height: 42,
+                          borderRadius: '50%',
+                          display: 'grid',
+                          placeItems: 'center',
+                          background: 'linear-gradient(135deg, rgba(56,189,248,0.8), rgba(14,165,233,0.28))',
+                          color: 'white',
+                          fontSize: 12,
+                          fontWeight: 700,
+                        }}
+                      >
+                        {getInitials(conversation.customerName)}
+                      </div>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                          <div
+                            style={{
+                              color: 'white',
+                              fontSize: 13,
+                              fontWeight: 700,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {conversation.customerName}
+                          </div>
+                        </div>
+                        <div
+                          style={{
+                            marginTop: 4,
+                            color: 'rgba(255,255,255,0.42)',
+                            fontSize: 12,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {conversation.preview}
+                        </div>
+                      </div>
+                      <div style={{ display: 'grid', justifyItems: 'end', gap: 8 }}>
+                        <div style={{ color: 'rgba(255,255,255,0.3)', fontSize: 11 }}>{conversation.time}</div>
+                        <span
+                          style={{
+                            padding: '4px 8px',
+                            borderRadius: 999,
+                            border: `1px solid ${statusStyle.border}`,
+                            background: statusStyle.background,
+                            color: statusStyle.color,
+                            fontSize: 10,
+                            fontWeight: 700,
+                          }}
+                        >
+                          {conversation.status === 'Live' ? 'Live' : conversation.status}
+                        </span>
+                      </div>
                     </div>
-                    <p
-                      style={{
-                        margin: '6px 0 9px',
-                        color: 'var(--ocean-text-muted)',
-                        fontSize: 13,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {conversation.preview}
-                    </p>
-                    <span
-                      style={{
-                        display: 'inline-block',
-                        padding: '4px 8px',
-                        borderRadius: 999,
-                        border: `1px solid ${badge.border}`,
-                        background: badge.background,
-                        color: badge.color,
-                        fontSize: 11,
-                        fontWeight: 600,
-                      }}
-                    >
-                      {conversation.status}
-                    </span>
-                  </button>
+                  </motion.button>
                 )
               })}
             </div>
-          </section>
-        )}
+          </motion.section>
 
-        <section
-          style={{
-            flex: 1,
-            height: '100vh',
-            overflow: 'hidden',
-            display: 'flex',
-            flexDirection: 'column',
-            background: 'var(--ocean-ink)',
-          }}
-        >
-          {selectedConversation ? (
-            <>
-              <header
-                style={{
-                  padding: 16,
-                  flexShrink: 0,
-                  borderBottom: '1px solid var(--ocean-border)',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  gap: 10,
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  {isMobile && (
-                    <button
-                      type="button"
-                      onClick={() => openNav()}
+          <motion.section
+            initial={{ opacity: 0, scale: 0.97, y: 10 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            transition={oceanTransition(reduceMotion, { duration: 0.24, delay: 0.04 })}
+            style={{
+              ...panelStyle,
+              height: '100%',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+            }}
+          >
+            {selectedConversation ? (
+              <>
+                <header
+                  style={{
+                    padding: '20px 22px 16px',
+                    borderBottom: '1px solid rgba(255,255,255,0.06)',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: 16,
+                  }}
+                >
+                  <div>
+                    <div style={{ color: 'white', fontSize: 18, fontWeight: 700 }}>{selectedConversation.customerName}</div>
+                    <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: '50%',
+                          background: '#4ade80',
+                          boxShadow: '0 0 0 6px rgba(74,222,128,0.16)',
+                        }}
+                      />
+                      <span style={{ color: 'rgba(255,255,255,0.42)', fontSize: 13 }}>Session Active</span>
+                    </div>
+                  </div>
+                  <span
+                    style={{
+                      padding: '7px 10px',
+                      borderRadius: 999,
+                      border: `1px solid ${badge.border}`,
+                      background: badge.background,
+                      color: badge.color,
+                      fontSize: 11,
+                      fontWeight: 700,
+                    }}
+                  >
+                    {selectedConversation.status}
+                  </span>
+                </header>
+
+                <div
+                  ref={messagesScrollRef}
+                  style={{
+                    flex: 1,
+                    overflowY: 'auto',
+                    padding: '18px 20px',
+                    display: 'grid',
+                    alignContent: 'start',
+                    gap: 12,
+                  }}
+                >
+                  {selectedConversation.messages.map((message) => {
+                    const isAi = message.sender === 'ai'
+
+                    return (
+                      <div
+                        key={message.id}
+                        style={{
+                          display: 'flex',
+                          justifyContent: isAi ? 'flex-start' : 'flex-end',
+                        }}
+                      >
+                        <div style={{ maxWidth: '72%' }}>
+                          <div
+                            style={{
+                              borderRadius: 18,
+                              padding: '12px 14px',
+                              background: isAi ? 'rgba(8,20,40,0.6)' : 'rgba(14,165,233,0.15)',
+                              border: isAi
+                                ? '1px solid rgba(255,255,255,0.08)'
+                                : '1px solid rgba(56,189,248,0.2)',
+                              color: 'white',
+                              boxShadow: isAi ? 'none' : '0 8px 24px rgba(14,165,233,0.16)',
+                            }}
+                          >
+                            <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6 }}>{message.text}</p>
+                          </div>
+                          <div
+                            style={{
+                              marginTop: 6,
+                              fontSize: 10,
+                              color: 'rgba(255,255,255,0.3)',
+                              textAlign: isAi ? 'left' : 'right',
+                            }}
+                          >
+                            {isAi ? 'AI Agent' : 'Customer'} • {message.time}
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+
+                  {isLoading && sendingConversationId === selectedConversation.id ? (
+                    <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+                      <div
+                        style={{
+                          borderRadius: 18,
+                          padding: '12px 14px',
+                          background: 'rgba(8,20,40,0.6)',
+                          border: '1px solid rgba(255,255,255,0.08)',
+                          color: 'rgba(255,255,255,0.75)',
+                          fontSize: 14,
+                        }}
+                      >
+                        AI is typing...
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+
+                <footer
+                  style={{
+                    padding: 16,
+                    borderTop: '1px solid rgba(255,255,255,0.06)',
+                    background: 'rgba(5,20,40,0.45)',
+                    backdropFilter: 'blur(20px)',
+                  }}
+                >
+                  <div
+                    style={{
+                      marginBottom: 10,
+                      borderRadius: 14,
+                      border: `1px solid ${isTakenOver ? 'rgba(251,191,36,0.32)' : 'rgba(74,222,128,0.32)'}`,
+                      background: isTakenOver ? 'rgba(251,191,36,0.1)' : 'rgba(74,222,128,0.1)',
+                      color: isTakenOver ? '#fbbf24' : '#4ade80',
+                      fontSize: 12,
+                      fontWeight: 700,
+                      padding: '10px 12px',
+                    }}
+                  >
+                    {isTakenOver ? 'Human operator is handling this session' : 'AI is handling this session'}
+                  </div>
+
+                  <div style={{ display: 'flex', gap: 10, flexWrap: isMobile ? 'wrap' : 'nowrap' }}>
+                    <input
+                      type="text"
+                      value={draft}
+                      onChange={(event) => setDraft(event.target.value)}
+                      disabled={!isTakenOver || isLoading}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' && !event.shiftKey) {
+                          event.preventDefault()
+                          void handleSend()
+                        }
+                      }}
+                      placeholder={
+                        isTakenOver
+                          ? 'Write a message...'
+                          : 'AI is in control. Click Take Over to respond.'
+                      }
                       style={{
-                        borderRadius: 8,
-                        border: '1px solid var(--ocean-border)',
-                        background: 'var(--ocean-surface)',
-                        color: 'var(--ocean-text)',
+                        flex: 1,
+                        minWidth: 180,
+                        borderRadius: 16,
+                        border: '1px solid rgba(255,255,255,0.1)',
+                        background: isTakenOver ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.03)',
+                        padding: '14px 16px',
+                        fontSize: 14,
+                        color: isTakenOver ? 'white' : 'rgba(255,255,255,0.45)',
+                        outline: 'none',
+                      }}
+                    />
+                    <motion.button
+                      type="button"
+                      onClick={() => void handleSend()}
+                      disabled={!isTakenOver || isLoading || !draft.trim()}
+                      whileHover={
+                        !isTakenOver || isLoading || !draft.trim() || reduceMotion ? undefined : { scale: 1.02 }
+                      }
+                      whileTap={
+                        !isTakenOver || isLoading || !draft.trim() || reduceMotion ? undefined : { scale: 0.98 }
+                      }
+                      style={{
+                        border: 'none',
+                        borderRadius: 16,
+                        background:
+                          !isTakenOver || isLoading || !draft.trim()
+                            ? 'rgba(255,255,255,0.08)'
+                            : '#0ea5e9',
+                        color:
+                          !isTakenOver || isLoading || !draft.trim() ? 'rgba(255,255,255,0.38)' : 'white',
                         fontWeight: 700,
-                        fontSize: 12,
-                        padding: '6px 10px',
+                        fontSize: 13,
+                        padding: '0 18px',
+                        minHeight: 50,
+                        cursor:
+                          !isTakenOver || isLoading || !draft.trim() ? 'not-allowed' : 'pointer',
+                        boxShadow:
+                          !isTakenOver || isLoading || !draft.trim()
+                            ? 'none'
+                            : '0 8px 24px rgba(14,165,233,0.32)',
+                      }}
+                    >
+                      {isLoading ? 'Sending...' : 'Send'}
+                    </motion.button>
+                    <motion.button
+                      type="button"
+                      onClick={() => void handleTakeOverToggle()}
+                      whileHover={reduceMotion ? undefined : { y: -1 }}
+                      whileTap={reduceMotion ? undefined : { scale: 0.98 }}
+                      style={{
+                        borderRadius: 16,
+                        border: `1px solid ${isTakenOver ? 'rgba(249,115,22,0.45)' : 'rgba(255,255,255,0.12)'}`,
+                        background: isTakenOver ? 'rgba(249,115,22,0.14)' : 'rgba(255,255,255,0.05)',
+                        color: isTakenOver ? '#fb923c' : 'rgba(255,255,255,0.82)',
+                        fontWeight: 700,
+                        fontSize: 13,
+                        padding: '0 18px',
+                        minHeight: 50,
                         cursor: 'pointer',
                       }}
                     >
-                      Menu
-                    </button>
-                  )}
-                  <div>
-                    <h2 style={{ margin: 0, fontSize: 18 }}>{selectedConversation.customerName}</h2>
-                    <p style={{ margin: '5px 0 0', color: 'var(--ocean-text-muted)', fontSize: 13 }}>
-                      AI assistant is handling this conversation
+                      {isTakenOver ? 'Return to AI' : 'Take Over'}
+                    </motion.button>
+                  </div>
+                </footer>
+              </>
+            ) : (
+              <div
+                style={{
+                  flex: 1,
+                  display: 'grid',
+                  placeItems: 'center',
+                  color: 'rgba(255,255,255,0.48)',
+                  fontSize: 14,
+                }}
+              >
+                Select a conversation to start.
+              </div>
+            )}
+          </motion.section>
+
+          {!isMobile ? (
+            <motion.aside
+              initial={{ opacity: 0, scale: 0.97, x: 10 }}
+              animate={{ opacity: 1, scale: 1, x: 0 }}
+              transition={oceanTransition(reduceMotion, { duration: 0.24, delay: 0.08 })}
+              style={{
+                ...panelStyle,
+                height: '100%',
+                overflow: 'hidden',
+                display: 'flex',
+                flexDirection: 'column',
+              }}
+            >
+              <div style={{ padding: '22px 20px 16px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                <div style={{ color: 'white', fontSize: 18, fontWeight: 700 }}>Session Detail</div>
+                <div style={{ marginTop: 6, color: 'rgba(255,255,255,0.4)', fontSize: 13 }}>
+                  Live operator controls
+                </div>
+              </div>
+
+              {selectedConversation ? (
+                <div style={{ padding: 18, display: 'grid', gap: 16, overflowY: 'auto' }}>
+                  <div
+                    style={{
+                      borderRadius: 18,
+                      padding: 16,
+                      background: 'rgba(255,255,255,0.04)',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                    }}
+                  >
+                    <div style={{ color: 'white', fontSize: 16, fontWeight: 700 }}>{selectedConversation.customerName}</div>
+                    <div style={{ marginTop: 6, color: 'rgba(255,255,255,0.42)', fontSize: 13 }}>
+                      Last update {selectedConversation.time}
+                    </div>
+                    <div style={{ marginTop: 14, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                      <span
+                        style={{
+                          padding: '5px 8px',
+                          borderRadius: 999,
+                          border: `1px solid ${badge.border}`,
+                          background: badge.background,
+                          color: badge.color,
+                          fontSize: 11,
+                          fontWeight: 700,
+                        }}
+                      >
+                        {selectedConversation.status}
+                      </span>
+                      <span
+                        style={{
+                          padding: '5px 8px',
+                          borderRadius: 999,
+                          border: '1px solid rgba(255,255,255,0.08)',
+                          background: 'rgba(255,255,255,0.04)',
+                          color: 'rgba(255,255,255,0.7)',
+                          fontSize: 11,
+                          fontWeight: 700,
+                        }}
+                      >
+                        {selectedConversation.messages.length} messages
+                      </span>
+                    </div>
+                  </div>
+
+                  <div
+                    style={{
+                      borderRadius: 18,
+                      padding: 16,
+                      background: 'rgba(255,255,255,0.04)',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      display: 'grid',
+                      gap: 12,
+                    }}
+                  >
+                    <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11, letterSpacing: '0.16em', textTransform: 'uppercase' }}>
+                      AI Agent
+                    </div>
+                    {[
+                      { label: 'Mode', value: isTakenOver ? 'Human takeover' : 'Autonomous' },
+                      { label: 'Response time', value: '< 2 seconds' },
+                      { label: 'Queue state', value: 'Healthy' },
+                    ].map((item) => (
+                      <div key={item.label} style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                        <span style={{ color: 'rgba(255,255,255,0.42)', fontSize: 12 }}>{item.label}</span>
+                        <span style={{ color: 'white', fontSize: 13, fontWeight: 700 }}>{item.value}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div
+                    style={{
+                      borderRadius: 18,
+                      padding: 16,
+                      background: 'rgba(255,255,255,0.04)',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                    }}
+                  >
+                    <div style={{ color: 'white', fontSize: 14, fontWeight: 700 }}>Preview</div>
+                    <p style={{ margin: '10px 0 0', color: 'rgba(255,255,255,0.55)', fontSize: 13, lineHeight: 1.65 }}>
+                      {selectedConversation.preview}
                     </p>
                   </div>
                 </div>
-                <span
-                  style={{
-                    padding: '6px 10px',
-                    borderRadius: 999,
-                    border: '1px solid rgba(74, 222, 128, 0.35)',
-                    background: 'rgba(74, 222, 128, 0.12)',
-                    color: 'var(--ocean-success)',
-                    fontSize: 12,
-                    fontWeight: 600,
-                  }}
-                >
-                  Session Active
-                </span>
-              </header>
-
-              <div
-                ref={messagesScrollRef}
-                style={{ flex: 1, overflowY: 'auto', padding: 20, background: 'var(--ocean-deep)' }}
-              >
-                {selectedConversation.messages.map((message) => {
-                  const isAI = message.sender === 'ai'
-                  return (
-                    <div
-                      key={message.id}
-                      style={{
-                        display: 'flex',
-                        justifyContent: isAI ? 'flex-end' : 'flex-start',
-                        marginBottom: 12,
-                      }}
-                    >
-                      <div
-                        style={{
-                          maxWidth: '72%',
-                          borderRadius: 12,
-                          padding: '10px 12px',
-                          background: isAI ? 'linear-gradient(135deg, var(--ocean-sky) 0%, #0ea5e9 100%)' : 'var(--ocean-surface)',
-                          border: isAI ? '1px solid var(--ocean-border-strong)' : '1px solid var(--ocean-border)',
-                          color: isAI ? 'var(--ocean-black)' : 'var(--ocean-text)',
-                        }}
-                      >
-                        <p style={{ margin: 0, fontSize: 14, lineHeight: 1.4 }}>{message.text}</p>
-                        <p
-                          style={{
-                            margin: '7px 0 0',
-                            fontSize: 11,
-                            opacity: isAI ? 0.88 : 0.5,
-                            textAlign: 'right',
-                          }}
-                        >
-                          {message.sender === 'ai' ? 'AI' : 'Customer'} - {message.time}
-                        </p>
-                      </div>
-                    </div>
-                  )
-                })}
-                {isLoading && sendingConversationId === selectedConversation.id && (
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-                    <div
-                      style={{
-                        maxWidth: '72%',
-                        borderRadius: 12,
-                        padding: '10px 12px',
-                        background: 'rgba(248, 113, 113, 0.12)',
-                        border: '1px solid rgba(248, 113, 113, 0.35)',
-                        color: 'var(--ocean-danger)',
-                      }}
-                    >
-                      <p style={{ margin: 0, fontSize: 14, lineHeight: 1.4 }}>AI is typing...</p>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <footer
-                style={{
-                  flexShrink: 0,
-                  padding: 16,
-                  borderTop: '1px solid var(--ocean-border)',
-                  background: 'var(--ocean-card)',
-                }}
-              >
+              ) : (
                 <div
                   style={{
-                    marginBottom: 8,
-                    borderRadius: 9,
-                    border: `1px solid ${isTakenOver ? 'rgba(251, 191, 36, 0.45)' : 'rgba(74, 222, 128, 0.35)'}`,
-                    background: isTakenOver ? 'rgba(251, 191, 36, 0.1)' : 'rgba(74, 222, 128, 0.1)',
-                    color: isTakenOver ? 'var(--ocean-warning)' : 'var(--ocean-success)',
-                    fontSize: 12,
-                    fontWeight: 700,
-                    padding: '8px 10px',
+                    flex: 1,
+                    display: 'grid',
+                    placeItems: 'center',
+                    color: 'rgba(255,255,255,0.45)',
+                    fontSize: 14,
+                    padding: 24,
+                    textAlign: 'center',
                   }}
                 >
-                  {isTakenOver ? 'You are now handling this conversation' : 'AI is handling this conversation'}
+                  Conversation insights will appear here.
                 </div>
-                <div style={{ display: 'flex', gap: 10 }}>
-                  <input
-                    type="text"
-                    value={draft}
-                    onChange={(event) => setDraft(event.target.value)}
-                    disabled={!isTakenOver || isLoading}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' && !event.shiftKey) {
-                        event.preventDefault()
-                        void handleSend()
-                      }
-                    }}
-                    placeholder={
-                      isTakenOver
-                        ? 'Write a message...'
-                        : 'AI is handling this conversation - click Take Over to respond manually'
-                    }
-                    style={{
-                      flex: 1,
-                      border: '1px solid var(--ocean-border)',
-                      borderRadius: 10,
-                      padding: '10px 12px',
-                      fontSize: 14,
-                      outline: 'none',
-                      background: !isTakenOver ? 'var(--ocean-surface)' : 'var(--ocean-ink-soft)',
-                      color: !isTakenOver ? 'var(--ocean-text-muted)' : 'var(--ocean-text)',
-                    }}
-                  />
-                  <button
-                    type="button"
-                    onClick={handleSend}
-                    disabled={!isTakenOver || isLoading || !draft.trim()}
-                    style={{
-                      border: 'none',
-                      borderRadius: 10,
-                      background:
-                        !isTakenOver || isLoading || !draft.trim()
-                          ? 'var(--ocean-surface)'
-                          : 'linear-gradient(135deg, var(--ocean-sky) 0%, #0ea5e9 100%)',
-                      color: !isTakenOver || isLoading || !draft.trim() ? 'var(--ocean-text-subtle)' : 'var(--ocean-black)',
-                      fontWeight: 600,
-                      fontSize: 14,
-                      padding: '10px 14px',
-                      cursor: !isTakenOver || isLoading || !draft.trim() ? 'not-allowed' : 'pointer',
-                    }}
-                  >
-                    {isLoading ? 'Sending...' : 'Send'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void handleTakeOverToggle()}
-                    style={{
-                      borderRadius: 10,
-                      border: `1px solid ${isTakenOver ? 'rgba(251, 191, 36, 0.5)' : 'var(--ocean-border)'}`,
-                      background: isTakenOver ? 'rgba(251, 191, 36, 0.25)' : 'var(--ocean-surface)',
-                      color: isTakenOver ? 'var(--ocean-warning)' : 'var(--ocean-text)',
-                      fontWeight: 600,
-                      fontSize: 14,
-                      padding: '10px 14px',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    {isTakenOver ? 'AI Mode' : 'Take Over'}
-                  </button>
-                </div>
-              </footer>
-            </>
-          ) : (
-            <div
-              style={{
-                flex: 1,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: 32,
-                color: 'var(--ocean-text-muted)',
-                fontSize: 14,
-              }}
-            >
-              Select a conversation to start
-            </div>
-          )}
-        </section>
-      </div>
+              )}
+            </motion.aside>
+          ) : null}
+        </div>
       )}
     </DashboardOceanNav>
   )

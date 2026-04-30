@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono, Playfair_Display } from "next/font/google";
 
 import { AppProviders } from "@/components/app-providers";
+import AuroraBackground from "@/components/aurora-background";
 
 import "./globals.css";
 
@@ -36,7 +37,11 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} ${playfair.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">
+      <body
+        className="min-h-full flex flex-col"
+        style={{ margin: 0, background: "#050d1a" }}
+      >
+        <AuroraBackground />
         <AppProviders>{children}</AppProviders>
       </body>
     </html>

@@ -1,557 +1,9 @@
 'use client'
 
-import { motion } from 'framer-motion'
-import gsap from 'gsap'
-import { useGSAP } from '@gsap/react'
-import { useRef } from 'react'
+import { motion, useReducedMotion } from 'framer-motion'
 
 import { DashboardOceanNav } from '@/components/dashboard-ocean-nav'
-
-const revenueBarsZero = [6, 6, 6, 6, 6, 6, 6, 6]
-
-const actions = [
-  { icon: '🤖', text: 'Auto-confirmed booking for Emma Johnson', time: '2 min ago' },
-  { icon: '📩', text: 'Sent reminder to 6 clients for tomorrow', time: '11 min ago' },
-  { icon: '🧾', text: 'Generated daily booking summary report', time: '26 min ago' },
-  { icon: '🧠', text: 'Resolved cancellation request with rebook option', time: '53 min ago' },
-]
-
-const card = {
-  borderRadius: 'var(--ocean-radius-lg)' as const,
-  border: '1px solid var(--ocean-border)',
-  background: 'var(--ocean-card)',
-  boxShadow: 'var(--ocean-shadow-md)',
-}
-
-const cardLiftShadow =
-  '0 14px 32px rgba(0, 0, 0, 0.48), 0 0 0 1px rgba(125, 211, 252, 0.2)'
-
-type DashboardMainProps = {
-  isMobile: boolean
-  openNav: () => void
-  businessDisplayName: string
-  userEmail: string
-  activeChats: number
-  messageCount: number
-}
-
-function DashboardMain({
-  isMobile,
-  openNav,
-  businessDisplayName,
-  userEmail,
-  activeChats,
-  messageCount,
-}: DashboardMainProps) {
-  const mainRef = useRef<HTMLElement>(null)
-  const statCard0 = useRef<HTMLElement>(null)
-  const statCard1 = useRef<HTMLElement>(null)
-  const statCard2 = useRef<HTMLElement>(null)
-  const revValRef = useRef<HTMLParagraphElement>(null)
-  const bookValRef = useRef<HTMLParagraphElement>(null)
-  const satValRef = useRef<HTMLParagraphElement>(null)
-  const chatsRef = useRef<HTMLSpanElement>(null)
-  const msgsRef = useRef<HTMLSpanElement>(null)
-
-  useGSAP(
-    () => {
-      const root = mainRef.current
-      if (!root) {
-        return
-      }
-      const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-      if (reduced) {
-        return
-      }
-
-      const rows = root.querySelectorAll('.ai-action-row')
-      if (rows.length) {
-        gsap.from(rows, {
-          opacity: 0,
-          y: 10,
-          stagger: 0.035,
-          duration: 0.16,
-          ease: 'power2.out',
-          willChange: 'transform, opacity',
-          onComplete() {
-            gsap.set(rows, { willChange: 'auto' })
-          },
-        })
-      }
-
-      const cards = [statCard0.current, statCard1.current, statCard2.current].filter(
-        Boolean,
-      ) as HTMLElement[]
-      const offs: (() => void)[] = []
-      for (const el of cards) {
-        const onEnter = () => {
-          gsap.to(el, {
-            y: -2,
-            duration: 0.12,
-            ease: 'power2.out',
-            boxShadow: cardLiftShadow,
-            willChange: 'transform',
-          })
-        }
-        const onLeave = () => {
-          gsap.to(el, {
-            y: 0,
-            duration: 0.12,
-            ease: 'power2.out',
-            boxShadow: card.boxShadow,
-            willChange: 'auto',
-          })
-        }
-        el.addEventListener('mouseenter', onEnter)
-        el.addEventListener('mouseleave', onLeave)
-        offs.push(() => {
-          el.removeEventListener('mouseenter', onEnter)
-          el.removeEventListener('mouseleave', onLeave)
-        })
-      }
-
-      return () => {
-        offs.forEach((o) => o())
-      }
-    },
-    { scope: mainRef, dependencies: [] },
-  )
-
-  useGSAP(
-    () => {
-      const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-      if (reduced) {
-        if (chatsRef.current) {
-          chatsRef.current.textContent = String(activeChats)
-        }
-        if (msgsRef.current) {
-          msgsRef.current.textContent = String(messageCount)
-        }
-        if (revValRef.current) {
-          revValRef.current.textContent = '$0'
-        }
-        if (bookValRef.current) {
-          bookValRef.current.textContent = '0'
-        }
-        if (satValRef.current) {
-          satValRef.current.textContent = '0%'
-        }
-        return
-      }
-
-      const proxy = { rev: 0, book: 0, sat: 0, chats: 0, msgs: 0 }
-      const tw = gsap.to(proxy, {
-        rev: 0,
-        book: 0,
-        sat: 0,
-        chats: activeChats,
-        msgs: messageCount,
-        duration: 0.18,
-        ease: 'power2.out',
-        onUpdate() {
-          if (revValRef.current) {
-            revValRef.current.textContent = `$${Math.round(proxy.rev)}`
-          }
-          if (bookValRef.current) {
-            bookValRef.current.textContent = String(Math.round(proxy.book))
-          }
-          if (satValRef.current) {
-            satValRef.current.textContent = `${Math.round(proxy.sat)}%`
-          }
-          if (chatsRef.current) {
-            chatsRef.current.textContent = String(Math.round(proxy.chats))
-          }
-          if (msgsRef.current) {
-            msgsRef.current.textContent = String(Math.round(proxy.msgs))
-          }
-        },
-      })
-
-      return () => {
-        tw.kill()
-      }
-    },
-    { dependencies: [activeChats, messageCount] },
-  )
-
-  return (
-    <main
-      ref={mainRef}
-      style={{ flex: 1, padding: isMobile ? '16px 14px 24px' : '30px 32px 36px', overflow: 'auto' }}
-    >
-      {isMobile && (
-        <div style={{ marginBottom: 12 }}>
-          <motion.button
-            type="button"
-            aria-label="Open menu"
-            onClick={openNav}
-            whileHover={{ scale: 1.04 }}
-            whileTap={{ scale: 0.96 }}
-            style={{
-              border: '1px solid var(--ocean-border)',
-              borderRadius: 'var(--ocean-radius-md)',
-              background: 'var(--ocean-surface)',
-              color: 'var(--ocean-text)',
-              width: 44,
-              height: 44,
-              fontSize: 22,
-              lineHeight: 1,
-              cursor: 'pointer',
-            }}
-          >
-            ☰
-          </motion.button>
-        </div>
-      )}
-
-      <section
-        style={{
-          ...card,
-          padding: 24,
-          display: 'grid',
-          gridTemplateColumns: isMobile ? '1fr' : '1.2fr minmax(240px, 0.8fr)',
-          gap: 20,
-          marginBottom: 20,
-        }}
-      >
-        <div>
-          <div
-            style={{
-              display: 'inline-flex',
-              background: 'rgba(74, 222, 128, 0.12)',
-              color: 'var(--ocean-success)',
-              border: '1px solid rgba(74, 222, 128, 0.35)',
-              padding: '6px 10px',
-              borderRadius: 999,
-              fontSize: 12,
-              fontWeight: 600,
-              marginBottom: 14,
-            }}
-          >
-            System Status: Healthy
-          </div>
-          <h1 style={{ margin: 0, fontSize: isMobile ? 30 : 40, lineHeight: 1.05, letterSpacing: '-0.02em' }}>
-            Welcome back, {businessDisplayName} — your AI is active.
-          </h1>
-          <p style={{ margin: '12px 0 0', fontSize: 15, color: 'var(--ocean-text-muted)', maxWidth: 620 }}>
-            <span ref={chatsRef}>0</span> active chats · <span ref={msgsRef}>0</span> messages
-          </p>
-          <p style={{ margin: '7px 0 0', color: 'var(--ocean-text-subtle)', fontSize: 13 }}>{userEmail}</p>
-          <div style={{ marginTop: 18, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-            <motion.button
-              type="button"
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              style={{
-                border: 'none',
-                borderRadius: 'var(--ocean-radius-md)',
-                background: 'linear-gradient(135deg, var(--ocean-sky) 0%, #0ea5e9 100%)',
-                color: 'var(--ocean-black)',
-                fontWeight: 700,
-                fontSize: 14,
-                padding: '11px 16px',
-                cursor: 'pointer',
-                boxShadow: 'var(--ocean-shadow-glow)',
-              }}
-            >
-              Deploy Agent
-            </motion.button>
-            <motion.button
-              type="button"
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              style={{
-                borderRadius: 'var(--ocean-radius-md)',
-                background: 'transparent',
-                color: 'var(--ocean-text)',
-                fontWeight: 600,
-                fontSize: 14,
-                padding: '10px 15px',
-                border: '1px solid var(--ocean-border-strong)',
-                cursor: 'pointer',
-              }}
-            >
-              View Reports
-            </motion.button>
-          </div>
-        </div>
-        <div
-          style={{
-            borderRadius: 'var(--ocean-radius-lg)',
-            background:
-              'linear-gradient(145deg, var(--ocean-ink) 0%, var(--ocean-surface) 45%, rgba(56, 189, 248, 0.15) 100%)',
-            minHeight: 220,
-            position: 'relative',
-            overflow: 'hidden',
-            border: '1px solid var(--ocean-border)',
-          }}
-        >
-          <div
-            style={{
-              position: 'absolute',
-              inset: 0,
-              backgroundImage:
-                'linear-gradient(rgba(125,211,252,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(125,211,252,0.06) 1px, transparent 1px)',
-              backgroundSize: '28px 28px',
-              opacity: 0.35,
-            }}
-          />
-          <div
-            style={{
-              position: 'absolute',
-              width: 160,
-              height: 160,
-              borderRadius: 999,
-              background: 'radial-gradient(circle, rgba(232,220,200,0.25) 0%, transparent 70%)',
-              filter: 'blur(8px)',
-              top: -40,
-              right: -20,
-            }}
-          />
-          <div
-            style={{
-              position: 'absolute',
-              width: 180,
-              height: 180,
-              borderRadius: 999,
-              background: 'radial-gradient(circle, rgba(56,189,248,0.35) 0%, transparent 72%)',
-              filter: 'blur(12px)',
-              bottom: -50,
-              left: -40,
-            }}
-          />
-          <div
-            style={{
-              position: 'absolute',
-              inset: 0,
-              padding: 20,
-              display: 'flex',
-              alignItems: 'flex-end',
-            }}
-          >
-            <div
-              style={{
-                borderRadius: 'var(--ocean-radius-md)',
-                padding: '12px 14px',
-                border: '1px solid var(--ocean-border-strong)',
-                background: 'rgba(6, 16, 24, 0.55)',
-                backdropFilter: 'blur(8px)',
-                color: 'var(--ocean-text)',
-              }}
-            >
-              <p style={{ margin: 0, fontSize: 18, fontWeight: 700, letterSpacing: '-0.01em' }}>AI Agent Active</p>
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  marginTop: 6,
-                  color: 'var(--ocean-sky-bright)',
-                  fontSize: 12,
-                }}
-              >
-                <span
-                  style={{
-                    width: 9,
-                    height: 9,
-                    borderRadius: 999,
-                    background: 'var(--ocean-success)',
-                    boxShadow: '0 0 0 6px rgba(74, 222, 128, 0.2)',
-                  }}
-                />
-                Live monitoring enabled
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, minmax(0, 1fr))', gap: 14 }}>
-        <article ref={statCard0} style={{ ...card, padding: 16, willChange: 'transform' }}>
-          <p style={{ margin: 0, color: 'var(--ocean-text-muted)', fontSize: 13 }}>Estimated Revenue</p>
-          <p ref={revValRef} style={{ margin: '8px 0 14px', fontSize: 30, fontWeight: 700 }}>
-            $0
-          </p>
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: 74 }}>
-            {revenueBarsZero.map((bar, idx) => (
-              <div
-                key={`bar-${bar}-${idx}`}
-                style={{
-                  flex: 1,
-                  borderRadius: 6,
-                  height: `${bar}%`,
-                  background:
-                    idx > 4
-                      ? 'linear-gradient(180deg, var(--ocean-sky-bright), var(--ocean-sky))'
-                      : 'rgba(56, 189, 248, 0.35)',
-                }}
-              />
-            ))}
-          </div>
-        </article>
-
-        <article ref={statCard1} style={{ ...card, padding: 16, willChange: 'transform' }}>
-          <p style={{ margin: 0, color: 'var(--ocean-text-muted)', fontSize: 13 }}>Total Bookings</p>
-          <p ref={bookValRef} style={{ margin: '8px 0 16px', fontSize: 30, fontWeight: 700 }}>
-            0
-          </p>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            {['A', 'M', 'J', 'S', '+12'].map((item, idx) => (
-              <span
-                key={`avatar-${item}`}
-                style={{
-                  width: 31,
-                  height: 31,
-                  borderRadius: 999,
-                  display: 'grid',
-                  placeItems: 'center',
-                  fontSize: 12,
-                  fontWeight: 700,
-                  color: idx === 4 ? 'var(--ocean-sand-deep)' : 'var(--ocean-text)',
-                  background: idx === 4 ? 'rgba(232, 220, 200, 0.2)' : 'var(--ocean-surface)',
-                  border: '1px solid var(--ocean-border)',
-                }}
-              >
-                {item}
-              </span>
-            ))}
-          </div>
-        </article>
-
-        <article ref={statCard2} style={{ ...card, padding: 16, willChange: 'transform' }}>
-          <p style={{ margin: 0, color: 'var(--ocean-text-muted)', fontSize: 13 }}>Satisfaction Rate</p>
-          <p ref={satValRef} style={{ margin: '8px 0 10px', fontSize: 30, fontWeight: 700 }}>
-            0%
-          </p>
-          <div
-            style={{
-              width: '100%',
-              height: 10,
-              borderRadius: 999,
-              background: 'var(--ocean-surface)',
-              overflow: 'hidden',
-            }}
-          >
-            <div
-              style={{
-                width: '0%',
-                height: '100%',
-                borderRadius: 999,
-                background: 'linear-gradient(90deg, var(--ocean-sky), var(--ocean-sand-deep))',
-              }}
-            />
-          </div>
-          <p style={{ margin: '8px 0 0', color: 'var(--ocean-text-muted)', fontSize: 12 }}>No trend data yet</p>
-        </article>
-      </section>
-
-      <section
-        style={{
-          marginTop: 14,
-          display: 'grid',
-          gridTemplateColumns: isMobile ? '1fr' : '1.4fr minmax(240px, 0.8fr)',
-          gap: 14,
-        }}
-      >
-        <article style={{ ...card, overflow: 'hidden' }}>
-          <div style={{ padding: '16px 18px', borderBottom: '1px solid var(--ocean-border)' }}>
-            <h3 style={{ margin: 0, fontSize: 18 }}>Recent AI Actions</h3>
-          </div>
-          <div style={{ padding: '4px 14px 14px' }}>
-            {actions.map((action) => (
-              <div
-                key={`${action.text}-${action.time}`}
-                className="ai-action-row"
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'auto 1fr auto',
-                  gap: 10,
-                  alignItems: 'center',
-                  borderBottom: '1px solid var(--ocean-border)',
-                  padding: '12px 8px',
-                  borderRadius: 'var(--ocean-radius-sm)',
-                  transition: 'background-color 0.12s ease',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = 'rgba(56, 189, 248, 0.06)'
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = 'transparent'
-                }}
-              >
-                <span
-                  style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: 10,
-                    display: 'grid',
-                    placeItems: 'center',
-                    background: 'var(--ocean-surface)',
-                    border: '1px solid var(--ocean-border)',
-                    transition: 'transform 0.12s ease',
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.transform = 'scale(1.05)'
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.transform = 'scale(1)'
-                  }}
-                >
-                  {action.icon}
-                </span>
-                <p style={{ margin: 0, fontSize: 14, color: 'var(--ocean-text)' }}>{action.text}</p>
-                <span style={{ margin: 0, fontSize: 12, color: 'var(--ocean-text-subtle)' }}>{action.time}</span>
-              </div>
-            ))}
-          </div>
-        </article>
-
-        <article
-          style={{
-            borderRadius: 'var(--ocean-radius-lg)',
-            background: 'linear-gradient(165deg, var(--ocean-surface) 0%, var(--ocean-ink) 70%, var(--ocean-black) 100%)',
-            color: 'var(--ocean-text)',
-            padding: 18,
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'space-between',
-            minHeight: 220,
-            border: '1px solid var(--ocean-border)',
-            boxShadow: 'var(--ocean-shadow-md)',
-          }}
-        >
-          <div>
-            <p style={{ margin: 0, fontSize: 20, fontWeight: 700, letterSpacing: '-0.01em' }}>AI Agent</p>
-            <p style={{ margin: '8px 0 0', fontSize: 13, color: 'var(--ocean-success)', fontWeight: 600 }}>● Online</p>
-          </div>
-          <div style={{ marginTop: 16, display: 'grid', gap: 8 }}>
-            {[
-              ['Messages today', String(messageCount)],
-              ['Response time', '< 1s'],
-              ['Conversations handled', String(activeChats)],
-            ].map(([label, value]) => (
-              <div
-                key={String(label)}
-                style={{
-                  background: 'rgba(56, 189, 248, 0.08)',
-                  borderRadius: 'var(--ocean-radius-md)',
-                  padding: '10px 12px',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  border: '1px solid var(--ocean-border)',
-                }}
-              >
-                <span style={{ fontSize: 12, color: 'var(--ocean-text-muted)' }}>{label}</span>
-                <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--ocean-sky-bright)' }}>{value}</span>
-              </div>
-            ))}
-          </div>
-        </article>
-      </section>
-    </main>
-  )
-}
+import { fadeUp, oceanTransition } from '@/lib/ocean-motion'
 
 type DashboardClientProps = {
   businessDisplayName: string
@@ -560,19 +12,554 @@ type DashboardClientProps = {
   messageCount: number
 }
 
-export function DashboardClient({ businessDisplayName, userEmail, activeChats, messageCount }: DashboardClientProps) {
+const actions = [
+  {
+    title: 'Auto-confirmed booking for Emma Johnson',
+    time: '2 min ago',
+    tint: 'rgba(56, 189, 248, 0.14)',
+    icon: 'AI',
+  },
+  {
+    title: 'Sent follow-up reminders to tomorrow’s VIP clients',
+    time: '11 min ago',
+    tint: 'rgba(74, 222, 128, 0.14)',
+    icon: 'RM',
+  },
+  {
+    title: 'Generated end-of-day operations report',
+    time: '26 min ago',
+    tint: 'rgba(167, 139, 250, 0.14)',
+    icon: 'RP',
+  },
+  {
+    title: 'Escalated a pricing objection to your front desk',
+    time: '53 min ago',
+    tint: 'rgba(251, 191, 36, 0.14)',
+    icon: 'ES',
+  },
+]
+
+const cardBase = {
+  background: 'rgba(8, 20, 40, 0.5)',
+  border: '1px solid rgba(255,255,255,0.07)',
+  borderRadius: 16,
+  backdropFilter: 'blur(16px)',
+  WebkitBackdropFilter: 'blur(16px)',
+  boxShadow: '0 20px 60px rgba(0, 0, 0, 0.28)',
+}
+
+function getGreeting() {
+  const hour = new Date().getHours()
+  if (hour < 12) {
+    return 'Good morning'
+  }
+  if (hour < 18) {
+    return 'Good afternoon'
+  }
+  return 'Good evening'
+}
+
+function formatLongDate() {
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(new Date())
+}
+
+export function DashboardClient({
+  businessDisplayName,
+  userEmail,
+  activeChats,
+  messageCount,
+}: DashboardClientProps) {
+  const reduceMotion = useReducedMotion()
+
+  const stats = [
+    {
+      label: 'Revenue',
+      value: '$0',
+      trend: '+0.0%',
+      trendColor: '#4ade80',
+      bars: [20, 28, 24, 36, 42, 38, 48, 56],
+    },
+    {
+      label: 'Bookings',
+      value: '0',
+      trend: '+0.0%',
+      trendColor: '#4ade80',
+      bars: [18, 16, 26, 20, 30, 34, 32, 40],
+    },
+    {
+      label: 'Chats',
+      value: String(activeChats),
+      trend: activeChats > 0 ? '+8.2%' : '0.0%',
+      trendColor: '#4ade80',
+      bars: [14, 22, 30, 26, 34, 46, 40, 54],
+    },
+    {
+      label: 'Satisfaction',
+      value: '—',
+      trend: '-2.0%',
+      trendColor: '#f87171',
+      bars: [36, 42, 38, 44, 40, 48, 46, 50],
+    },
+  ]
+
   return (
     <DashboardOceanNav activeNav="Dashboard">
       {({ isMobile, openNav }) => (
-        <DashboardMain
-          isMobile={isMobile}
-          openNav={openNav}
-          businessDisplayName={businessDisplayName}
-          userEmail={userEmail}
-          activeChats={activeChats}
-          messageCount={messageCount}
-        />
+        <main style={{ display: 'grid', gap: 24 }}>
+          {isMobile ? (
+            <motion.button
+              type="button"
+              onClick={openNav}
+              whileHover={reduceMotion ? undefined : { scale: 1.03 }}
+              whileTap={reduceMotion ? undefined : { scale: 0.98 }}
+              style={{
+                width: 44,
+                height: 44,
+                borderRadius: 14,
+                border: '1px solid rgba(255,255,255,0.12)',
+                background: 'rgba(5, 20, 40, 0.5)',
+                color: 'white',
+                fontSize: 22,
+                cursor: 'pointer',
+              }}
+            >
+              ☰
+            </motion.button>
+          ) : null}
+
+          <motion.section
+            variants={fadeUp}
+            initial="hidden"
+            animate="visible"
+            style={{ display: 'grid', gap: 12 }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: isMobile ? 'flex-start' : 'center',
+                flexDirection: isMobile ? 'column' : 'row',
+                gap: 16,
+              }}
+            >
+              <div>
+                <h1
+                  style={{
+                    margin: 0,
+                    color: 'white',
+                    fontSize: isMobile ? 28 : 32,
+                    fontWeight: 700,
+                    fontFamily: 'var(--font-playfair)',
+                    letterSpacing: '-0.03em',
+                  }}
+                >
+                  {getGreeting()}, {businessDisplayName}
+                </h1>
+                <p style={{ margin: '8px 0 0', color: 'rgba(255,255,255,0.45)', fontSize: 13 }}>
+                  {formatLongDate()}
+                </p>
+              </div>
+              <div
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  padding: '10px 14px',
+                  borderRadius: 999,
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  background: 'rgba(255,255,255,0.05)',
+                  color: 'rgba(255,255,255,0.82)',
+                  fontSize: 13,
+                }}
+              >
+                <span
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: '50%',
+                    background: '#4ade80',
+                    boxShadow: '0 0 0 6px rgba(74, 222, 128, 0.16)',
+                  }}
+                />
+                All systems operational
+              </div>
+            </div>
+          </motion.section>
+
+          <motion.section
+            variants={fadeUp}
+            initial="hidden"
+            animate="visible"
+            transition={oceanTransition(reduceMotion, { delay: 0.05 })}
+            style={{
+              ...cardBase,
+              padding: isMobile ? '22px 18px' : '28px 32px',
+              display: 'grid',
+              gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1.3fr) minmax(280px, 0.7fr)',
+              gap: 20,
+            }}
+          >
+            <div style={{ display: 'grid', gap: 16 }}>
+              <div>
+                <p
+                  style={{
+                    margin: 0,
+                    color: '#38bdf8',
+                    fontSize: 12,
+                    letterSpacing: '0.22em',
+                    textTransform: 'uppercase',
+                    fontWeight: 600,
+                  }}
+                >
+                  OceanCore Command
+                </p>
+                <h2
+                  style={{
+                    margin: '10px 0 0',
+                    color: 'white',
+                    fontSize: isMobile ? 24 : 30,
+                    lineHeight: 1.1,
+                    fontWeight: 700,
+                  }}
+                >
+                  Your AI operator is live and ready for the next client wave.
+                </h2>
+                <p
+                  style={{
+                    margin: '12px 0 0',
+                    maxWidth: 620,
+                    color: 'rgba(255,255,255,0.72)',
+                    fontSize: 14,
+                    lineHeight: 1.7,
+                  }}
+                >
+                  Monitor conversations, bookings, and customer activity from one calm command deck while
+                  OceanCore keeps your front line moving.
+                </p>
+              </div>
+
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, minmax(0, 1fr))',
+                  gap: 12,
+                }}
+              >
+                {[
+                  { label: 'Active chats', value: String(activeChats) },
+                  { label: 'Messages today', value: String(messageCount) },
+                  { label: 'Operator email', value: userEmail || '—' },
+                ].map((item) => (
+                  <div
+                    key={item.label}
+                    style={{
+                      borderRadius: 16,
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      background: 'rgba(255,255,255,0.04)',
+                      padding: '14px 16px',
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: 11,
+                        letterSpacing: '0.16em',
+                        textTransform: 'uppercase',
+                        color: 'rgba(255,255,255,0.38)',
+                      }}
+                    >
+                      {item.label}
+                    </div>
+                    <div
+                      style={{
+                        marginTop: 8,
+                        color: 'white',
+                        fontSize: item.label === 'Operator email' ? 14 : 24,
+                        fontWeight: 700,
+                        lineHeight: 1.2,
+                        wordBreak: 'break-word',
+                      }}
+                    >
+                      {item.value}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                <motion.button
+                  type="button"
+                  whileHover={reduceMotion ? undefined : { y: -2, scale: 1.01 }}
+                  whileTap={reduceMotion ? undefined : { scale: 0.98 }}
+                  style={{
+                    border: 'none',
+                    borderRadius: 14,
+                    padding: '12px 18px',
+                    background: 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)',
+                    color: 'white',
+                    fontSize: 13,
+                    fontWeight: 700,
+                    letterSpacing: '0.08em',
+                    textTransform: 'uppercase',
+                    boxShadow: '0 12px 30px rgba(14,165,233,0.28)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Deploy Agent
+                </motion.button>
+                <motion.button
+                  type="button"
+                  whileHover={reduceMotion ? undefined : { y: -2 }}
+                  whileTap={reduceMotion ? undefined : { scale: 0.98 }}
+                  style={{
+                    borderRadius: 14,
+                    border: '1px solid rgba(255,255,255,0.12)',
+                    padding: '12px 18px',
+                    background: 'rgba(255,255,255,0.05)',
+                    color: 'rgba(255,255,255,0.82)',
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  View Reports
+                </motion.button>
+              </div>
+            </div>
+
+            <div
+              style={{
+                borderRadius: 18,
+                border: '1px solid rgba(255,255,255,0.08)',
+                background:
+                  'linear-gradient(160deg, rgba(255,255,255,0.08) 0%, rgba(5,20,40,0.38) 42%, rgba(56,189,248,0.08) 100%)',
+                padding: 18,
+                display: 'grid',
+                gap: 16,
+                alignContent: 'start',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div>
+                  <div style={{ color: 'white', fontSize: 18, fontWeight: 700 }}>AI Agent</div>
+                  <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: '50%',
+                        background: '#4ade80',
+                        boxShadow: '0 0 0 6px rgba(74, 222, 128, 0.16)',
+                      }}
+                    />
+                    <span style={{ color: 'rgba(255,255,255,0.74)', fontSize: 13 }}>Online</span>
+                  </div>
+                </div>
+                <div
+                  style={{
+                    padding: '7px 10px',
+                    borderRadius: 999,
+                    background: 'rgba(56,189,248,0.08)',
+                    border: '1px solid rgba(56,189,248,0.18)',
+                    color: '#38bdf8',
+                    fontSize: 11,
+                    fontWeight: 700,
+                    letterSpacing: '0.12em',
+                    textTransform: 'uppercase',
+                  }}
+                >
+                  Live
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gap: 12 }}>
+                {[
+                  { label: 'Messages today', value: String(messageCount) },
+                  { label: 'Response time', value: '< 2s' },
+                  { label: 'Conversations', value: String(activeChats) },
+                ].map((item) => (
+                  <div
+                    key={item.label}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      borderRadius: 14,
+                      padding: '12px 14px',
+                      background: 'rgba(255,255,255,0.05)',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                    }}
+                  >
+                    <span style={{ color: 'rgba(255,255,255,0.42)', fontSize: 12 }}>{item.label}</span>
+                    <span style={{ color: 'white', fontWeight: 700, fontSize: 16 }}>{item.value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </motion.section>
+
+          <section
+            style={{
+              display: 'grid',
+              gridTemplateColumns: isMobile ? '1fr' : 'repeat(4, minmax(0, 1fr))',
+              gap: 16,
+            }}
+          >
+            {stats.map((stat, index) => (
+              <motion.article
+                key={stat.label}
+                initial={{ opacity: 0, scale: 0.97, y: 12 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                transition={oceanTransition(reduceMotion, {
+                  duration: 0.26,
+                  delay: 0.08 + index * 0.08,
+                  ease: [0.4, 0, 0.2, 1],
+                })}
+                whileHover={reduceMotion ? undefined : { y: -4 }}
+                style={{
+                  ...cardBase,
+                  padding: 20,
+                  display: 'grid',
+                  gap: 14,
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                  <div>
+                    <div
+                      style={{
+                        color: 'rgba(255,255,255,0.4)',
+                        fontSize: 11,
+                        letterSpacing: '0.18em',
+                        textTransform: 'uppercase',
+                      }}
+                    >
+                      {stat.label}
+                    </div>
+                    <div style={{ marginTop: 12, color: 'white', fontSize: 40, fontWeight: 700, lineHeight: 1 }}>
+                      {stat.value}
+                    </div>
+                  </div>
+                  <span
+                    style={{
+                      borderRadius: 999,
+                      padding: '6px 10px',
+                      background:
+                        stat.trendColor === '#f87171' ? 'rgba(248,113,113,0.12)' : 'rgba(74,222,128,0.12)',
+                      color: stat.trendColor,
+                      fontSize: 11,
+                      fontWeight: 700,
+                    }}
+                  >
+                    {stat.trend}
+                  </span>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'end', gap: 6, height: 56 }}>
+                  {stat.bars.map((bar, barIndex) => (
+                    <span
+                      key={`${stat.label}-${barIndex}`}
+                      style={{
+                        flex: 1,
+                        height: `${bar}%`,
+                        borderRadius: 999,
+                        background:
+                          barIndex > 4
+                            ? 'linear-gradient(180deg, rgba(56,189,248,0.95), rgba(56,189,248,0.28))'
+                            : 'rgba(255,255,255,0.12)',
+                      }}
+                    />
+                  ))}
+                </div>
+              </motion.article>
+            ))}
+          </section>
+
+          <motion.section
+            initial={{ opacity: 0, scale: 0.97, y: 12 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            transition={oceanTransition(reduceMotion, { delay: 0.22, duration: 0.28 })}
+            style={{
+              ...cardBase,
+              overflow: 'hidden',
+            }}
+          >
+            <div
+              style={{
+                padding: '20px 22px',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: 12,
+                borderBottom: '1px solid rgba(255,255,255,0.06)',
+              }}
+            >
+              <h3 style={{ margin: 0, color: 'white', fontSize: 18, fontWeight: 700 }}>Recent AI Actions</h3>
+              <span
+                style={{
+                  borderRadius: 999,
+                  padding: '6px 10px',
+                  background: 'rgba(255,255,255,0.05)',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  color: 'rgba(255,255,255,0.6)',
+                  fontSize: 12,
+                  fontWeight: 600,
+                }}
+              >
+                Today
+              </span>
+            </div>
+
+            <div style={{ padding: '8px 16px 14px' }}>
+              {actions.map((action, index) => (
+                <motion.div
+                  key={action.title}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={oceanTransition(reduceMotion, {
+                    duration: 0.2,
+                    delay: 0.28 + index * 0.08,
+                  })}
+                  whileHover={reduceMotion ? undefined : { backgroundColor: 'rgba(255,255,255,0.03)' }}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'auto 1fr auto',
+                    gap: 14,
+                    alignItems: 'center',
+                    padding: '14px 10px',
+                    borderBottom: '1px solid rgba(255,255,255,0.05)',
+                    borderRadius: 14,
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 38,
+                      height: 38,
+                      borderRadius: '50%',
+                      display: 'grid',
+                      placeItems: 'center',
+                      background: action.tint,
+                      color: 'white',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      border: '1px solid rgba(255,255,255,0.08)',
+                    }}
+                  >
+                    {action.icon}
+                  </div>
+                  <div style={{ color: 'white', fontSize: 14 }}>{action.title}</div>
+                  <div style={{ color: 'rgba(255,255,255,0.35)', fontSize: 12 }}>{action.time}</div>
+                </motion.div>
+              ))}
+            </div>
+          </motion.section>
+        </main>
       )}
     </DashboardOceanNav>
   )
 }
+
+export default DashboardClient

@@ -3,29 +3,19 @@
 import type { CSSProperties, ReactNode } from 'react'
 import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { AnimatePresence, motion } from 'framer-motion'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 
 import { DashboardLogoutButton } from '@/components/dashboard-logout-button'
-import { drawerOverlay, drawerPanelLeft } from '@/lib/ocean-motion'
+import { drawerOverlay, drawerPanelLeft, oceanTransition } from '@/lib/ocean-motion'
+import { supabase } from '@/lib/supabase'
 
 export type OceanDashboardNavId = 'Dashboard' | 'Chats' | 'Bookings' | 'CRM' | 'Settings'
 
-const navItems: OceanDashboardNavId[] = ['Dashboard', 'Chats', 'Bookings', 'CRM', 'Settings']
-
-const navLinks: Record<OceanDashboardNavId, string> = {
-  Dashboard: '/dashboard',
-  Chats: '/dashboard/chats',
-  Bookings: '/dashboard/bookings',
-  CRM: '/dashboard/crm',
-  Settings: '/dashboard/settings',
+type DashboardOceanNavProps = {
+  activeNav: OceanDashboardNavId
+  fillViewport?: boolean
+  children: (props: OceanNavRenderProps) => ReactNode
 }
-
-const letters = ['O', 'c', 'e', 'a', 'n']
-
-const SIDEBAR_BG = '#0f172a'
-const SIDEBAR_BORDER = '1px solid rgba(255, 255, 255, 0.06)'
-
-const navHoverTransition = { duration: 0.15, ease: [0, 0, 0.2, 1] as const }
 
 export type OceanNavRenderProps = {
   isMobile: boolean
@@ -33,29 +23,165 @@ export type OceanNavRenderProps = {
   closeNav: () => void
 }
 
-type DashboardOceanNavProps = {
-  activeNav: OceanDashboardNavId
-  /** Chats-style full viewport lock */
-  fillViewport?: boolean
-  children: (props: OceanNavRenderProps) => ReactNode
+type NavItem = {
+  id: OceanDashboardNavId
+  href: string
+}
+
+const SIDEBAR_WIDTH = 220
+
+const navItems: NavItem[] = [
+  {
+    id: 'Dashboard',
+    href: '/dashboard',
+  },
+  {
+    id: 'Chats',
+    href: '/dashboard/chats',
+  },
+  {
+    id: 'Bookings',
+    href: '/dashboard/bookings',
+  },
+  {
+    id: 'CRM',
+    href: '/dashboard/crm',
+  },
+  {
+    id: 'Settings',
+    href: '/dashboard/settings',
+  },
+]
+
+const glassSurface = 'rgba(5, 12, 28, 0.7)'
+
+const logoStyle: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '12px',
+  padding: '28px 20px 20px',
+  justifyContent: 'flex-start',
+  width: '100%',
+}
+
+function SidebarBrand() {
+  return (
+    <>
+      <style>{`
+        @keyframes oceanicFloat {
+          0%, 100% { transform: translateY(0px); filter: drop-shadow(0 4px 12px rgba(14, 165, 233, 0.3)); }
+          50% { transform: translateY(-4px); filter: drop-shadow(0 8px 16px rgba(56, 189, 248, 0.5)); }
+        }
+        @keyframes textShimmer {
+          0% { background-position: 0% 50%; }
+          50% { background-position: 100% 50%; }
+          100% { background-position: 0% 50%; }
+        }
+        @keyframes coreGlow {
+          0%, 100% { opacity: 0.8; transform: scale(1); }
+          50% { opacity: 1; transform: scale(1.1); box-shadow: 0 0 12px #38bdf8; }
+        }
+      `}</style>
+      <div style={logoStyle}>
+        
+        <div style={{
+          position: 'relative',
+          width: '34px',
+          height: '34px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexShrink: 0,
+          animation: 'oceanicFloat 5s ease-in-out infinite',
+        }}>
+          <div style={{
+            position: 'absolute',
+            inset: 0,
+            background: 'linear-gradient(145deg, rgba(14,165,233,0.2) 0%, rgba(5,13,26,0.8) 100%)',
+            borderRadius: '12px',
+            border: '1px solid rgba(56,189,248,0.2)',
+            transform: 'rotate(15deg)',
+            transition: 'all 0.3s ease',
+          }} />
+          
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ position: 'relative', zIndex: 1, left: '-1px' }}>
+            <path d="M2 12c4-4 6-4 10 0s6 4 10 0" />
+            <path d="M2 17c4-4 6-4 10 0s6 4 10 0" opacity="0.4" />
+          </svg>
+
+          <div style={{
+            position: 'absolute',
+            width: '6px',
+            height: '6px',
+            background: '#ffffff',
+            borderRadius: '50%',
+            top: '6px',
+            right: '8px',
+            zIndex: 2,
+            animation: 'coreGlow 3s ease-in-out infinite',
+          }} />
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'baseline', letterSpacing: '-0.01em' }}>
+          <span
+            style={{
+              fontSize: '24px',
+              fontFamily: 'var(--font-playfair), Playfair Display, Georgia, serif',
+              fontWeight: 700,
+              background: 'linear-gradient(to right, #ffffff 20%, #38bdf8 50%, #ffffff 80%)',
+              backgroundSize: '200% auto',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+              backgroundClip: 'text',
+              animation: 'textShimmer 6s linear infinite',
+            }}
+          >
+            Ocean
+          </span>
+          <span
+            style={{
+              fontSize: '24px',
+              fontFamily: 'var(--font-playfair), Playfair Display, Georgia, serif',
+              fontWeight: 400,
+              color: 'rgba(255,255,255,0.4)',
+            }}
+          >
+            Core
+          </span>
+        </div>
+      </div>
+    </>
+  )
 }
 
 export function DashboardOceanNav({ activeNav, fillViewport, children }: DashboardOceanNavProps) {
   const [isMobile, setIsMobile] = useState(false)
   const [isDrawerOpen, setDrawerOpen] = useState(false)
-  const [hoveredNavId, setHoveredNavId] = useState<OceanDashboardNavId | null>(null)
+  const [userEmail, setUserEmail] = useState('operator@oceancore.ai')
+  const reduceMotion = useReducedMotion()
 
   useEffect(() => {
-    function syncViewport() {
-      const mobile = window.innerWidth < 768
+    let mounted = true
+    const syncViewport = () => {
+      const mobile = window.innerWidth < 1024
       setIsMobile(mobile)
       if (!mobile) {
         setDrawerOpen(false)
       }
     }
+
+    void supabase.auth.getUser().then(({ data }) => {
+      if (mounted && data.user?.email) {
+        setUserEmail(data.user.email)
+      }
+    })
+
     syncViewport()
     window.addEventListener('resize', syncViewport)
-    return () => window.removeEventListener('resize', syncViewport)
+    return () => {
+      mounted = false
+      window.removeEventListener('resize', syncViewport)
+    }
   }, [])
 
   const openNav = useCallback(() => setDrawerOpen(true), [])
@@ -66,247 +192,209 @@ export function DashboardOceanNav({ activeNav, fillViewport, children }: Dashboa
     [isMobile, openNav, closeNav],
   )
 
-  const sidebar = (
-    <motion.aside
-      initial={{ x: -10 }}
-      animate={{ x: 0 }}
-      transition={{ duration: 0.2, ease: [0, 0, 0.2, 1] }}
-      style={{
-        position: 'relative',
-        width: 268,
-        background: SIDEBAR_BG,
-        borderRight: SIDEBAR_BORDER,
-        padding: 0,
-        display: 'flex',
-        flexDirection: 'column',
-        height: fillViewport ? '100%' : 'auto',
-        minHeight: fillViewport ? '100%' : '100vh',
-        boxSizing: 'border-box',
+  const navList = (
+    <motion.nav
+      initial="hidden"
+      animate="visible"
+      variants={{
+        hidden: {},
+        visible: {
+          transition: { staggerChildren: 0.06, delayChildren: 0.08 },
+        },
       }}
+      style={{ display: 'grid', gap: 8, padding: '8px 12px 0' }}
     >
-      {isMobile && (
-        <motion.button
-          type="button"
-          aria-label="Close menu"
-          onClick={closeNav}
-          whileHover={{ opacity: 0.85 }}
-          whileTap={{ scale: 0.95 }}
-          style={{
-            position: 'absolute',
-            top: 16,
-            right: 16,
-            zIndex: 2,
-            border: 'none',
-            background: 'rgba(255, 255, 255, 0.08)',
-            borderRadius: 8,
-            fontSize: 20,
-            lineHeight: 1,
-            color: '#e2e8f0',
-            cursor: 'pointer',
-            width: 36,
-            height: 36,
-            display: 'grid',
-            placeItems: 'center',
-          }}
-        >
-          ×
-        </motion.button>
-      )}
+      {navItems.map((item) => {
+        const active = item.id === activeNav
 
-      <motion.div
-        style={{
-          textAlign: 'center',
-          padding: '32px 0 24px',
-          width: '100%',
-        }}
-        aria-label="OceanCore"
-      >
-        <div style={{ display: 'inline-flex', alignItems: 'baseline', lineHeight: 1, justifyContent: 'center' }}>
-          {letters.map((letter, i) => (
-            <motion.span
-              key={`${letter}-${i}`}
-              animate={{ y: [0, -6, 0] }}
-              transition={{
-                duration: 1.8,
-                repeat: Infinity,
-                delay: i * 0.15,
-                ease: 'easeInOut',
+        return (
+          <motion.div
+            key={item.id}
+            variants={{
+              hidden: { opacity: 0, x: -8 },
+              visible: {
+                opacity: 1,
+                x: 0,
+                transition: oceanTransition(reduceMotion, {
+                  duration: 0.2,
+                  ease: [0.4, 0, 0.2, 1],
+                }),
+              },
+            }}
+            whileHover={reduceMotion ? undefined : { x: 3 }}
+          >
+            <Link
+              href={item.href}
+              onClick={closeNav}
+              onMouseEnter={(event) => {
+                if (!active) {
+                  event.currentTarget.style.color = 'rgba(255,255,255,0.8)'
+                }
+              }}
+              onMouseLeave={(event) => {
+                if (!active) {
+                  event.currentTarget.style.color = 'rgba(255,255,255,0.4)'
+                }
               }}
               style={{
-                fontSize: 30,
-                fontWeight: 700,
-                color: '#38bdf8',
-                letterSpacing: '-0.03em',
-                fontFamily: 'Georgia, serif',
-                display: 'inline-block',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+                padding: '10px 16px',
+                borderRadius: 10,
+                textDecoration: 'none',
+                color: active ? '#38bdf8' : 'rgba(255,255,255,0.4)',
+                background: 'transparent',
+                borderLeft: active ? '2px solid #38bdf8' : '2px solid transparent',
+                fontSize: 14,
+                fontWeight: 400,
+                transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)',
               }}
             >
-              {letter}
-            </motion.span>
-          ))}
-          <motion.span
-            style={{
-              fontSize: 18,
-              fontWeight: 300,
-              color: '#475569',
-              letterSpacing: '0.05em',
-              fontFamily: 'Georgia, serif',
-            }}
-          >
-            Core
-          </motion.span>
-        </div>
-      </motion.div>
+              <span>{item.id}</span>
+            </Link>
+          </motion.div>
+        )
+      })}
+    </motion.nav>
+  )
 
-      <nav style={{ display: 'flex', flexDirection: 'column', gap: 0, width: '100%' }}>
-        {navItems.map((item) => {
-          const isActive = item === activeNav
-          const isHovered = hoveredNavId === item
-
-          let color = '#64748b'
-          if (isActive) {
-            color = '#38bdf8'
-          } else if (isHovered) {
-            color = '#e2e8f0'
-          }
-
-          return (
-            <motion.div
-              key={item}
-              style={{ width: '100%' }}
-              whileHover={{ x: 4 }}
-              transition={navHoverTransition}
-            >
-              <Link
-                href={navLinks[item]}
-                onClick={closeNav}
-                onMouseEnter={() => setHoveredNavId(item)}
-                onMouseLeave={() => setHoveredNavId(null)}
-                style={{
-                  display: 'block',
-                  width: '100%',
-                  boxSizing: 'border-box',
-                  padding: '10px 20px',
-                  fontSize: 14,
-                  fontWeight: 500,
-                  color,
-                  textDecoration: 'none',
-                  background: isActive ? 'rgba(56, 189, 248, 0.08)' : 'transparent',
-                  borderLeft: isActive ? '3px solid #38bdf8' : '3px solid transparent',
-                  transition: 'color 0.15s ease, background 0.15s ease',
-                }}
-              >
-                {item}
-              </Link>
-            </motion.div>
-          )
-        })}
-      </nav>
+  const sidebarInner = (
+    <aside
+      style={{
+        width: SIDEBAR_WIDTH,
+        height: '100vh',
+        background: glassSurface,
+        backdropFilter: 'blur(20px)',
+        WebkitBackdropFilter: 'blur(20px)',
+        borderRight: '1px solid rgba(255,255,255,0.08)',
+        display: 'flex',
+        flexDirection: 'column',
+        position: 'relative',
+        zIndex: 100,
+      }}
+    >
+      <SidebarBrand />
+      {navList}
 
       <div
         style={{
           marginTop: 'auto',
-          padding: '20px 16px 24px',
-          display: 'flex',
-          flexDirection: 'column',
+          padding: '18px 14px 20px',
+          display: 'grid',
           gap: 12,
-          width: '100%',
-          boxSizing: 'border-box',
         }}
       >
+        <div
+          style={{
+            padding: '0 6px',
+            fontSize: 11,
+            color: 'rgba(255,255,255,0.3)',
+            lineHeight: 1.5,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {userEmail}
+        </div>
         <DashboardLogoutButton />
         <motion.button
           type="button"
-          whileHover={{ scale: 1.02, opacity: 0.95 }}
-          whileTap={{ scale: 0.98 }}
+          whileHover={reduceMotion ? undefined : { y: -1, boxShadow: '0 14px 30px rgba(14,165,233,0.32)' }}
+          whileTap={reduceMotion ? undefined : { scale: 0.98 }}
           style={{
             width: '100%',
             border: 'none',
-            borderRadius: 8,
-            background: '#0ea5e9',
+            borderRadius: 12,
+            background: 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)',
             color: '#ffffff',
-            fontWeight: 600,
+            fontWeight: 700,
             fontSize: 13,
-            padding: '10px',
+            padding: '11px 12px',
             cursor: 'pointer',
+            boxShadow: '0 8px 24px rgba(14,165,233,0.24)',
           }}
         >
           Deploy Agent
         </motion.button>
       </div>
-    </motion.aside>
+    </aside>
   )
 
-  const outer: CSSProperties = {
+  const desktopSidebar = (
+    <div
+      style={{
+        position: 'fixed',
+        left: 0,
+        top: 0,
+        width: SIDEBAR_WIDTH,
+        height: '100vh',
+        zIndex: 100,
+      }}
+    >
+      {sidebarInner}
+    </div>
+  )
+
+  const outerStyle: CSSProperties = {
     minHeight: fillViewport ? undefined : '100vh',
     height: fillViewport ? '100vh' : undefined,
     overflow: fillViewport ? 'hidden' : undefined,
-    background: 'var(--ocean-mid)',
-    color: 'var(--ocean-text)',
-    fontFamily: 'var(--font-geist-sans), system-ui, sans-serif',
+    position: 'relative',
+    background: 'transparent',
+    color: '#fff',
   }
 
-  const row: CSSProperties = {
-    display: 'flex',
-    minHeight: fillViewport ? '100%' : '100vh',
-    height: fillViewport ? '100%' : undefined,
-  }
-
-  const mainColumn: CSSProperties = {
-    flex: 1,
-    minWidth: 0,
-    display: 'flex',
-    flexDirection: 'column',
+  const contentStyle: CSSProperties = {
+    position: 'relative',
+    zIndex: 10,
+    marginLeft: isMobile ? 0 : SIDEBAR_WIDTH,
+    minHeight: fillViewport ? '100vh' : '100vh',
+    height: fillViewport ? '100vh' : undefined,
+    padding: isMobile ? '20px 16px' : '32px',
+    background: 'transparent',
     overflow: fillViewport ? 'hidden' : undefined,
   }
 
   return (
-    <div style={outer}>
-      <div style={row}>
-        {!isMobile && sidebar}
+    <div style={outerStyle}>
+      {!isMobile && desktopSidebar}
 
-        <AnimatePresence>
-          {isMobile && isDrawerOpen ? (
+      <AnimatePresence>
+        {isMobile && isDrawerOpen ? (
+          <motion.div
+            initial="closed"
+            animate="open"
+            exit="closed"
+            variants={drawerOverlay}
+            transition={oceanTransition(reduceMotion)}
+            onClick={closeNav}
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 140,
+              background: 'rgba(5, 15, 30, 0.7)',
+              backdropFilter: 'blur(6px)',
+              WebkitBackdropFilter: 'blur(6px)',
+            }}
+          >
             <motion.div
-              key="ocean-nav-drawer"
-              role="presentation"
               initial="closed"
               animate="open"
               exit="closed"
-              variants={drawerOverlay}
-              onClick={closeNav}
-              style={{
-                position: 'fixed',
-                inset: 0,
-                zIndex: 40,
-                background: 'rgba(7, 11, 18, 0.62)',
-                backdropFilter: 'blur(6px)',
-              }}
+              variants={drawerPanelLeft}
+              transition={oceanTransition(reduceMotion)}
+              onClick={(event) => event.stopPropagation()}
+              style={{ width: SIDEBAR_WIDTH, height: '100vh' }}
             >
-              <motion.div
-                role="presentation"
-                variants={drawerPanelLeft}
-                initial="closed"
-                animate="open"
-                exit="closed"
-                onClick={(e) => e.stopPropagation()}
-                style={{
-                  position: 'absolute',
-                  left: 0,
-                  top: 0,
-                  bottom: 0,
-                  width: 268,
-                  boxShadow: '0 12px 40px rgba(0, 0, 0, 0.35)',
-                }}
-              >
-                {sidebar}
-              </motion.div>
+              {sidebarInner}
             </motion.div>
-          ) : null}
-        </AnimatePresence>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
 
-        <div style={mainColumn}>{children(renderProps)}</div>
-      </div>
+      <div style={contentStyle}>{children(renderProps)}</div>
     </div>
   )
 }
