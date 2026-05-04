@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { DashboardOceanNav } from '@/components/dashboard-ocean-nav'
 import { oceanTransition, slideInRight } from '@/lib/ocean-motion'
 import { supabase } from '@/lib/supabase'
+import { card, t } from '@/lib/dashboard-theme'
 
 type CustomerTag = 'VIP' | 'Regular' | 'New' | 'At Risk'
 
@@ -23,14 +24,7 @@ type Customer = {
   visitHistory: { date: string; service: string; amount: number }[]
 }
 
-const glassCard = {
-  background: 'rgba(8,20,40,0.5)',
-  border: '1px solid rgba(255,255,255,0.07)',
-  borderRadius: 16,
-  backdropFilter: 'blur(16px)',
-  WebkitBackdropFilter: 'blur(16px)',
-  boxShadow: '0 20px 60px rgba(0,0,0,0.28)',
-}
+const glassCard = card
 
 function formatDisplayDate(value: string) {
   const date = new Date(value)
@@ -105,36 +99,20 @@ function mapDbCustomerRow(row: Record<string, unknown>): Customer {
 function tagStyle(tag: CustomerTag) {
   switch (tag) {
     case 'VIP':
-      return {
-        bg: 'rgba(232,220,200,0.18)',
-        border: 'rgba(232,220,200,0.28)',
-        color: '#f5e6c8',
-      }
+      return { bg: '#fef3c7', border: '#fde68a', color: '#a16207' }
     case 'Regular':
-      return {
-        bg: 'rgba(56,189,248,0.12)',
-        border: 'rgba(56,189,248,0.25)',
-        color: '#38bdf8',
-      }
+      return { bg: t.accentSoftBg, border: t.accentSoftBorder, color: t.accentText }
     case 'New':
-      return {
-        bg: 'rgba(74,222,128,0.12)',
-        border: 'rgba(74,222,128,0.25)',
-        color: '#4ade80',
-      }
+      return { bg: t.successBg, border: t.successBorder, color: t.success }
     case 'At Risk':
-      return {
-        bg: 'rgba(248,113,113,0.12)',
-        border: 'rgba(248,113,113,0.25)',
-        color: '#f87171',
-      }
+      return { bg: t.dangerBg, border: t.dangerBorder, color: t.danger }
     default:
-      return {
-        bg: 'rgba(255,255,255,0.06)',
-        border: 'rgba(255,255,255,0.1)',
-        color: 'rgba(255,255,255,0.55)',
-      }
+      return { bg: t.bgSurfaceMuted, border: t.border, color: t.textMuted }
   }
+}
+
+function tagLabel(tag: CustomerTag): string {
+  return tag === 'New' ? 'First Visit' : tag
 }
 
 function formatMoney(amount: number) {
@@ -153,19 +131,42 @@ function getInitials(name: string) {
     .join('')
 }
 
+const NOTES_PREFIX = 'oceancore.crm.notes.'
+
 export default function CrmPage() {
   const [customers, setCustomers] = useState<Customer[]>([])
   const [crmLoading, setCrmLoading] = useState(true)
+  const [crmError, setCrmError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [notes, setNotes] = useState('')
   const reduceMotion = useReducedMotion()
 
   useEffect(() => {
+    if (typeof window === 'undefined' || !selectedId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- clear notes when no row is selected
+      setNotes('')
+      return
+    }
+    setNotes(window.localStorage.getItem(`${NOTES_PREFIX}${selectedId}`) ?? '')
+  }, [selectedId])
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !selectedId) return
+    const key = `${NOTES_PREFIX}${selectedId}`
+    if (notes) {
+      window.localStorage.setItem(key, notes)
+    } else {
+      window.localStorage.removeItem(key)
+    }
+  }, [notes, selectedId])
+
+  useEffect(() => {
     let cancelled = false
 
     async function loadCustomers() {
       setCrmLoading(true)
+      setCrmError(null)
 
       const {
         data: { user: userFromGet },
@@ -183,7 +184,11 @@ export default function CrmPage() {
         return
       }
 
-      const { data: business } = await supabase.from('businesses').select('id').eq('user_id', user.id).maybeSingle()
+      const { data: business } = await supabase
+        .from('businesses')
+        .select('id')
+        .eq('user_id', user.id)
+        .maybeSingle()
 
       if (!business?.id) {
         if (!cancelled) {
@@ -200,7 +205,10 @@ export default function CrmPage() {
         .order('name', { ascending: true })
 
       if (!cancelled) {
-        if (!error && rows) {
+        if (error) {
+          setCustomers([])
+          setCrmError("We couldn't load your guest list.")
+        } else if (rows) {
           setCustomers(rows.map((row) => mapDbCustomerRow(row as Record<string, unknown>)))
         } else {
           setCustomers([])
@@ -211,8 +219,15 @@ export default function CrmPage() {
 
     void loadCustomers()
 
+    const { data: sub } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_IN' || event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED') {
+        if (!cancelled) void loadCustomers()
+      }
+    })
+
     return () => {
       cancelled = true
+      sub.subscription.unsubscribe()
     }
   }, [])
 
@@ -261,12 +276,13 @@ export default function CrmPage() {
               style={{
                 width: 44,
                 height: 44,
-                borderRadius: 14,
-                border: '1px solid rgba(255,255,255,0.12)',
-                background: 'rgba(5,20,40,0.5)',
-                color: 'white',
+                borderRadius: 12,
+                border: `1px solid ${t.border}`,
+                background: t.bgSurface,
+                color: t.text,
                 fontSize: 22,
                 cursor: 'pointer',
+                boxShadow: t.shadowSm,
               }}
             >
               ☰
@@ -289,17 +305,17 @@ export default function CrmPage() {
               <h1
                 style={{
                   margin: 0,
-                  color: 'white',
-                  fontSize: 32,
+                  color: t.text,
+                  fontSize: 30,
                   fontWeight: 700,
                   fontFamily: 'var(--font-playfair)',
                   letterSpacing: '-0.03em',
                 }}
               >
-                Customers
+                Guests
               </h1>
-              <p style={{ margin: '8px 0 0', color: 'rgba(255,255,255,0.42)', fontSize: 14 }}>
-                Search, segment, and grow relationships with every visitor OceanCore meets.
+              <p style={{ margin: '8px 0 0', color: t.textMuted, fontSize: 14 }}>
+                Search, segment, and manage relationships with every guest your AI Concierge greets.
               </p>
             </div>
 
@@ -307,7 +323,7 @@ export default function CrmPage() {
               <div
                 style={{
                   ...glassCard,
-                  borderRadius: 16,
+                  borderRadius: 10,
                   padding: '0 14px',
                   display: 'flex',
                   alignItems: 'center',
@@ -318,36 +334,18 @@ export default function CrmPage() {
                   type="search"
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search name, email, phone..."
+                  placeholder="Search name, email, phone…"
                   style={{
                     width: '100%',
-                    height: 48,
+                    height: 44,
                     background: 'transparent',
                     border: 'none',
                     outline: 'none',
-                    color: 'white',
+                    color: t.text,
                     fontSize: 14,
                   }}
                 />
               </div>
-              <motion.button
-                type="button"
-                whileHover={reduceMotion ? undefined : { y: -2 }}
-                whileTap={reduceMotion ? undefined : { scale: 0.98 }}
-                style={{
-                  border: 'none',
-                  borderRadius: 16,
-                  padding: '12px 16px',
-                  background: 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)',
-                  color: 'white',
-                  fontWeight: 700,
-                  fontSize: 13,
-                  boxShadow: '0 10px 28px rgba(14,165,233,0.28)',
-                  cursor: 'pointer',
-                }}
-              >
-                Add Customer
-              </motion.button>
             </div>
           </motion.section>
 
@@ -359,7 +357,7 @@ export default function CrmPage() {
             }}
           >
             {[
-              { label: 'Total', value: stats.total.toString() },
+              { label: 'Guests', value: stats.total.toString() },
               { label: 'New', value: stats.newThisMonth.toString() },
               { label: 'Returning', value: stats.returning.toString() },
               { label: 'Avg Spend', value: formatMoney(stats.avgSpend) },
@@ -373,15 +371,16 @@ export default function CrmPage() {
               >
                 <div
                   style={{
-                    color: 'rgba(255,255,255,0.42)',
+                    color: t.textMuted,
                     fontSize: 11,
                     textTransform: 'uppercase',
                     letterSpacing: '0.16em',
+                    fontWeight: 600,
                   }}
                 >
                   {item.label}
                 </div>
-                <div style={{ marginTop: 10, color: 'white', fontSize: 28, fontWeight: 700 }}>{item.value}</div>
+                <div style={{ marginTop: 10, color: t.text, fontSize: 28, fontWeight: 700 }}>{item.value}</div>
               </motion.div>
             ))}
           </section>
@@ -396,34 +395,42 @@ export default function CrmPage() {
               {isMobile ? (
                 <div style={{ padding: 12, display: 'grid', gap: 10 }}>
                   {crmLoading ? (
-                    <div style={{ padding: 24, color: 'rgba(255,255,255,0.45)', textAlign: 'center' }}>
-                      Loading customers...
+                    Array.from({ length: 3 }).map((_, idx) => (
+                      <div
+                        key={idx}
+                        style={{
+                          height: 72,
+                          borderRadius: 12,
+                          background: t.bgSurfaceMuted,
+                          border: `1px solid ${t.borderSoft}`,
+                        }}
+                      />
+                    ))
+                  ) : crmError ? (
+                    <div style={{ padding: 24, color: t.danger, textAlign: 'center', lineHeight: 1.6 }}>
+                      {crmError}
                     </div>
                   ) : customers.length === 0 ? (
-                    <div style={{ padding: 24, color: 'rgba(255,255,255,0.45)', textAlign: 'center', lineHeight: 1.6 }}>
-                      No customers yet. They’ll appear here when they chat with your AI.
+                    <div style={{ padding: 24, color: t.textMuted, textAlign: 'center', lineHeight: 1.6 }}>
+                      No guests yet. They&apos;ll appear here once your AI Concierge starts a conversation.
                     </div>
                   ) : filtered.length === 0 ? (
-                    <div style={{ padding: 24, color: 'rgba(255,255,255,0.45)', textAlign: 'center' }}>
-                      No matching customers.
+                    <div style={{ padding: 24, color: t.textMuted, textAlign: 'center' }}>
+                      No matching guests.
                     </div>
                   ) : (
                     filtered.map((customer) => (
                       <button
                         key={customer.id}
                         type="button"
-                        onClick={() => {
-                          setSelectedId(customer.id)
-                          setNotes('')
-                        }}
+                        onClick={() => setSelectedId(customer.id)}
                         style={{
                           width: '100%',
-                          borderRadius: 18,
+                          borderRadius: 12,
                           border: `1px solid ${
-                            customer.id === selectedId ? 'rgba(56,189,248,0.24)' : 'rgba(255,255,255,0.08)'
+                            customer.id === selectedId ? t.accentSoftBorder : t.border
                           }`,
-                          background:
-                            customer.id === selectedId ? 'rgba(56,189,248,0.08)' : 'rgba(255,255,255,0.03)',
+                          background: customer.id === selectedId ? t.accentSoftBg : t.bgSurface,
                           padding: 14,
                           textAlign: 'left',
                           cursor: 'pointer',
@@ -437,8 +444,8 @@ export default function CrmPage() {
                               borderRadius: '50%',
                               display: 'grid',
                               placeItems: 'center',
-                              background: 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)',
-                              color: 'white',
+                              background: t.accent,
+                              color: '#ffffff',
                               fontSize: 12,
                               fontWeight: 700,
                             }}
@@ -446,8 +453,8 @@ export default function CrmPage() {
                             {getInitials(customer.name)}
                           </div>
                           <div style={{ minWidth: 0 }}>
-                            <div style={{ color: 'white', fontSize: 14, fontWeight: 700 }}>{customer.name}</div>
-                            <div style={{ marginTop: 4, color: 'rgba(255,255,255,0.42)', fontSize: 12 }}>
+                            <div style={{ color: t.text, fontSize: 14, fontWeight: 700 }}>{customer.name}</div>
+                            <div style={{ marginTop: 4, color: t.textMuted, fontSize: 12 }}>
                               {customer.email}
                             </div>
                           </div>
@@ -460,18 +467,18 @@ export default function CrmPage() {
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 960 }}>
                     <thead>
-                      <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-                        {['Customer', 'Email', 'Phone', 'Last Visit', 'Bookings', 'Spent', 'Tags'].map((column) => (
+                      <tr style={{ borderBottom: `1px solid ${t.border}`, background: t.bgSurfaceMuted }}>
+                        {['Guest', 'Email', 'Phone', 'Last Visit', 'Visits', 'Spent', 'Tags'].map((column) => (
                           <th
                             key={column}
                             style={{
-                              padding: '16px 18px',
+                              padding: '14px 18px',
                               textAlign: 'left',
-                              color: 'rgba(255,255,255,0.35)',
+                              color: t.textMuted,
                               fontSize: 11,
                               fontWeight: 700,
                               textTransform: 'uppercase',
-                              letterSpacing: '0.16em',
+                              letterSpacing: '0.12em',
                             }}
                           >
                             {column}
@@ -481,21 +488,37 @@ export default function CrmPage() {
                     </thead>
                     <tbody>
                       {crmLoading ? (
+                        Array.from({ length: 4 }).map((_, idx) => (
+                          <tr key={idx} style={{ borderBottom: `1px solid ${t.borderSoft}` }}>
+                            {Array.from({ length: 7 }).map((__, c) => (
+                              <td key={c} style={{ padding: '18px' }}>
+                                <div
+                                  style={{
+                                    height: 12,
+                                    borderRadius: 6,
+                                    background: t.bgSurfaceMuted,
+                                  }}
+                                />
+                              </td>
+                            ))}
+                          </tr>
+                        ))
+                      ) : crmError ? (
                         <tr>
-                          <td colSpan={7} style={{ padding: 32, textAlign: 'center', color: 'rgba(255,255,255,0.45)' }}>
-                            Loading customers...
+                          <td colSpan={7} style={{ padding: 32, textAlign: 'center', color: t.danger }}>
+                            {crmError}
                           </td>
                         </tr>
                       ) : customers.length === 0 ? (
                         <tr>
-                          <td colSpan={7} style={{ padding: 32, textAlign: 'center', color: 'rgba(255,255,255,0.45)' }}>
-                            No customers yet. They’ll appear here when they chat with your AI.
+                          <td colSpan={7} style={{ padding: 32, textAlign: 'center', color: t.textMuted }}>
+                            No guests yet. They&apos;ll appear here once your AI Concierge starts a conversation.
                           </td>
                         </tr>
                       ) : filtered.length === 0 ? (
                         <tr>
-                          <td colSpan={7} style={{ padding: 32, textAlign: 'center', color: 'rgba(255,255,255,0.45)' }}>
-                            No matching customers.
+                          <td colSpan={7} style={{ padding: 32, textAlign: 'center', color: t.textMuted }}>
+                            No matching guests.
                           </td>
                         </tr>
                       ) : (
@@ -504,7 +527,7 @@ export default function CrmPage() {
                             key={customer.id}
                             onMouseEnter={(event) => {
                               if (customer.id !== selectedId) {
-                                event.currentTarget.style.background = 'rgba(255,255,255,0.04)'
+                                event.currentTarget.style.background = t.bgSurfaceMuted
                               }
                             }}
                             onMouseLeave={(event) => {
@@ -512,29 +535,26 @@ export default function CrmPage() {
                                 event.currentTarget.style.background = 'transparent'
                               }
                             }}
-                            onClick={() => {
-                              setSelectedId(customer.id)
-                              setNotes('')
-                            }}
+                            onClick={() => setSelectedId(customer.id)}
                             style={{
                               cursor: 'pointer',
-                              borderBottom: '1px solid rgba(255,255,255,0.05)',
+                              borderBottom: `1px solid ${t.borderSoft}`,
                               background:
-                                customer.id === selectedId ? 'rgba(56,189,248,0.08)' : 'transparent',
-                              transition: 'background-color 0.2s cubic-bezier(0.4,0,0.2,1)',
+                                customer.id === selectedId ? t.accentSoftBg : 'transparent',
+                              transition: 'background-color 0.15s ease',
                             }}
                           >
-                            <td style={{ padding: '16px 18px' }}>
+                            <td style={{ padding: '14px 18px' }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                                 <div
                                   style={{
-                                    width: 38,
-                                    height: 38,
+                                    width: 36,
+                                    height: 36,
                                     borderRadius: '50%',
                                     display: 'grid',
                                     placeItems: 'center',
-                                    background: 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)',
-                                    color: 'white',
+                                    background: t.accent,
+                                    color: '#ffffff',
                                     fontSize: 12,
                                     fontWeight: 700,
                                   }}
@@ -542,25 +562,25 @@ export default function CrmPage() {
                                   {getInitials(customer.name)}
                                 </div>
                                 <div>
-                                  <div style={{ color: 'white', fontSize: 13, fontWeight: 700 }}>{customer.name}</div>
-                                  <div style={{ marginTop: 4, color: 'rgba(255,255,255,0.38)', fontSize: 12 }}>
+                                  <div style={{ color: t.text, fontSize: 13, fontWeight: 700 }}>{customer.name}</div>
+                                  <div style={{ marginTop: 3, color: t.textMuted, fontSize: 12 }}>
                                     Joined {customer.joined}
                                   </div>
                                 </div>
                               </div>
                             </td>
-                            <td style={{ padding: '16px 18px', color: 'rgba(255,255,255,0.68)', fontSize: 13 }}>
+                            <td style={{ padding: '14px 18px', color: t.textMuted, fontSize: 13 }}>
                               {customer.email}
                             </td>
-                            <td style={{ padding: '16px 18px', color: 'rgba(255,255,255,0.68)', fontSize: 13 }}>
+                            <td style={{ padding: '14px 18px', color: t.textMuted, fontSize: 13 }}>
                               {customer.phone}
                             </td>
-                            <td style={{ padding: '16px 18px', color: 'rgba(255,255,255,0.68)', fontSize: 13 }}>
+                            <td style={{ padding: '14px 18px', color: t.textMuted, fontSize: 13 }}>
                               {customer.lastVisit}
                             </td>
-                            <td style={{ padding: '16px 18px', color: 'white', fontWeight: 700 }}>{customer.totalBookings}</td>
-                            <td style={{ padding: '16px 18px', color: 'white', fontWeight: 700 }}>{formatMoney(customer.totalSpent)}</td>
-                            <td style={{ padding: '16px 18px' }}>
+                            <td style={{ padding: '14px 18px', color: t.text, fontWeight: 700 }}>{customer.totalBookings}</td>
+                            <td style={{ padding: '14px 18px', color: t.text, fontWeight: 700 }}>{formatMoney(customer.totalSpent)}</td>
+                            <td style={{ padding: '14px 18px' }}>
                               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                                 {customer.tags.map((tag) => {
                                   const tint = tagStyle(tag)
@@ -568,7 +588,7 @@ export default function CrmPage() {
                                     <span
                                       key={tag}
                                       style={{
-                                        padding: '5px 8px',
+                                        padding: '4px 8px',
                                         borderRadius: 999,
                                         border: `1px solid ${tint.border}`,
                                         background: tint.bg,
@@ -577,7 +597,7 @@ export default function CrmPage() {
                                         fontWeight: 700,
                                       }}
                                     >
-                                      {tag}
+                                      {tagLabel(tag)}
                                     </span>
                                   )
                                 })}
@@ -616,19 +636,19 @@ export default function CrmPage() {
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
                   <div>
-                    <div style={{ color: 'white', fontSize: 20, fontWeight: 700 }}>{selected.name}</div>
-                    <div style={{ marginTop: 6, color: 'rgba(255,255,255,0.42)', fontSize: 13 }}>Customer profile</div>
+                    <div style={{ color: t.text, fontSize: 20, fontWeight: 700 }}>{selected.name}</div>
+                    <div style={{ marginTop: 6, color: t.textMuted, fontSize: 13 }}>Guest profile</div>
                   </div>
                   <button
                     type="button"
                     onClick={() => setSelectedId(null)}
                     style={{
-                      width: 34,
-                      height: 34,
-                      borderRadius: 12,
-                      border: '1px solid rgba(255,255,255,0.08)',
-                      background: 'rgba(255,255,255,0.04)',
-                      color: 'rgba(255,255,255,0.72)',
+                      width: 32,
+                      height: 32,
+                      borderRadius: 8,
+                      border: `1px solid ${t.border}`,
+                      background: t.bgSurface,
+                      color: t.textMuted,
                       cursor: 'pointer',
                     }}
                   >
@@ -643,7 +663,7 @@ export default function CrmPage() {
                       <span
                         key={tag}
                         style={{
-                          padding: '5px 8px',
+                          padding: '4px 8px',
                           borderRadius: 999,
                           border: `1px solid ${tint.border}`,
                           background: tint.bg,
@@ -652,32 +672,32 @@ export default function CrmPage() {
                           fontWeight: 700,
                         }}
                       >
-                        {tag}
+                        {tagLabel(tag)}
                       </span>
                     )
                   })}
                 </div>
 
-                <div style={{ marginTop: 18, display: 'grid', gap: 12 }}>
+                <div style={{ marginTop: 18, display: 'grid', gap: 10 }}>
                   {[
                     { label: 'Email', value: selected.email || '—' },
                     { label: 'Phone', value: selected.phone },
                     { label: 'Joined', value: selected.joined },
                     { label: 'Last visit', value: selected.lastVisit },
-                    { label: 'Preferred staff', value: selected.preferredStaff },
+                    { label: 'Preferred server', value: selected.preferredStaff },
                   ].map((item) => (
                     <div
                       key={item.label}
                       style={{
-                        borderRadius: 16,
-                        border: '1px solid rgba(255,255,255,0.08)',
-                        background: 'rgba(255,255,255,0.04)',
+                        borderRadius: 10,
+                        border: `1px solid ${t.borderSoft}`,
+                        background: t.bgSurfaceMuted,
                         padding: '12px 14px',
                       }}
                     >
                       <div
                         style={{
-                          color: 'rgba(255,255,255,0.38)',
+                          color: t.textMuted,
                           fontSize: 10,
                           fontWeight: 700,
                           letterSpacing: '0.16em',
@@ -686,61 +706,61 @@ export default function CrmPage() {
                       >
                         {item.label}
                       </div>
-                      <div style={{ marginTop: 6, color: 'white', fontSize: 14, fontWeight: 600 }}>{item.value}</div>
+                      <div style={{ marginTop: 6, color: t.text, fontSize: 14, fontWeight: 600 }}>{item.value}</div>
                     </div>
                   ))}
                 </div>
 
-                <div style={{ marginTop: 18, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div style={{ marginTop: 18, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                   <div
                     style={{
-                      borderRadius: 16,
-                      border: '1px solid rgba(255,255,255,0.08)',
-                      background: 'rgba(255,255,255,0.04)',
+                      borderRadius: 10,
+                      border: `1px solid ${t.borderSoft}`,
+                      background: t.bgSurfaceMuted,
                       padding: '12px 14px',
                     }}
                   >
-                    <div style={{ color: 'rgba(255,255,255,0.38)', fontSize: 10, letterSpacing: '0.16em', textTransform: 'uppercase' }}>
-                      Bookings
+                    <div style={{ color: t.textMuted, fontSize: 10, letterSpacing: '0.16em', textTransform: 'uppercase', fontWeight: 600 }}>
+                      Visits
                     </div>
-                    <div style={{ marginTop: 6, color: 'white', fontSize: 22, fontWeight: 700 }}>{selected.totalBookings}</div>
+                    <div style={{ marginTop: 6, color: t.text, fontSize: 22, fontWeight: 700 }}>{selected.totalBookings}</div>
                   </div>
                   <div
                     style={{
-                      borderRadius: 16,
-                      border: '1px solid rgba(255,255,255,0.08)',
-                      background: 'rgba(255,255,255,0.04)',
+                      borderRadius: 10,
+                      border: `1px solid ${t.borderSoft}`,
+                      background: t.bgSurfaceMuted,
                       padding: '12px 14px',
                     }}
                   >
-                    <div style={{ color: 'rgba(255,255,255,0.38)', fontSize: 10, letterSpacing: '0.16em', textTransform: 'uppercase' }}>
+                    <div style={{ color: t.textMuted, fontSize: 10, letterSpacing: '0.16em', textTransform: 'uppercase', fontWeight: 600 }}>
                       Total spent
                     </div>
-                    <div style={{ marginTop: 6, color: 'white', fontSize: 22, fontWeight: 700 }}>
+                    <div style={{ marginTop: 6, color: t.text, fontSize: 22, fontWeight: 700 }}>
                       {formatMoney(selected.totalSpent)}
                     </div>
                   </div>
                 </div>
 
                 <div style={{ marginTop: 18 }}>
-                  <div style={{ color: 'white', fontSize: 14, fontWeight: 700 }}>Visit history</div>
+                  <div style={{ color: t.text, fontSize: 14, fontWeight: 700 }}>Reservation history</div>
                   <div style={{ marginTop: 12, display: 'grid', gap: 10 }}>
                     {selected.visitHistory.length === 0 ? (
-                      <div style={{ color: 'rgba(255,255,255,0.42)', fontSize: 13 }}>No visits recorded yet.</div>
+                      <div style={{ color: t.textMuted, fontSize: 13 }}>No reservations on record yet.</div>
                     ) : (
                       selected.visitHistory.map((visit) => (
                         <div
                           key={`${visit.date}-${visit.service}`}
                           style={{
-                            borderRadius: 16,
-                            border: '1px solid rgba(255,255,255,0.08)',
-                            background: 'rgba(255,255,255,0.04)',
+                            borderRadius: 10,
+                            border: `1px solid ${t.borderSoft}`,
+                            background: t.bgSurfaceMuted,
                             padding: '12px 14px',
                           }}
                         >
-                          <div style={{ color: 'rgba(255,255,255,0.38)', fontSize: 11 }}>{visit.date}</div>
-                          <div style={{ marginTop: 6, color: 'white', fontSize: 13, fontWeight: 700 }}>{visit.service}</div>
-                          <div style={{ marginTop: 4, color: 'rgba(255,255,255,0.55)', fontSize: 12 }}>
+                          <div style={{ color: t.textMuted, fontSize: 11 }}>{visit.date}</div>
+                          <div style={{ marginTop: 6, color: t.text, fontSize: 13, fontWeight: 700 }}>{visit.service}</div>
+                          <div style={{ marginTop: 4, color: t.textMuted, fontSize: 12 }}>
                             {visit.amount === 0 ? 'Complimentary' : formatMoney(visit.amount)}
                           </div>
                         </div>
@@ -753,7 +773,7 @@ export default function CrmPage() {
                   <label
                     style={{
                       display: 'block',
-                      color: 'rgba(255,255,255,0.42)',
+                      color: t.textMuted,
                       fontSize: 11,
                       fontWeight: 700,
                       letterSpacing: '0.16em',
@@ -765,15 +785,15 @@ export default function CrmPage() {
                   <textarea
                     value={notes}
                     onChange={(event) => setNotes(event.target.value)}
-                    placeholder="Add a note about preferences, follow-ups, or objections..."
+                    placeholder="Dietary restrictions, seating preferences, special occasions…"
                     rows={5}
                     style={{
                       width: '100%',
                       marginTop: 10,
-                      borderRadius: 16,
-                      border: '1px solid rgba(255,255,255,0.1)',
-                      background: 'rgba(255,255,255,0.04)',
-                      color: 'white',
+                      borderRadius: 10,
+                      border: `1px solid ${t.border}`,
+                      background: t.bgSurface,
+                      color: t.text,
                       padding: '12px 14px',
                       resize: 'vertical',
                       outline: 'none',
@@ -781,6 +801,9 @@ export default function CrmPage() {
                       fontSize: 13,
                     }}
                   />
+                  <div style={{ marginTop: 6, color: t.textSubtle, fontSize: 11 }}>
+                    Auto-saved on this device.
+                  </div>
                 </div>
               </motion.aside>
             ) : null}

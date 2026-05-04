@@ -72,8 +72,7 @@ export function DashboardLogoutButton() {
                   alignItems: 'center',
                   justifyContent: 'center',
                   padding: 24,
-                  background: 'rgba(7, 11, 18, 0.65)',
-                  backdropFilter: 'blur(6px)',
+                  background: 'rgba(15, 23, 42, 0.45)',
                 }}
               >
                 <motion.div
@@ -90,11 +89,11 @@ export function DashboardLogoutButton() {
                   style={{
                     width: '100%',
                     maxWidth: 400,
-                    background: 'var(--ocean-card)',
-                    borderRadius: 'var(--ocean-radius-lg)',
+                    background: '#ffffff',
+                    borderRadius: 16,
                     padding: '28px 28px 24px',
-                    border: '1px solid var(--ocean-border)',
-                    boxShadow: 'var(--ocean-shadow-lg)',
+                    border: '1px solid #e2e8f0',
+                    boxShadow: '0 10px 25px rgba(15,23,42,0.12)',
                   }}
                 >
                   <h2
@@ -103,7 +102,7 @@ export function DashboardLogoutButton() {
                       margin: 0,
                       fontSize: 22,
                       fontWeight: 700,
-                      color: 'var(--ocean-text)',
+                      color: '#0f172a',
                       letterSpacing: '-0.02em',
                     }}
                   >
@@ -115,7 +114,7 @@ export function DashboardLogoutButton() {
                       margin: '10px 0 0',
                       fontSize: 15,
                       lineHeight: 1.5,
-                      color: 'var(--ocean-text-muted)',
+                      color: '#64748b',
                     }}
                   >
                     Are you sure you want to log out of OceanCore?
@@ -135,10 +134,10 @@ export function DashboardLogoutButton() {
                       whileHover={{ scale: isSigningOut ? 1 : 1.02 }}
                       whileTap={{ scale: isSigningOut ? 1 : 0.98 }}
                       style={{
-                        borderRadius: 'var(--ocean-radius-md)',
-                        border: '1px solid var(--ocean-border)',
-                        background: 'var(--ocean-surface)',
-                        color: 'var(--ocean-text)',
+                        borderRadius: 12,
+                        border: '1px solid #e2e8f0',
+                        background: '#ffffff',
+                        color: '#0f172a',
                         fontWeight: 600,
                         fontSize: 14,
                         padding: '10px 18px',
@@ -156,9 +155,9 @@ export function DashboardLogoutButton() {
                       whileTap={{ scale: isSigningOut ? 1 : 0.98 }}
                       style={{
                         border: 'none',
-                        borderRadius: 'var(--ocean-radius-md)',
-                        background: isSigningOut ? 'var(--ocean-surface)' : 'var(--ocean-danger)',
-                        color: '#fff',
+                        borderRadius: 12,
+                        background: isSigningOut ? '#f1f5f9' : '#dc2626',
+                        color: isSigningOut ? '#94a3b8' : '#fff',
                         fontWeight: 600,
                         fontSize: 14,
                         padding: '10px 18px',
@@ -183,16 +182,16 @@ export function DashboardLogoutButton() {
         onClick={() => setOpen(true)}
         whileHover={{
           scale: 1.01,
-          borderColor: 'rgba(248, 113, 113, 0.35)',
-          boxShadow: '0 0 0 3px rgba(248, 113, 113, 0.08)',
+          borderColor: '#fecaca',
+          backgroundColor: '#fef2f2',
         }}
         whileTap={{ scale: 0.98 }}
         style={{
           width: '100%',
-          border: '1px solid rgba(255,255,255,0.08)',
-          borderRadius: 14,
-          background: 'rgba(255,255,255,0.04)',
-          color: 'rgba(255,255,255,0.72)',
+          border: '1px solid #e2e8f0',
+          borderRadius: 10,
+          background: '#ffffff',
+          color: '#475569',
           fontWeight: 600,
           fontSize: 13,
           padding: '11px 14px',

@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono, Playfair_Display } from "next/font/google";
 
 import { AppProviders } from "@/components/app-providers";
-import AuroraBackground from "@/components/aurora-background";
 
 import "./globals.css";
 
@@ -39,9 +38,8 @@ export default function RootLayout({
     >
       <body
         className="min-h-full flex flex-col"
-        style={{ margin: 0, background: "#050d1a" }}
+        style={{ margin: 0, background: "#ffffff", color: "#0f172a" }}
       >
-        <AuroraBackground />
         <AppProviders>{children}</AppProviders>
       </body>
     </html>

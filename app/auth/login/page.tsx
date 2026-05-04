@@ -154,6 +154,7 @@ function LoginContent() {
   const [passwordFocused, setPasswordFocused] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
+  const [info, setInfo] = useState('')
   const [loading, setLoading] = useState(false)
 
   const authMode: AuthMode = searchParams.get('mode') === 'signup' ? 'register' : 'login'
@@ -165,6 +166,7 @@ function LoginContent() {
   const handleLogin = async () => {
     setLoading(true)
     setError('')
+    setInfo('')
     const { data, error } = await supabase.auth.signInWithPassword({ email, password })
     if (error) {
       setError(error.message)
@@ -184,6 +186,7 @@ function LoginContent() {
   const handleSignUp = async () => {
     setLoading(true)
     setError('')
+    setInfo('')
     const { error } = await supabase.auth.signUp({ email, password })
     if (error) {
       setError(error.message)
@@ -195,6 +198,7 @@ function LoginContent() {
 
   const handleGoogleSignIn = async () => {
     setError('')
+    setInfo('')
     setLoading(true)
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
@@ -204,6 +208,23 @@ function LoginContent() {
       setError(error.message)
       setLoading(false)
     }
+  }
+
+  const handleForgotPassword = async () => {
+    setError('')
+    setInfo('')
+    if (!email.trim()) {
+      setError('Enter your email above so we can send a reset link.')
+      return
+    }
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo: `${window.location.origin}/auth/login`,
+    })
+    if (error) {
+      setError(error.message)
+      return
+    }
+    setInfo('Reset link sent. Check your inbox.')
   }
 
   const handlePrimaryAction = () => {
@@ -216,8 +237,8 @@ function LoginContent() {
 
   const title = isSignUp ? 'Create your account' : 'Welcome back'
   const body = isSignUp
-    ? 'Launch your AI operations stack from an elegant control surface beneath the tide.'
-    : 'Slip back into your command deck and let the ocean carry the busywork.'
+    ? 'Launch your AI Concierge and let it greet guests, answer questions, and handle reservations 24/7.'
+    : 'Step back into your command deck and let your AI Concierge keep service moving.'
 
   return (
     <main className="login-ocean-page relative flex min-h-screen items-center justify-center overflow-hidden bg-[#020c1b] px-6 py-10 text-white">
@@ -258,25 +279,13 @@ function LoginContent() {
         <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgba(255,255,255,0.08),transparent_35%,rgba(255,255,255,0.02)_100%)]" />
 
         <div className="relative">
-          <div className="mb-12 text-center">
-            <div className="inline-flex items-end justify-center">
-              <span
-                className="text-[34px] font-bold leading-none text-sky-400"
-                style={{ fontFamily: 'var(--font-playfair)' }}
-              >
-                Ocean
-              </span>
-              <span
-                className="text-[22px] font-normal leading-none text-white/60"
-                style={{ fontFamily: 'var(--font-playfair)' }}
-              >
-                Core
-              </span>
+          <div className="mb-12 flex justify-center">
+            <div className="flex flex-col items-start">
+              <div className="text-2xl font-bold" style={{ fontFamily: 'Playfair Display, serif' }}>
+                <span style={{ color: '#38bdf8' }}>Ocean</span>
+                <span style={{ color: 'white' }}>Core</span>
+              </div>
             </div>
-            <div className="mx-auto mt-5 h-px w-10 bg-white/20" />
-            <p className="mt-4 text-[11px] uppercase tracking-[0.3em] text-white/50">
-              AI Operations Platform
-            </p>
           </div>
 
           <div className="mb-8 text-center">
@@ -317,6 +326,7 @@ function LoginContent() {
                   <>
                     <button
                       type="button"
+                      onClick={() => void handleForgotPassword()}
                       style={{
                         position: 'absolute',
                         right: 16,
@@ -367,8 +377,8 @@ function LoginContent() {
             >
               {loading
                 ? authMode === 'login'
-                  ? 'Signing in...'
-                  : 'Creating account...'
+                  ? 'Signing in…'
+                  : 'Creating account…'
                 : authMode === 'login'
                   ? 'Sign in'
                   : 'Register'}
@@ -383,6 +393,15 @@ function LoginContent() {
                   className="mt-3 text-sm text-rose-300"
                 >
                   {error}
+                </motion.p>
+              ) : info ? (
+                <motion.p
+                  initial={{ opacity: 0, y: -6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  className="mt-3 text-sm text-sky-300"
+                >
+                  {info}
                 </motion.p>
               ) : null}
             </AnimatePresence>
@@ -438,7 +457,7 @@ function LoginContent() {
       </motion.section>
 
       <div className="pointer-events-none absolute bottom-6 left-1/2 z-10 -translate-x-1/2 text-center text-[11px] text-white/[0.1]">
-        © 2025 OceanCore
+        © {new Date().getFullYear()} OceanCore
       </div>
     </main>
   )

@@ -6,9 +6,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { DashboardOceanNav } from '@/components/dashboard-ocean-nav'
 import { oceanTransition } from '@/lib/ocean-motion'
 import { supabase } from '@/lib/supabase'
+import { card, t } from '@/lib/dashboard-theme'
 
 type ConversationStatus = 'Live' | 'Waiting' | 'Resolved' | 'Human'
-type Sender = 'customer' | 'ai'
+type Sender = 'guest' | 'ai'
 
 type Message = {
   id: string
@@ -41,14 +42,7 @@ type DbConversationRow = {
   messages: DbMessageRow[] | null
 }
 
-const panelStyle = {
-  background: 'rgba(8,20,40,0.5)',
-  border: '1px solid rgba(255,255,255,0.07)',
-  borderRadius: 16,
-  backdropFilter: 'blur(16px)',
-  WebkitBackdropFilter: 'blur(16px)',
-  boxShadow: '0 20px 60px rgba(0,0,0,0.28)',
-}
+const panelStyle = card
 
 function normalizeStatus(raw: string | null | undefined): ConversationStatus {
   const key = (raw ?? 'Live').toLowerCase()
@@ -93,7 +87,7 @@ function formatRelativeTime(iso: string | null | undefined) {
 }
 
 function mapDbMessageToMessage(row: DbMessageRow): Message {
-  const sender: Sender = row.role === 'assistant' ? 'ai' : 'customer'
+  const sender: Sender = row.role === 'assistant' ? 'ai' : 'guest'
   return {
     id: row.id,
     sender,
@@ -111,7 +105,7 @@ function mapDbConversationToConversation(row: DbConversationRow): Conversation {
   const lastActivity = row.updated_at ?? last?.created_at
   return {
     id: row.id,
-    customerName: row.customer_name?.trim() || 'Customer',
+    customerName: row.customer_name?.trim() || 'Guest',
     preview,
     time: formatRelativeTime(lastActivity),
     status: normalizeStatus(row.status),
@@ -121,31 +115,15 @@ function mapDbConversationToConversation(row: DbConversationRow): Conversation {
 
 function getStatusStyle(status: ConversationStatus) {
   if (status === 'Live') {
-    return {
-      background: 'rgba(56,189,248,0.15)',
-      color: '#38bdf8',
-      border: 'rgba(56,189,248,0.28)',
-    }
+    return { background: t.accentSoftBg, color: t.accentText, border: t.accentSoftBorder }
   }
   if (status === 'Human') {
-    return {
-      background: 'rgba(251,191,36,0.12)',
-      color: '#fbbf24',
-      border: 'rgba(251,191,36,0.28)',
-    }
+    return { background: t.warningBg, color: t.warning, border: t.warningBorder }
   }
   if (status === 'Waiting') {
-    return {
-      background: 'rgba(167,139,250,0.14)',
-      color: '#c4b5fd',
-      border: 'rgba(167,139,250,0.3)',
-    }
+    return { background: '#faf5ff', color: '#7e22ce', border: '#e9d5ff' }
   }
-  return {
-    background: 'rgba(255,255,255,0.06)',
-    color: 'rgba(255,255,255,0.55)',
-    border: 'rgba(255,255,255,0.1)',
-  }
+  return { background: t.bgSurfaceMuted, color: t.textMuted, border: t.border }
 }
 
 function getInitials(name: string) {
@@ -164,6 +142,9 @@ export default function ChatsInboxPage() {
   const [sendingConversationId, setSendingConversationId] = useState<string | null>(null)
   const [inboxLoaded, setInboxLoaded] = useState(false)
   const [inboxFetchError, setInboxFetchError] = useState(false)
+  const [conciergeName, setConciergeName] = useState('AI Concierge')
+  const [takeoverError, setTakeoverError] = useState('')
+  const [businessId, setBusinessId] = useState<string | null>(null)
   const messagesScrollRef = useRef<HTMLDivElement | null>(null)
   const reduceMotion = useReducedMotion()
 
@@ -171,6 +152,43 @@ export default function ChatsInboxPage() {
     let cancelled = false
 
     async function loadConversations() {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (cancelled) return
+
+      if (!user) {
+        setInboxLoaded(true)
+        setInboxFetchError(false)
+        setConversationList([])
+        setSelectedId('')
+        return
+      }
+
+      const { data: business } = await supabase
+        .from('businesses')
+        .select('id, agent_name')
+        .eq('user_id', user.id)
+        .maybeSingle()
+
+      if (cancelled) return
+
+      if (business?.agent_name?.trim()) {
+        setConciergeName(business.agent_name.trim())
+      }
+
+      if (business?.id) {
+        setBusinessId(business.id)
+      }
+
+      if (!business?.id) {
+        setInboxLoaded(true)
+        setInboxFetchError(false)
+        setConversationList([])
+        setSelectedId('')
+        return
+      }
+
       const { data, error } = await supabase
         .from('conversations')
         .select(
@@ -187,6 +205,7 @@ export default function ChatsInboxPage() {
           )
         `,
         )
+        .eq('business_id', business.id)
         .order('updated_at', { ascending: false })
         .order('created_at', { referencedTable: 'messages', ascending: true })
 
@@ -276,6 +295,46 @@ export default function ChatsInboxPage() {
     }
   }, [selectedId, selectedConversation])
 
+  // ── Patch customer_name in the inbox list when syncGuestInfo writes back ────
+  useEffect(() => {
+    if (!businessId) return
+
+    const channel = supabase
+      .channel(`conversations:${businessId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'conversations',
+          filter: `business_id=eq.${businessId}`,
+        },
+        (payload) => {
+          const updated = payload.new as { id?: string; customer_name?: string | null; status?: string | null }
+          if (typeof updated.id !== 'string') return
+
+          setConversationList((prev) =>
+            prev.map((c) => {
+              if (c.id !== updated.id) return c
+              return {
+                ...c,
+                customerName:
+                  typeof updated.customer_name === 'string' && updated.customer_name.trim()
+                    ? updated.customer_name.trim()
+                    : c.customerName,
+                status: updated.status ? normalizeStatus(updated.status) : c.status,
+              }
+            }),
+          )
+        },
+      )
+      .subscribe()
+
+    return () => {
+      void supabase.removeChannel(channel)
+    }
+  }, [businessId])
+
   useEffect(() => {
     if (!selectedConversation) {
       return
@@ -293,11 +352,12 @@ export default function ChatsInboxPage() {
     if (!selectedId || !selectedConversation) {
       return
     }
+    setTakeoverError('')
     const next = selectedConversation.status !== 'Human'
     const status = next ? 'human' : 'active'
     const { error } = await supabase.from('conversations').update({ status }).eq('id', selectedId)
     if (error) {
-      console.error(error)
+      setTakeoverError(error.message ?? 'Could not switch modes. Please try again.')
       return
     }
     setConversationList((prev) =>
@@ -376,8 +436,8 @@ export default function ChatsInboxPage() {
     if (userInsertError || !insertedUser) {
       const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       customerMessage = {
-        id: `m-${Date.now()}-customer`,
-        sender: 'customer',
+        id: `m-${Date.now()}-guest`,
+        sender: 'guest',
         text: messageText,
         time: now,
       }
@@ -529,8 +589,8 @@ export default function ChatsInboxPage() {
           >
             <div
               style={{
-                padding: '22px 20px 16px',
-                borderBottom: '1px solid rgba(255,255,255,0.06)',
+                padding: '20px 20px 16px',
+                borderBottom: `1px solid ${t.border}`,
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
@@ -538,9 +598,9 @@ export default function ChatsInboxPage() {
               }}
             >
               <div>
-                <h1 style={{ margin: 0, color: 'white', fontSize: 18, fontWeight: 700 }}>Chat Inbox</h1>
-                <p style={{ margin: '6px 0 0', color: 'rgba(255,255,255,0.4)', fontSize: 13 }}>
-                  {conversationList.length} active
+                <h1 style={{ margin: 0, color: t.text, fontSize: 17, fontWeight: 700 }}>Guest Conversations</h1>
+                <p style={{ margin: '6px 0 0', color: t.textMuted, fontSize: 13 }}>
+                  {conversationList.length} {conversationList.length === 1 ? 'thread' : 'threads'}
                 </p>
               </div>
               {isMobile ? (
@@ -551,42 +611,78 @@ export default function ChatsInboxPage() {
                   style={{
                     width: 38,
                     height: 38,
-                    borderRadius: 12,
-                    border: '1px solid rgba(255,255,255,0.12)',
-                    background: 'rgba(255,255,255,0.04)',
-                    color: 'white',
+                    borderRadius: 10,
+                    border: `1px solid ${t.border}`,
+                    background: t.bgSurface,
+                    color: t.text,
                     fontSize: 18,
                     cursor: 'pointer',
                   }}
                 >
                   ☰
                 </motion.button>
-              ) : (
+              ) : conversationList.length > 0 ? (
                 <span
                   style={{
                     borderRadius: 999,
-                    padding: '7px 10px',
-                    background: 'rgba(56,189,248,0.14)',
-                    color: '#38bdf8',
+                    padding: '5px 10px',
+                    background: t.accentSoftBg,
+                    border: `1px solid ${t.accentSoftBorder}`,
+                    color: t.accentText,
                     fontSize: 11,
                     fontWeight: 700,
                   }}
                 >
-                  19 active
+                  {conversationList.filter((c) => c.status === 'Live' || c.status === 'Human').length} active
                 </span>
-              )}
+              ) : null}
             </div>
 
-            <div style={{ padding: 10, overflowY: 'auto', flex: 1 }}>
+            <div
+              style={{
+                padding: 10,
+                overflowY: 'auto',
+                WebkitOverflowScrolling: 'touch',
+                flex: 1,
+                minHeight: 0,
+              }}
+            >
+              {!inboxLoaded ? (
+                <div style={{ display: 'grid', gap: 8, padding: 6 }}>
+                  {Array.from({ length: 4 }).map((_, idx) => (
+                    <div
+                      key={idx}
+                      style={{
+                        height: 64,
+                        borderRadius: 12,
+                        background: t.bgSurfaceMuted,
+                        border: `1px solid ${t.borderSoft}`,
+                      }}
+                    />
+                  ))}
+                </div>
+              ) : null}
+
               {inboxFetchError ? (
-                <div style={{ padding: 20, color: 'rgba(255,255,255,0.55)', fontSize: 14, lineHeight: 1.5 }}>
-                  We couldn’t load the inbox right now.
+                <div style={{ padding: 20, color: t.danger, fontSize: 14, lineHeight: 1.5 }}>
+                  We couldn&apos;t load the inbox right now.
                 </div>
               ) : null}
 
               {inboxLoaded && !inboxFetchError && conversationList.length === 0 ? (
-                <div style={{ padding: 20, color: 'rgba(255,255,255,0.55)', fontSize: 14, lineHeight: 1.5 }}>
+                <div
+                  style={{
+                    padding: '32px 20px',
+                    color: t.textMuted,
+                    fontSize: 14,
+                    lineHeight: 1.6,
+                    textAlign: 'center',
+                  }}
+                >
                   No conversations yet.
+                  <div style={{ marginTop: 6, color: t.textSubtle, fontSize: 12 }}>
+                    Guest chats will appear here as soon as your AI Concierge greets them.
+                  </div>
                 </div>
               ) : null}
 
@@ -601,33 +697,33 @@ export default function ChatsInboxPage() {
                     initial={{ opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={oceanTransition(reduceMotion, { delay: 0.04 + index * 0.03, duration: 0.16 })}
-                    whileHover={reduceMotion ? undefined : { backgroundColor: 'rgba(255,255,255,0.04)' }}
+                    whileHover={reduceMotion ? undefined : { backgroundColor: isSelected ? t.accentSoftBg : t.bgSurfaceMuted }}
                     onClick={() => setSelectedId(conversation.id)}
                     style={{
                       width: '100%',
-                      marginBottom: 8,
-                      padding: '13px 12px',
-                      borderRadius: 16,
-                      borderLeft: isSelected ? '2px solid #38bdf8' : '2px solid transparent',
-                      borderTop: '1px solid rgba(255,255,255,0.06)',
-                      borderRight: '1px solid rgba(255,255,255,0.06)',
-                      borderBottom: '1px solid rgba(255,255,255,0.06)',
-                      background: isSelected ? 'rgba(56,189,248,0.08)' : 'transparent',
+                      marginBottom: 6,
+                      padding: '12px 12px',
+                      borderRadius: 10,
+                      borderLeft: isSelected ? `3px solid ${t.accent}` : '3px solid transparent',
+                      borderTop: '1px solid transparent',
+                      borderRight: '1px solid transparent',
+                      borderBottom: '1px solid transparent',
+                      background: isSelected ? t.accentSoftBg : 'transparent',
                       color: 'inherit',
                       textAlign: 'left',
                       cursor: 'pointer',
                     }}
                   >
-                    <div style={{ display: 'grid', gridTemplateColumns: '42px 1fr auto', gap: 12, alignItems: 'center' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '40px 1fr auto', gap: 12, alignItems: 'center' }}>
                       <div
                         style={{
-                          width: 42,
-                          height: 42,
+                          width: 40,
+                          height: 40,
                           borderRadius: '50%',
                           display: 'grid',
                           placeItems: 'center',
-                          background: 'linear-gradient(135deg, rgba(56,189,248,0.8), rgba(14,165,233,0.28))',
-                          color: 'white',
+                          background: t.accent,
+                          color: '#ffffff',
                           fontSize: 12,
                           fontWeight: 700,
                         }}
@@ -638,7 +734,7 @@ export default function ChatsInboxPage() {
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
                           <div
                             style={{
-                              color: 'white',
+                              color: t.text,
                               fontSize: 13,
                               fontWeight: 700,
                               overflow: 'hidden',
@@ -651,8 +747,8 @@ export default function ChatsInboxPage() {
                         </div>
                         <div
                           style={{
-                            marginTop: 4,
-                            color: 'rgba(255,255,255,0.42)',
+                            marginTop: 3,
+                            color: t.textMuted,
                             fontSize: 12,
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
@@ -662,11 +758,11 @@ export default function ChatsInboxPage() {
                           {conversation.preview}
                         </div>
                       </div>
-                      <div style={{ display: 'grid', justifyItems: 'end', gap: 8 }}>
-                        <div style={{ color: 'rgba(255,255,255,0.3)', fontSize: 11 }}>{conversation.time}</div>
+                      <div style={{ display: 'grid', justifyItems: 'end', gap: 6 }}>
+                        <div style={{ color: t.textSubtle, fontSize: 11 }}>{conversation.time}</div>
                         <span
                           style={{
-                            padding: '4px 8px',
+                            padding: '3px 8px',
                             borderRadius: 999,
                             border: `1px solid ${statusStyle.border}`,
                             background: statusStyle.background,
@@ -702,7 +798,7 @@ export default function ChatsInboxPage() {
                 <header
                   style={{
                     padding: '20px 22px 16px',
-                    borderBottom: '1px solid rgba(255,255,255,0.06)',
+                    borderBottom: `1px solid ${t.border}`,
                     display: 'flex',
                     justifyContent: 'space-between',
                     alignItems: 'center',
@@ -710,23 +806,22 @@ export default function ChatsInboxPage() {
                   }}
                 >
                   <div>
-                    <div style={{ color: 'white', fontSize: 18, fontWeight: 700 }}>{selectedConversation.customerName}</div>
+                    <div style={{ color: t.text, fontSize: 17, fontWeight: 700 }}>{selectedConversation.customerName}</div>
                     <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
                       <span
                         style={{
                           width: 8,
                           height: 8,
                           borderRadius: '50%',
-                          background: '#4ade80',
-                          boxShadow: '0 0 0 6px rgba(74,222,128,0.16)',
+                          background: t.success,
                         }}
                       />
-                      <span style={{ color: 'rgba(255,255,255,0.42)', fontSize: 13 }}>Session Active</span>
+                      <span style={{ color: t.textMuted, fontSize: 13 }}>Conversation Active</span>
                     </div>
                   </div>
                   <span
                     style={{
-                      padding: '7px 10px',
+                      padding: '5px 10px',
                       borderRadius: 999,
                       border: `1px solid ${badge.border}`,
                       background: badge.background,
@@ -743,7 +838,9 @@ export default function ChatsInboxPage() {
                   ref={messagesScrollRef}
                   style={{
                     flex: 1,
+                    minHeight: 0,
                     overflowY: 'auto',
+                    WebkitOverflowScrolling: 'touch',
                     padding: '18px 20px',
                     display: 'grid',
                     alignContent: 'start',
@@ -761,30 +858,29 @@ export default function ChatsInboxPage() {
                           justifyContent: isAi ? 'flex-start' : 'flex-end',
                         }}
                       >
-                        <div style={{ maxWidth: '72%' }}>
+                        <div style={{ maxWidth: '70%' }}>
                           <div
                             style={{
-                              borderRadius: 18,
-                              padding: '12px 14px',
-                              background: isAi ? 'rgba(8,20,40,0.6)' : 'rgba(14,165,233,0.15)',
+                              borderRadius: 14,
+                              padding: '10px 14px',
+                              background: isAi ? t.bgSurfaceMuted : t.accent,
                               border: isAi
-                                ? '1px solid rgba(255,255,255,0.08)'
-                                : '1px solid rgba(56,189,248,0.2)',
-                              color: 'white',
-                              boxShadow: isAi ? 'none' : '0 8px 24px rgba(14,165,233,0.16)',
+                                ? `1px solid ${t.border}`
+                                : `1px solid ${t.accent}`,
+                              color: isAi ? t.text : '#ffffff',
                             }}
                           >
-                            <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6 }}>{message.text}</p>
+                            <p style={{ margin: 0, fontSize: 14, lineHeight: 1.55, wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{message.text}</p>
                           </div>
                           <div
                             style={{
-                              marginTop: 6,
+                              marginTop: 5,
                               fontSize: 10,
-                              color: 'rgba(255,255,255,0.3)',
+                              color: t.textSubtle,
                               textAlign: isAi ? 'left' : 'right',
                             }}
                           >
-                            {isAi ? 'AI Agent' : 'Customer'} • {message.time}
+                            {isAi ? conciergeName : 'Guest'} • {message.time}
                           </div>
                         </div>
                       </div>
@@ -795,15 +891,15 @@ export default function ChatsInboxPage() {
                     <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
                       <div
                         style={{
-                          borderRadius: 18,
-                          padding: '12px 14px',
-                          background: 'rgba(8,20,40,0.6)',
-                          border: '1px solid rgba(255,255,255,0.08)',
-                          color: 'rgba(255,255,255,0.75)',
+                          borderRadius: 14,
+                          padding: '10px 14px',
+                          background: t.bgSurfaceMuted,
+                          border: `1px solid ${t.border}`,
+                          color: t.textMuted,
                           fontSize: 14,
                         }}
                       >
-                        AI is typing...
+                        {conciergeName} is typing…
                       </div>
                     </div>
                   ) : null}
@@ -812,25 +908,42 @@ export default function ChatsInboxPage() {
                 <footer
                   style={{
                     padding: 16,
-                    borderTop: '1px solid rgba(255,255,255,0.06)',
-                    background: 'rgba(5,20,40,0.45)',
-                    backdropFilter: 'blur(20px)',
+                    borderTop: `1px solid ${t.border}`,
+                    background: t.bgSurface,
                   }}
                 >
                   <div
                     style={{
                       marginBottom: 10,
-                      borderRadius: 14,
-                      border: `1px solid ${isTakenOver ? 'rgba(251,191,36,0.32)' : 'rgba(74,222,128,0.32)'}`,
-                      background: isTakenOver ? 'rgba(251,191,36,0.1)' : 'rgba(74,222,128,0.1)',
-                      color: isTakenOver ? '#fbbf24' : '#4ade80',
+                      borderRadius: 10,
+                      border: `1px solid ${isTakenOver ? t.warningBorder : t.successBorder}`,
+                      background: isTakenOver ? t.warningBg : t.successBg,
+                      color: isTakenOver ? t.warning : t.success,
                       fontSize: 12,
-                      fontWeight: 700,
+                      fontWeight: 600,
                       padding: '10px 12px',
                     }}
                   >
-                    {isTakenOver ? 'Human operator is handling this session' : 'AI is handling this session'}
+                    {isTakenOver
+                      ? 'Human operator is handling this conversation'
+                      : `${conciergeName} is handling this conversation`}
                   </div>
+                  {takeoverError ? (
+                    <div
+                      role="alert"
+                      style={{
+                        marginBottom: 10,
+                        borderRadius: 10,
+                        border: `1px solid ${t.dangerBorder}`,
+                        background: t.dangerBg,
+                        color: t.danger,
+                        fontSize: 12,
+                        padding: '10px 12px',
+                      }}
+                    >
+                      {takeoverError}
+                    </div>
+                  ) : null}
 
                   <div style={{ display: 'flex', gap: 10, flexWrap: isMobile ? 'wrap' : 'nowrap' }}>
                     <input
@@ -846,18 +959,18 @@ export default function ChatsInboxPage() {
                       }}
                       placeholder={
                         isTakenOver
-                          ? 'Write a message...'
-                          : 'AI is in control. Click Take Over to respond.'
+                          ? 'Write a message…'
+                          : `${conciergeName} is in control. Click Take Over to respond.`
                       }
                       style={{
                         flex: 1,
                         minWidth: 180,
-                        borderRadius: 16,
-                        border: '1px solid rgba(255,255,255,0.1)',
-                        background: isTakenOver ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.03)',
-                        padding: '14px 16px',
+                        borderRadius: 10,
+                        border: `1px solid ${t.border}`,
+                        background: isTakenOver ? t.bgSurface : t.bgSurfaceMuted,
+                        padding: '12px 14px',
                         fontSize: 14,
-                        color: isTakenOver ? 'white' : 'rgba(255,255,255,0.45)',
+                        color: isTakenOver ? t.text : t.textMuted,
                         outline: 'none',
                       }}
                     />
@@ -873,26 +986,22 @@ export default function ChatsInboxPage() {
                       }
                       style={{
                         border: 'none',
-                        borderRadius: 16,
+                        borderRadius: 10,
                         background:
                           !isTakenOver || isLoading || !draft.trim()
-                            ? 'rgba(255,255,255,0.08)'
-                            : '#0ea5e9',
+                            ? t.bgSurfaceMuted
+                            : t.accent,
                         color:
-                          !isTakenOver || isLoading || !draft.trim() ? 'rgba(255,255,255,0.38)' : 'white',
-                        fontWeight: 700,
+                          !isTakenOver || isLoading || !draft.trim() ? t.textSubtle : '#ffffff',
+                        fontWeight: 600,
                         fontSize: 13,
-                        padding: '0 18px',
-                        minHeight: 50,
+                        padding: '0 20px',
+                        minHeight: 46,
                         cursor:
                           !isTakenOver || isLoading || !draft.trim() ? 'not-allowed' : 'pointer',
-                        boxShadow:
-                          !isTakenOver || isLoading || !draft.trim()
-                            ? 'none'
-                            : '0 8px 24px rgba(14,165,233,0.32)',
                       }}
                     >
-                      {isLoading ? 'Sending...' : 'Send'}
+                      {isLoading ? 'Sending…' : 'Send'}
                     </motion.button>
                     <motion.button
                       type="button"
@@ -900,18 +1009,18 @@ export default function ChatsInboxPage() {
                       whileHover={reduceMotion ? undefined : { y: -1 }}
                       whileTap={reduceMotion ? undefined : { scale: 0.98 }}
                       style={{
-                        borderRadius: 16,
-                        border: `1px solid ${isTakenOver ? 'rgba(249,115,22,0.45)' : 'rgba(255,255,255,0.12)'}`,
-                        background: isTakenOver ? 'rgba(249,115,22,0.14)' : 'rgba(255,255,255,0.05)',
-                        color: isTakenOver ? '#fb923c' : 'rgba(255,255,255,0.82)',
-                        fontWeight: 700,
+                        borderRadius: 10,
+                        border: `1px solid ${isTakenOver ? t.warningBorder : t.border}`,
+                        background: isTakenOver ? t.warningBg : t.bgSurface,
+                        color: isTakenOver ? t.warning : t.text,
+                        fontWeight: 600,
                         fontSize: 13,
                         padding: '0 18px',
-                        minHeight: 50,
+                        minHeight: 46,
                         cursor: 'pointer',
                       }}
                     >
-                      {isTakenOver ? 'Return to AI' : 'Take Over'}
+                      {isTakenOver ? 'Return to AI Concierge' : 'Take Over'}
                     </motion.button>
                   </div>
                 </footer>
@@ -922,11 +1031,44 @@ export default function ChatsInboxPage() {
                   flex: 1,
                   display: 'grid',
                   placeItems: 'center',
-                  color: 'rgba(255,255,255,0.48)',
-                  fontSize: 14,
+                  padding: 24,
                 }}
               >
-                Select a conversation to start.
+                <div style={{ textAlign: 'center', maxWidth: 320 }}>
+                  <div
+                    style={{
+                      width: 56,
+                      height: 56,
+                      margin: '0 auto 14px',
+                      borderRadius: 14,
+                      background: t.accentSoftBg,
+                      border: `1px solid ${t.accentSoftBorder}`,
+                      display: 'grid',
+                      placeItems: 'center',
+                      fontSize: 22,
+                    }}
+                    aria-hidden
+                  >
+                    💬
+                  </div>
+                  <div style={{ color: t.text, fontSize: 16, fontWeight: 700 }}>
+                    {conversationList.length === 0
+                      ? 'No conversations yet'
+                      : 'Select a conversation'}
+                  </div>
+                  <div
+                    style={{
+                      marginTop: 8,
+                      color: t.textMuted,
+                      fontSize: 13,
+                      lineHeight: 1.6,
+                    }}
+                  >
+                    {conversationList.length === 0
+                      ? 'Once a guest reaches out through your widget, the conversation will appear here for review or take-over.'
+                      : 'Pick a thread from the inbox to read the transcript and jump in if needed.'}
+                  </div>
+                </div>
               </div>
             )}
           </motion.section>
@@ -944,31 +1086,41 @@ export default function ChatsInboxPage() {
                 flexDirection: 'column',
               }}
             >
-              <div style={{ padding: '22px 20px 16px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-                <div style={{ color: 'white', fontSize: 18, fontWeight: 700 }}>Session Detail</div>
-                <div style={{ marginTop: 6, color: 'rgba(255,255,255,0.4)', fontSize: 13 }}>
-                  Live operator controls
+              <div style={{ padding: '20px 20px 16px', borderBottom: `1px solid ${t.border}` }}>
+                <div style={{ color: t.text, fontSize: 17, fontWeight: 700 }}>Conversation Detail</div>
+                <div style={{ marginTop: 6, color: t.textMuted, fontSize: 13 }}>
+                  Guest profile · concierge controls
                 </div>
               </div>
 
               {selectedConversation ? (
-                <div style={{ padding: 18, display: 'grid', gap: 16, overflowY: 'auto' }}>
+                <div
+                  style={{
+                    padding: 18,
+                    display: 'grid',
+                    gap: 16,
+                    overflowY: 'auto',
+                    WebkitOverflowScrolling: 'touch',
+                    minHeight: 0,
+                    flex: 1,
+                  }}
+                >
                   <div
                     style={{
-                      borderRadius: 18,
+                      borderRadius: 12,
                       padding: 16,
-                      background: 'rgba(255,255,255,0.04)',
-                      border: '1px solid rgba(255,255,255,0.08)',
+                      background: t.bgSurfaceMuted,
+                      border: `1px solid ${t.border}`,
                     }}
                   >
-                    <div style={{ color: 'white', fontSize: 16, fontWeight: 700 }}>{selectedConversation.customerName}</div>
-                    <div style={{ marginTop: 6, color: 'rgba(255,255,255,0.42)', fontSize: 13 }}>
+                    <div style={{ color: t.text, fontSize: 16, fontWeight: 700 }}>{selectedConversation.customerName}</div>
+                    <div style={{ marginTop: 6, color: t.textMuted, fontSize: 13 }}>
                       Last update {selectedConversation.time}
                     </div>
                     <div style={{ marginTop: 14, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                       <span
                         style={{
-                          padding: '5px 8px',
+                          padding: '4px 8px',
                           borderRadius: 999,
                           border: `1px solid ${badge.border}`,
                           background: badge.background,
@@ -981,11 +1133,11 @@ export default function ChatsInboxPage() {
                       </span>
                       <span
                         style={{
-                          padding: '5px 8px',
+                          padding: '4px 8px',
                           borderRadius: 999,
-                          border: '1px solid rgba(255,255,255,0.08)',
-                          background: 'rgba(255,255,255,0.04)',
-                          color: 'rgba(255,255,255,0.7)',
+                          border: `1px solid ${t.border}`,
+                          background: t.bgSurface,
+                          color: t.textMuted,
                           fontSize: 11,
                           fontWeight: 700,
                         }}
@@ -997,39 +1149,39 @@ export default function ChatsInboxPage() {
 
                   <div
                     style={{
-                      borderRadius: 18,
+                      borderRadius: 12,
                       padding: 16,
-                      background: 'rgba(255,255,255,0.04)',
-                      border: '1px solid rgba(255,255,255,0.08)',
+                      background: t.bgSurfaceMuted,
+                      border: `1px solid ${t.border}`,
                       display: 'grid',
                       gap: 12,
                     }}
                   >
-                    <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11, letterSpacing: '0.16em', textTransform: 'uppercase' }}>
-                      AI Agent
+                    <div style={{ color: t.textMuted, fontSize: 11, letterSpacing: '0.16em', textTransform: 'uppercase', fontWeight: 600 }}>
+                      Concierge
                     </div>
                     {[
                       { label: 'Mode', value: isTakenOver ? 'Human takeover' : 'Autonomous' },
                       { label: 'Response time', value: '< 2 seconds' },
-                      { label: 'Queue state', value: 'Healthy' },
+                      { label: 'Status', value: 'Online' },
                     ].map((item) => (
                       <div key={item.label} style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-                        <span style={{ color: 'rgba(255,255,255,0.42)', fontSize: 12 }}>{item.label}</span>
-                        <span style={{ color: 'white', fontSize: 13, fontWeight: 700 }}>{item.value}</span>
+                        <span style={{ color: t.textMuted, fontSize: 12 }}>{item.label}</span>
+                        <span style={{ color: t.text, fontSize: 13, fontWeight: 700 }}>{item.value}</span>
                       </div>
                     ))}
                   </div>
 
                   <div
                     style={{
-                      borderRadius: 18,
+                      borderRadius: 12,
                       padding: 16,
-                      background: 'rgba(255,255,255,0.04)',
-                      border: '1px solid rgba(255,255,255,0.08)',
+                      background: t.bgSurfaceMuted,
+                      border: `1px solid ${t.border}`,
                     }}
                   >
-                    <div style={{ color: 'white', fontSize: 14, fontWeight: 700 }}>Preview</div>
-                    <p style={{ margin: '10px 0 0', color: 'rgba(255,255,255,0.55)', fontSize: 13, lineHeight: 1.65 }}>
+                    <div style={{ color: t.text, fontSize: 14, fontWeight: 700 }}>Preview</div>
+                    <p style={{ margin: '10px 0 0', color: t.textMuted, fontSize: 13, lineHeight: 1.65 }}>
                       {selectedConversation.preview}
                     </p>
                   </div>
@@ -1040,7 +1192,7 @@ export default function ChatsInboxPage() {
                     flex: 1,
                     display: 'grid',
                     placeItems: 'center',
-                    color: 'rgba(255,255,255,0.45)',
+                    color: t.textMuted,
                     fontSize: 14,
                     padding: 24,
                     textAlign: 'center',

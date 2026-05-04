@@ -11,6 +11,38 @@ const openai = new OpenAI({
 
 type ChatMessage = { role: string; content: string }
 
+// ─── Conversation-flow system prompt injection ────────────────────────────────
+
+const BOOKING_FLOW_RULES = `
+RESERVATION FLOW — follow this order strictly. Never skip a step.
+1. If the guest mentions wanting a table, ask for their preferred date and time first.
+2. Once date/time is clear, ask: "How many guests will be joining you?"
+3. Once party size is clear, ask: "May I have your name for the reservation?"
+4. Once you have their name, ask: "And a phone number or email so we can send a confirmation?"
+   (Make clear this is optional but preferred.)
+5. Only AFTER collecting name, date, time, and party size: confirm the reservation details
+   back to the guest by name and say it's been placed.
+
+CRITICAL RULES:
+- NEVER create or confirm a reservation without first asking for the guest's name.
+- Once the guest provides their name, address them by first name for the rest of the conversation.
+- If the guest skips the contact step, that is fine — proceed to confirmation.
+- Keep responses concise (2–4 sentences). Never repeat questions already answered.
+`
+
+function buildSystemPrompt(
+  conciergeName: string,
+  restaurantName: string,
+  customPrompt: string | null | undefined,
+): string {
+  const base = customPrompt?.trim()
+    ? customPrompt.trim()
+    : `You are ${conciergeName}, the AI Concierge for ${restaurantName}. Help guests with reservations, menu inquiries, dietary requirements, and general questions. Be warm, attentive, and concise.`
+  return `${base}\n\n${BOOKING_FLOW_RULES}`
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
 function getLastUserMessageContent(messages: ChatMessage[]) {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const m = messages[i]
@@ -30,11 +62,6 @@ function toOpenAiMessages(messages: ChatMessage[]): ChatCompletionMessageParam[]
     }))
 }
 
-/** User or assistant text suggests booking / services context. */
-function hasBookingRelatedWords(text: string) {
-  return /\b(book|booking|appointment|haircut|services?|reserve|schedules?|scheduled)\b/i.test(text.trim())
-}
-
 function getUserMessagesCombined(messages: ChatMessage[]) {
   return messages
     .filter((m) => m.role === 'user' && typeof m.content === 'string')
@@ -42,50 +69,163 @@ function getUserMessagesCombined(messages: ChatMessage[]) {
     .join('\n')
 }
 
-function extractServiceName(text: string): string | null {
+/** Detects restaurant reservation intent in user or assistant text. */
+function hasReservationIntent(text: string) {
+  return /\b(reserv\w*|book\w*|table|party|seat\w*|dining|dinner|lunch|brunch|tonight|tomorrow|guests?)\b/i.test(
+    text.trim(),
+  )
+}
+
+// ─── Name / contact extraction ───────────────────────────────────────────────
+
+/**
+ * Extracts a guest's full name from text.
+ * Looks for explicit patterns like "my name is …", "under Smith", "for Johnson", or
+ * AI confirmation phrasing "I have your reservation, Jane Doe" before falling back to
+ * a bare proper-noun pair.
+ */
+function extractGuestName(text: string): string | null {
   const t = text.trim()
-  if (!t) {
-    return null
-  }
-  const patterns: RegExp[] = [
-    /\b(?:book|reserve|schedule)\s+(?:a|an|me\s+)?(?:an?\s+)?(.+?)(?:\s+on|\s+at|\s+for\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\d)|,|\n|$)/i,
-    /\bappointment\s+(?:for\s+)?(.+?)(?:\s+on|\s+at|,|\n|$)/i,
-    /\bfor\s+(?:a|an\s+)?(.+?)(?:\s+on|\s+at|,|\n|$)/i,
+  if (!t) return null
+
+  // High-confidence: explicit name statement from the user
+  const explicit: RegExp[] = [
+    /\b(?:my\s+name\s+is|name\s+is|i(?:'m| am))\s+([A-Z][a-zA-Z''-]+(?:\s+[A-Z][a-zA-Z''-]+)+)/i,
+    /\b(?:for|under)\s+(?:the\s+name\s+)?([A-Z][a-zA-Z''-]+(?:\s+[A-Z][a-zA-Z''-]+)*)/,
+    /\b(?:it(?:'s| is)|that(?:'s| is))\s+([A-Z][a-zA-Z''-]+(?:\s+[A-Z][a-zA-Z''-]+)*)/,
+    /^([A-Z][a-zA-Z''-]+\s+[A-Z][a-zA-Z''-]+)\s*[.!,]?\s*$/m, // standalone "First Last"
   ]
-  for (const pattern of patterns) {
+
+  for (const pattern of explicit) {
     const match = t.match(pattern)
     if (match?.[1]) {
-      const name = match[1].replace(/\s+/g, ' ').trim().replace(/[.,;]+$/, '')
-      if (name.length >= 2) {
-        return name.slice(0, 240)
-      }
+      const name = match[1].replace(/\s+/g, ' ').trim()
+      if (name.length >= 3 && name.length <= 80) return name
     }
   }
-  const stripped = t.replace(/\b(book|appointment|reserve|scheduled?|a|an|the|please|can|i|want|to|me|for|on|at)\b/gi, ' ')
-  const collapsed = stripped.replace(/\s+/g, ' ').trim()
-  if (collapsed.length >= 3 && collapsed.length <= 200) {
-    return collapsed
+
+  return null
+}
+
+/**
+ * Pulls a real name from the full conversation context: checks user messages first,
+ * then assistant text (AI may echo the name in a confirmation).
+ */
+function extractGuestNameFromConversation(
+  allMessages: ChatMessage[],
+  assistantText: string,
+): string | null {
+  const userTexts = allMessages.filter((m) => m.role === 'user').map((m) => m.content)
+  for (const t of [...userTexts].reverse()) {
+    const n = extractGuestName(t)
+    if (n) return n
+  }
+  return extractGuestName(assistantText)
+}
+
+function extractPhone(text: string): string | null {
+  const m = text.match(/\b(\+?[\d\s\-().]{7,20}\d)\b/)
+  if (!m) return null
+  const digits = m[1].replace(/\D/g, '')
+  return digits.length >= 7 && digits.length <= 15 ? m[1].trim() : null
+}
+
+function extractEmail(text: string): string | null {
+  const m = text.match(/\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b/)
+  return m ? m[0] : null
+}
+
+// ─── Guest info persistence ───────────────────────────────────────────────────
+
+/**
+ * After every AI reply, inspect the full conversation for a name/phone/email.
+ * If found, update the customers record and the conversations.customer_name so the
+ * inbox shows the real name instead of "Website visitor".
+ */
+async function syncGuestInfo(params: {
+  allMessages: ChatMessage[]
+  assistantText: string
+  business_id: string
+  customer_id: string
+  conversation_id: string
+}) {
+  const { allMessages, assistantText, business_id, customer_id, conversation_id } = params
+
+  const name = extractGuestNameFromConversation(allMessages, assistantText)
+  const allUserText = getUserMessagesCombined(allMessages)
+  const phone = extractPhone(allUserText)
+  const email = extractEmail(allUserText)
+
+  if (!name && !phone && !email) return
+
+  const customerUpdate: Record<string, string> = {}
+  if (name) customerUpdate.name = name
+  if (phone) customerUpdate.phone = phone
+  if (email) customerUpdate.email = email
+
+  if (Object.keys(customerUpdate).length > 0) {
+    await supabaseAdmin
+      .from('customers')
+      .update(customerUpdate)
+      .eq('id', customer_id)
+      .eq('business_id', business_id)
+  }
+
+  if (name) {
+    await supabaseAdmin
+      .from('conversations')
+      .update({ customer_name: name })
+      .eq('id', conversation_id)
+      .eq('business_id', business_id)
+  }
+}
+
+// ─── Reservation creation ─────────────────────────────────────────────────────
+
+function extractPartySize(text: string): number | null {
+  const numWords: Record<string, number> = {
+    one: 1,
+    two: 2,
+    three: 3,
+    four: 4,
+    five: 5,
+    six: 6,
+    seven: 7,
+    eight: 8,
+    nine: 9,
+    ten: 10,
+    eleven: 11,
+    twelve: 12,
+  }
+  const m1 = text.match(/\b(?:party\s+of|table\s+for|for)\s+(\d{1,2})\b/i)
+  if (m1) {
+    const n = parseInt(m1[1], 10)
+    if (n >= 1 && n <= 30) return n
+  }
+  const m2 = text.match(
+    /\b(?:party\s+of|table\s+for|for)\s+(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/i,
+  )
+  if (m2) return numWords[m2[1].toLowerCase()] ?? null
+  const m3 = text.match(/\b(\d{1,2})\s+(?:people|guests|persons|pax)\b/i)
+  if (m3) {
+    const n = parseInt(m3[1], 10)
+    if (n >= 1 && n <= 30) return n
   }
   return null
 }
 
 function parseScheduledAt(text: string): Date | null {
-  if (!text.trim()) {
-    return null
-  }
+  if (!text.trim()) return null
+
   const iso = text.match(/(\d{4}-\d{2}-\d{2}(?:[T ]\d{1,2}:\d{2}(?::\d{2})?(?:\s*[AP]M)?)?)/i)
   if (iso) {
     const d = new Date(iso[1])
-    if (!Number.isNaN(d.getTime())) {
-      return d
-    }
+    if (!Number.isNaN(d.getTime())) return d
   }
   const slash = text.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:\s+(\d{1,2}):(\d{2})\s*([AP]M)?)?/i)
   if (slash) {
     let year = parseInt(slash[3], 10)
-    if (year < 100) {
-      year += 2000
-    }
+    if (year < 100) year += 2000
     const month = parseInt(slash[1], 10) - 1
     const day = parseInt(slash[2], 10)
     const d = new Date(year, month, day)
@@ -94,47 +234,61 @@ function parseScheduledAt(text: string): Date | null {
         let h = parseInt(slash[4], 10)
         const m = parseInt(slash[5], 10)
         const ap = slash[6]?.toUpperCase()
-        if (ap === 'PM' && h < 12) {
-          h += 12
-        }
-        if (ap === 'AM' && h === 12) {
-          h = 0
-        }
+        if (ap === 'PM' && h < 12) h += 12
+        if (ap === 'AM' && h === 12) h = 0
         d.setHours(h, m, 0, 0)
       }
       return d
     }
   }
   const monthDay = text.match(
-    /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(\d{4}))?\b/i
+    /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(\d{4}))?\b/i,
   )
   if (monthDay) {
     const tryParse = new Date(`${monthDay[1]} ${monthDay[2]}, ${monthDay[3] ?? new Date().getFullYear()}`)
-    if (!Number.isNaN(tryParse.getTime())) {
-      return tryParse
-    }
+    if (!Number.isNaN(tryParse.getTime())) return tryParse
+  }
+  if (/\btonight\b/i.test(text)) {
+    const d = new Date()
+    d.setHours(19, 0, 0, 0)
+    return d
   }
   if (/\btomorrow\b/i.test(text)) {
     const d = new Date()
     d.setDate(d.getDate() + 1)
-    d.setHours(10, 0, 0, 0)
+    d.setHours(19, 0, 0, 0)
     return d
   }
-  const parsed = Date.parse(text)
-  if (!Number.isNaN(parsed)) {
-    return new Date(parsed)
+  const timeOnly = text.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i)
+  if (timeOnly) {
+    let h = parseInt(timeOnly[1], 10)
+    const m = timeOnly[2] ? parseInt(timeOnly[2], 10) : 0
+    const ap = timeOnly[3].toUpperCase()
+    if (ap === 'PM' && h < 12) h += 12
+    if (ap === 'AM' && h === 12) h = 0
+    const d = new Date()
+    if (d.getHours() > h || (d.getHours() === h && d.getMinutes() > m)) {
+      d.setDate(d.getDate() + 1)
+    }
+    d.setHours(h, m, 0, 0)
+    return d
   }
   return null
 }
 
-function tomorrowAtNoonLocal(): Date {
+function tonightAtSevenLocal(): Date {
   const d = new Date()
-  d.setDate(d.getDate() + 1)
-  d.setHours(12, 0, 0, 0)
+  if (d.getHours() >= 19) d.setDate(d.getDate() + 1)
+  d.setHours(19, 0, 0, 0)
   return d
 }
 
-async function tryCreateAppointmentFromChat(params: {
+/**
+ * Creates a reservation only when we have a real guest name (not the placeholder).
+ * Also checks the AI confirmation text — the AI must have confirmed the booking in
+ * this turn (to prevent duplicate inserts on every subsequent message).
+ */
+async function tryCreateReservationFromChat(params: {
   lastUserContent: string
   chatMessages: ChatMessage[]
   assistantText: string
@@ -143,113 +297,86 @@ async function tryCreateAppointmentFromChat(params: {
   conversation_id: string
 }) {
   const { lastUserContent, chatMessages, assistantText, business_id, customer_id, conversation_id } = params
-  const logPrefix = '[chat/booking]'
 
   const allUserText = getUserMessagesCombined(chatMessages)
-  const userSideText = `${lastUserContent}\n${allUserText}`.trim()
 
-  const intentFromUser = hasBookingRelatedWords(lastUserContent) || hasBookingRelatedWords(allUserText)
-  const intentFromAssistant = hasBookingRelatedWords(assistantText)
-  const shouldBook = intentFromUser || intentFromAssistant
+  // Only create when the AI is actively confirming the reservation in THIS turn.
+  const aiIsConfirming = /\b(confirm\w*|reservation\s+(?:is\s+)?(?:set|placed|confirmed|made)|booked|all\s+set|see\s+you|expect\s+you)\b/i.test(
+    assistantText,
+  )
+  if (!aiIsConfirming) return false
 
-  console.info(`${logPrefix} evaluate`, {
-    business_id,
-    customer_id,
-    conversation_id,
-    intentFromUser,
-    intentFromAssistant,
-    shouldBook,
-    lastUserPreview: lastUserContent.slice(0, 120),
-    assistantPreview: assistantText.slice(0, 120),
-  })
+  const intentFromUser = hasReservationIntent(lastUserContent) || hasReservationIntent(allUserText)
+  if (!intentFromUser) return false
 
-  if (!business_id || !customer_id) {
-    console.warn(`${logPrefix} skip: missing business_id or customer_id`)
-    return false
-  }
+  if (!business_id || !customer_id) return false
 
-  if (!shouldBook) {
-    console.info(`${logPrefix} skip: no booking-related keywords in user or assistant text`)
-    return false
-  }
+  // Require a real name — never create a reservation for 'Website visitor' or 'Guest'
+  const guestName = extractGuestNameFromConversation(chatMessages, assistantText)
+  if (!guestName || /^(guest|website visitor)$/i.test(guestName.trim())) return false
 
-  const extractedService =
-    extractServiceName(lastUserContent) ??
-    extractServiceName(allUserText) ??
-    extractServiceName(userSideText) ??
-    extractServiceName(assistantText)
-  const serviceName =
-    extractedService && extractedService.trim().length >= 2 ? extractedService.trim() : 'Appointment'
+  const partySize =
+    extractPartySize(lastUserContent) ??
+    extractPartySize(allUserText) ??
+    extractPartySize(assistantText) ??
+    2
 
   const parsedTime =
     parseScheduledAt(lastUserContent) ??
     parseScheduledAt(allUserText) ??
     parseScheduledAt(assistantText) ??
     parseScheduledAt(`${lastUserContent}\n${assistantText}`)
-  const scheduledAt = parsedTime ?? tomorrowAtNoonLocal()
+  const scheduledAt = parsedTime ?? tonightAtSevenLocal()
 
-  const row = {
-    business_id,
-    customer_id,
-    conversation_id,
-    service_name: serviceName.slice(0, 500),
-    scheduled_at: scheduledAt.toISOString(),
-    status: 'pending' as const,
-  }
+  // Pack reservation details into service_name (schema-compatible).
+  const svcParts = [guestName, `Party of ${partySize}`]
+  const serviceName = svcParts.join(' · ').slice(0, 500)
 
-  console.info(`${logPrefix} inserting appointment`, {
-    service_name: row.service_name,
-    scheduled_at: row.scheduled_at,
-    usedDefaultTime: !parsedTime,
-  })
-
-  const { data: inserted, error } = await supabaseAdmin.from('appointments').insert(row).select('id').maybeSingle()
-
-  if (error) {
-    console.error(`${logPrefix} insert failed`, {
-      message: error.message,
-      code: error.code,
-      details: error.details,
-      hint: error.hint,
+  const { error } = await supabaseAdmin
+    .from('appointments')
+    .insert({
+      business_id,
+      customer_id,
+      conversation_id,
+      service_name: serviceName,
+      scheduled_at: scheduledAt.toISOString(),
+      status: 'pending' as const,
     })
-    return false
-  }
+    .select('id')
+    .maybeSingle()
 
-  console.info(`${logPrefix} insert ok`, { appointment_id: inserted?.id })
-  return true
+  return !error
 }
 
-/** Fire-and-forget; never throws. Uses RESEND_FROM_EMAIL or notifications@salon-ai.app (use onboarding@resend.dev when testing without a verified domain). */
-function queueNewConversationOwnerEmail(ownerEmail: string | null | undefined, businessName: string | null | undefined) {
+// ─── Notification email ───────────────────────────────────────────────────────
+
+/** Fire-and-forget; never throws. Sends a notification when a new guest opens a chat. */
+function queueNewConversationOwnerEmail(
+  ownerEmail: string | null | undefined,
+  businessName: string | null | undefined,
+) {
   const to = typeof ownerEmail === 'string' ? ownerEmail.trim() : ''
-  if (!to) {
-    return
-  }
+  if (!to) return
 
   void (async () => {
     const apiKey = process.env.RESEND_API_KEY
-    if (!apiKey) {
-      console.warn('[chat/email] RESEND_API_KEY not set; skipping new chat notification')
-      return
-    }
+    if (!apiKey) return
     try {
       const resend = new Resend(apiKey)
-      const from =
-        process.env.RESEND_FROM_EMAIL?.trim() ||
-        'notifications@salon-ai.app'
-      console.log('[email] calling resend with key:', !!process.env.RESEND_API_KEY)
-      const result = await resend.emails.send({
+      const from = process.env.RESEND_FROM_EMAIL?.trim() || 'onboarding@resend.dev'
+      await resend.emails.send({
         from,
         to,
-        subject: `New customer started a chat - ${businessName ?? 'Your business'}`,
-        text: 'A new customer started chatting with your AI assistant. Check your inbox at salon-ai-eta.vercel.app/dashboard/chats',
+        subject: `New guest started a chat — ${businessName ?? 'Your restaurant'}`,
+        text: `A new guest just started chatting with your AI Concierge.\n\nReview the conversation in your OceanCore inbox.`,
       })
-      console.log('[email] resend result:', JSON.stringify(result))
-    } catch (err) {
-      console.error('[chat/email] Failed to send new conversation notification', err)
+    } catch {
+      // Swallow notification failures so they never affect the chat response.
     }
   })()
 }
+
+// ─── Route handler ────────────────────────────────────────────────────────────
 
 export async function POST(request: Request) {
   try {
@@ -267,21 +394,22 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'messages array required' }, { status: 400 })
     }
 
+    // ── Anonymous / no business_id: preview mode ──────────────────────────────
     if (!business_id) {
-      const systemPrompt =
-        'You are a helpful AI assistant for a service business. Help customers with bookings, questions about services, and general inquiries. Be friendly, professional, and concise.'
-
+      const systemPrompt = buildSystemPrompt(
+        'AI Concierge',
+        'this restaurant',
+        null,
+      )
       const response = await openai.chat.completions.create({
         model: 'gpt-4o-mini',
         messages: [{ role: 'system', content: systemPrompt }, ...toOpenAiMessages(chatMessages)],
         max_tokens: 500,
       })
-
-      return NextResponse.json({
-        message: response.choices[0].message.content,
-      })
+      return NextResponse.json({ message: response.choices[0].message.content })
     }
 
+    // ── Fetch business ────────────────────────────────────────────────────────
     const { data: business, error: bizError } = await supabaseAdmin
       .from('businesses')
       .select('id, name, email, system_prompt, agent_name')
@@ -292,15 +420,16 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Business not found' }, { status: 404 })
     }
 
-    const systemPrompt =
-      business.system_prompt ||
-      `You are a helpful AI assistant for ${business.name ?? 'this business'}. Help customers with bookings, questions about services, and general inquiries. Be friendly, professional, and concise.`
+    const restaurantName = business.name?.trim() || 'this restaurant'
+    const conciergeName = business.agent_name?.trim() || 'AI Concierge'
+    const systemPrompt = buildSystemPrompt(conciergeName, restaurantName, business.system_prompt)
 
     const lastUserContent = getLastUserMessageContent(chatMessages)
     if (!lastUserContent?.trim()) {
       return NextResponse.json({ error: 'No user message to save' }, { status: 400 })
     }
 
+    // ── Resolve (or create) conversation + customer ───────────────────────────
     let resolvedConversationId: string
     let resolvedCustomerId: string | null = null
     let isNewConversation = false
@@ -321,7 +450,6 @@ export async function POST(request: Request) {
       resolvedCustomerId = existing.customer_id ?? null
     } else {
       isNewConversation = true
-      console.log('[email] new conversation created, isNewConversation:', isNewConversation)
       const { data: newConv, error: convInsErr } = await supabaseAdmin
         .from('conversations')
         .insert({
@@ -336,7 +464,7 @@ export async function POST(request: Request) {
       if (convInsErr || !newConv?.id) {
         return NextResponse.json(
           { error: convInsErr?.message ?? 'Failed to create conversation' },
-          { status: 500 }
+          { status: 500 },
         )
       }
 
@@ -359,7 +487,7 @@ export async function POST(request: Request) {
       if (custErr || !newCustomer?.id) {
         return NextResponse.json(
           { error: custErr?.message ?? 'Failed to create customer' },
-          { status: 500 }
+          { status: 500 },
         )
       }
 
@@ -380,10 +508,10 @@ export async function POST(request: Request) {
     }
 
     if (isNewConversation && resolvedCustomerId) {
-      console.log('[email] sending notification to:', business.email, 'isNewConversation:', isNewConversation)
       queueNewConversationOwnerEmail(business.email, business.name)
     }
 
+    // ── Save the user's message ───────────────────────────────────────────────
     const { error: userMsgErr } = await supabaseAdmin.from('messages').insert({
       conversation_id: resolvedConversationId,
       role: 'user',
@@ -394,6 +522,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: userMsgErr.message }, { status: 500 })
     }
 
+    // ── Human takeover check ──────────────────────────────────────────────────
     const { data: convForAi } = await supabaseAdmin
       .from('conversations')
       .select('status')
@@ -413,6 +542,7 @@ export async function POST(request: Request) {
       })
     }
 
+    // ── AI completion ─────────────────────────────────────────────────────────
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [{ role: 'system', content: systemPrompt }, ...toOpenAiMessages(chatMessages)],
@@ -431,8 +561,20 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: assistantMsgErr.message }, { status: 500 })
     }
 
+    // ── Extract & persist guest name / contact info ───────────────────────────
+    if (resolvedCustomerId) {
+      await syncGuestInfo({
+        allMessages: chatMessages,
+        assistantText,
+        business_id,
+        customer_id: resolvedCustomerId,
+        conversation_id: resolvedConversationId,
+      })
+    }
+
+    // ── Conditionally create reservation ─────────────────────────────────────
     const bookingCreated = resolvedCustomerId
-      ? await tryCreateAppointmentFromChat({
+      ? await tryCreateReservationFromChat({
           lastUserContent: lastUserContent.trim(),
           chatMessages,
           assistantText,

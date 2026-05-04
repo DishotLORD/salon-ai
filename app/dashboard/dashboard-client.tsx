@@ -1,61 +1,44 @@
 'use client'
 
+import Link from 'next/link'
 import { motion, useReducedMotion } from 'framer-motion'
 
 import { DashboardOceanNav } from '@/components/dashboard-ocean-nav'
 import { fadeUp, oceanTransition } from '@/lib/ocean-motion'
+import { card, t } from '@/lib/dashboard-theme'
+
+export type RecentActivity = {
+  id: string
+  title: string
+  timestamp: string
+  role: 'assistant' | 'guest'
+}
 
 type DashboardClientProps = {
   businessDisplayName: string
+  conciergeName: string
   userEmail: string
   activeChats: number
   messageCount: number
+  recentActivity: RecentActivity[]
 }
 
-const actions = [
-  {
-    title: 'Auto-confirmed booking for Emma Johnson',
-    time: '2 min ago',
-    tint: 'rgba(56, 189, 248, 0.14)',
-    icon: 'AI',
-  },
-  {
-    title: 'Sent follow-up reminders to tomorrow’s VIP clients',
-    time: '11 min ago',
-    tint: 'rgba(74, 222, 128, 0.14)',
-    icon: 'RM',
-  },
-  {
-    title: 'Generated end-of-day operations report',
-    time: '26 min ago',
-    tint: 'rgba(167, 139, 250, 0.14)',
-    icon: 'RP',
-  },
-  {
-    title: 'Escalated a pricing objection to your front desk',
-    time: '53 min ago',
-    tint: 'rgba(251, 191, 36, 0.14)',
-    icon: 'ES',
-  },
-]
-
-const cardBase = {
-  background: 'rgba(8, 20, 40, 0.5)',
-  border: '1px solid rgba(255,255,255,0.07)',
-  borderRadius: 16,
-  backdropFilter: 'blur(16px)',
-  WebkitBackdropFilter: 'blur(16px)',
-  boxShadow: '0 20px 60px rgba(0, 0, 0, 0.28)',
+function formatRelativeTime(timestamp: string): string {
+  const time = new Date(timestamp).getTime()
+  if (Number.isNaN(time)) return ''
+  const seconds = Math.max(1, Math.floor((Date.now() - time) / 1000))
+  if (seconds < 60) return `${seconds}s ago`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes} min ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  return `${Math.floor(hours / 24)}d ago`
 }
 
 function getGreeting() {
   const hour = new Date().getHours()
-  if (hour < 12) {
-    return 'Good morning'
-  }
-  if (hour < 18) {
-    return 'Good afternoon'
-  }
+  if (hour < 12) return 'Good morning'
+  if (hour < 18) return 'Good afternoon'
   return 'Good evening'
 }
 
@@ -70,41 +53,19 @@ function formatLongDate() {
 
 export function DashboardClient({
   businessDisplayName,
+  conciergeName,
   userEmail,
   activeChats,
   messageCount,
+  recentActivity,
 }: DashboardClientProps) {
   const reduceMotion = useReducedMotion()
 
   const stats = [
-    {
-      label: 'Revenue',
-      value: '$0',
-      trend: '+0.0%',
-      trendColor: '#4ade80',
-      bars: [20, 28, 24, 36, 42, 38, 48, 56],
-    },
-    {
-      label: 'Bookings',
-      value: '0',
-      trend: '+0.0%',
-      trendColor: '#4ade80',
-      bars: [18, 16, 26, 20, 30, 34, 32, 40],
-    },
-    {
-      label: 'Chats',
-      value: String(activeChats),
-      trend: activeChats > 0 ? '+8.2%' : '0.0%',
-      trendColor: '#4ade80',
-      bars: [14, 22, 30, 26, 34, 46, 40, 54],
-    },
-    {
-      label: 'Satisfaction',
-      value: '—',
-      trend: '-2.0%',
-      trendColor: '#f87171',
-      bars: [36, 42, 38, 44, 40, 48, 46, 50],
-    },
+    { label: 'Revenue', value: '$0', trend: '+0.0%', positive: true, bars: [20, 28, 24, 36, 42, 38, 48, 56] },
+    { label: 'Reservations', value: '0', trend: '+0.0%', positive: true, bars: [18, 16, 26, 20, 30, 34, 32, 40] },
+    { label: 'Chats', value: String(activeChats), trend: activeChats > 0 ? '+8.2%' : '0.0%', positive: true, bars: [14, 22, 30, 26, 34, 46, 40, 54] },
+    { label: 'Satisfaction', value: '—', trend: '-2.0%', positive: false, bars: [36, 42, 38, 44, 40, 48, 46, 50] },
   ]
 
   return (
@@ -120,18 +81,20 @@ export function DashboardClient({
               style={{
                 width: 44,
                 height: 44,
-                borderRadius: 14,
-                border: '1px solid rgba(255,255,255,0.12)',
-                background: 'rgba(5, 20, 40, 0.5)',
-                color: 'white',
+                borderRadius: 12,
+                border: `1px solid ${t.border}`,
+                background: t.bgSurface,
+                color: t.text,
                 fontSize: 22,
                 cursor: 'pointer',
+                boxShadow: t.shadowSm,
               }}
             >
               ☰
             </motion.button>
           ) : null}
 
+          {/* ── Greeting header ── */}
           <motion.section
             variants={fadeUp}
             initial="hidden"
@@ -151,7 +114,7 @@ export function DashboardClient({
                 <h1
                   style={{
                     margin: 0,
-                    color: 'white',
+                    color: t.text,
                     fontSize: isMobile ? 28 : 32,
                     fontWeight: 700,
                     fontFamily: 'var(--font-playfair)',
@@ -160,7 +123,7 @@ export function DashboardClient({
                 >
                   {getGreeting()}, {businessDisplayName}
                 </h1>
-                <p style={{ margin: '8px 0 0', color: 'rgba(255,255,255,0.45)', fontSize: 13 }}>
+                <p style={{ margin: '8px 0 0', color: t.textMuted, fontSize: 13 }}>
                   {formatLongDate()}
                 </p>
               </div>
@@ -169,12 +132,13 @@ export function DashboardClient({
                   display: 'inline-flex',
                   alignItems: 'center',
                   gap: 10,
-                  padding: '10px 14px',
+                  padding: '8px 14px',
                   borderRadius: 999,
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  background: 'rgba(255,255,255,0.05)',
-                  color: 'rgba(255,255,255,0.82)',
+                  border: `1px solid ${t.successBorder}`,
+                  background: t.successBg,
+                  color: t.success,
                   fontSize: 13,
+                  fontWeight: 600,
                 }}
               >
                 <span
@@ -182,8 +146,7 @@ export function DashboardClient({
                     width: 8,
                     height: 8,
                     borderRadius: '50%',
-                    background: '#4ade80',
-                    boxShadow: '0 0 0 6px rgba(74, 222, 128, 0.16)',
+                    background: t.success,
                   }}
                 />
                 All systems operational
@@ -191,13 +154,14 @@ export function DashboardClient({
             </div>
           </motion.section>
 
+          {/* ── Hero card ── */}
           <motion.section
             variants={fadeUp}
             initial="hidden"
             animate="visible"
             transition={oceanTransition(reduceMotion, { delay: 0.05 })}
             style={{
-              ...cardBase,
+              ...card,
               padding: isMobile ? '22px 18px' : '28px 32px',
               display: 'grid',
               gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1.3fr) minmax(280px, 0.7fr)',
@@ -209,37 +173,37 @@ export function DashboardClient({
                 <p
                   style={{
                     margin: 0,
-                    color: '#38bdf8',
-                    fontSize: 12,
+                    color: t.accent,
+                    fontSize: 11,
                     letterSpacing: '0.22em',
                     textTransform: 'uppercase',
-                    fontWeight: 600,
+                    fontWeight: 700,
                   }}
                 >
-                  OceanCore Command
+                  Restaurant AI
                 </p>
                 <h2
                   style={{
                     margin: '10px 0 0',
-                    color: 'white',
-                    fontSize: isMobile ? 24 : 30,
-                    lineHeight: 1.1,
+                    color: t.text,
+                    fontSize: isMobile ? 24 : 28,
+                    lineHeight: 1.2,
                     fontWeight: 700,
                   }}
                 >
-                  Your AI operator is live and ready for the next client wave.
+                  Your {conciergeName} is live and ready for tonight&apos;s service.
                 </h2>
                 <p
                   style={{
                     margin: '12px 0 0',
                     maxWidth: 620,
-                    color: 'rgba(255,255,255,0.72)',
+                    color: t.textMuted,
                     fontSize: 14,
                     lineHeight: 1.7,
                   }}
                 >
-                  Monitor conversations, bookings, and customer activity from one calm command deck while
-                  OceanCore keeps your front line moving.
+                  Monitor reservations, conversations, and guest activity from one calm command deck while
+                  OceanCore keeps your front of house moving.
                 </p>
               </div>
 
@@ -251,16 +215,16 @@ export function DashboardClient({
                 }}
               >
                 {[
-                  { label: 'Active chats', value: String(activeChats) },
+                  { label: 'Active conversations', value: String(activeChats) },
                   { label: 'Messages today', value: String(messageCount) },
                   { label: 'Operator email', value: userEmail || '—' },
                 ].map((item) => (
                   <div
                     key={item.label}
                     style={{
-                      borderRadius: 16,
-                      border: '1px solid rgba(255,255,255,0.08)',
-                      background: 'rgba(255,255,255,0.04)',
+                      borderRadius: 12,
+                      border: `1px solid ${t.border}`,
+                      background: t.bgSurfaceMuted,
                       padding: '14px 16px',
                     }}
                   >
@@ -269,7 +233,8 @@ export function DashboardClient({
                         fontSize: 11,
                         letterSpacing: '0.16em',
                         textTransform: 'uppercase',
-                        color: 'rgba(255,255,255,0.38)',
+                        color: t.textMuted,
+                        fontWeight: 600,
                       }}
                     >
                       {item.label}
@@ -277,7 +242,7 @@ export function DashboardClient({
                     <div
                       style={{
                         marginTop: 8,
-                        color: 'white',
+                        color: t.text,
                         fontSize: item.label === 'Operator email' ? 14 : 24,
                         fontWeight: 700,
                         lineHeight: 1.2,
@@ -291,52 +256,50 @@ export function DashboardClient({
               </div>
 
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                <motion.button
-                  type="button"
-                  whileHover={reduceMotion ? undefined : { y: -2, scale: 1.01 }}
-                  whileTap={reduceMotion ? undefined : { scale: 0.98 }}
-                  style={{
-                    border: 'none',
-                    borderRadius: 14,
-                    padding: '12px 18px',
-                    background: 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)',
-                    color: 'white',
-                    fontSize: 13,
-                    fontWeight: 700,
-                    letterSpacing: '0.08em',
-                    textTransform: 'uppercase',
-                    boxShadow: '0 12px 30px rgba(14,165,233,0.28)',
-                    cursor: 'pointer',
-                  }}
-                >
-                  Deploy Agent
-                </motion.button>
-                <motion.button
-                  type="button"
-                  whileHover={reduceMotion ? undefined : { y: -2 }}
-                  whileTap={reduceMotion ? undefined : { scale: 0.98 }}
-                  style={{
-                    borderRadius: 14,
-                    border: '1px solid rgba(255,255,255,0.12)',
-                    padding: '12px 18px',
-                    background: 'rgba(255,255,255,0.05)',
-                    color: 'rgba(255,255,255,0.82)',
-                    fontSize: 13,
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                  }}
-                >
-                  View Reports
-                </motion.button>
+                <Link href="/dashboard/settings?tab=widget" style={{ textDecoration: 'none' }}>
+                  <motion.div
+                    whileHover={reduceMotion ? undefined : { y: -1 }}
+                    whileTap={reduceMotion ? undefined : { scale: 0.98 }}
+                    style={{
+                      borderRadius: 10,
+                      padding: '11px 18px',
+                      background: t.accent,
+                      color: '#ffffff',
+                      fontSize: 13,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Deploy Concierge
+                  </motion.div>
+                </Link>
+                <Link href="/dashboard/bookings" style={{ textDecoration: 'none' }}>
+                  <motion.div
+                    whileHover={reduceMotion ? undefined : { y: -1 }}
+                    whileTap={reduceMotion ? undefined : { scale: 0.98 }}
+                    style={{
+                      borderRadius: 10,
+                      border: `1px solid ${t.border}`,
+                      padding: '10px 18px',
+                      background: t.bgSurface,
+                      color: t.text,
+                      fontSize: 13,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Open Reservations
+                  </motion.div>
+                </Link>
               </div>
             </div>
 
+            {/* Concierge sidebar tile */}
             <div
               style={{
-                borderRadius: 18,
-                border: '1px solid rgba(255,255,255,0.08)',
-                background:
-                  'linear-gradient(160deg, rgba(255,255,255,0.08) 0%, rgba(5,20,40,0.38) 42%, rgba(56,189,248,0.08) 100%)',
+                borderRadius: 14,
+                border: `1px solid ${t.accentSoftBorder}`,
+                background: t.accentSoftBg,
                 padding: 18,
                 display: 'grid',
                 gap: 16,
@@ -345,27 +308,26 @@ export function DashboardClient({
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
-                  <div style={{ color: 'white', fontSize: 18, fontWeight: 700 }}>AI Agent</div>
+                  <div style={{ color: t.text, fontSize: 18, fontWeight: 700 }}>{conciergeName}</div>
                   <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span
                       style={{
                         width: 8,
                         height: 8,
                         borderRadius: '50%',
-                        background: '#4ade80',
-                        boxShadow: '0 0 0 6px rgba(74, 222, 128, 0.16)',
+                        background: t.success,
                       }}
                     />
-                    <span style={{ color: 'rgba(255,255,255,0.74)', fontSize: 13 }}>Online</span>
+                    <span style={{ color: t.textMuted, fontSize: 13 }}>Online</span>
                   </div>
                 </div>
                 <div
                   style={{
-                    padding: '7px 10px',
+                    padding: '5px 10px',
                     borderRadius: 999,
-                    background: 'rgba(56,189,248,0.08)',
-                    border: '1px solid rgba(56,189,248,0.18)',
-                    color: '#38bdf8',
+                    background: '#ffffff',
+                    border: `1px solid ${t.accentSoftBorder}`,
+                    color: t.accentText,
                     fontSize: 11,
                     fontWeight: 700,
                     letterSpacing: '0.12em',
@@ -376,7 +338,7 @@ export function DashboardClient({
                 </div>
               </div>
 
-              <div style={{ display: 'grid', gap: 12 }}>
+              <div style={{ display: 'grid', gap: 10 }}>
                 {[
                   { label: 'Messages today', value: String(messageCount) },
                   { label: 'Response time', value: '< 2s' },
@@ -388,20 +350,21 @@ export function DashboardClient({
                       display: 'flex',
                       justifyContent: 'space-between',
                       alignItems: 'center',
-                      borderRadius: 14,
-                      padding: '12px 14px',
-                      background: 'rgba(255,255,255,0.05)',
-                      border: '1px solid rgba(255,255,255,0.08)',
+                      borderRadius: 10,
+                      padding: '10px 14px',
+                      background: '#ffffff',
+                      border: `1px solid ${t.borderSoft}`,
                     }}
                   >
-                    <span style={{ color: 'rgba(255,255,255,0.42)', fontSize: 12 }}>{item.label}</span>
-                    <span style={{ color: 'white', fontWeight: 700, fontSize: 16 }}>{item.value}</span>
+                    <span style={{ color: t.textMuted, fontSize: 12 }}>{item.label}</span>
+                    <span style={{ color: t.text, fontWeight: 700, fontSize: 16 }}>{item.value}</span>
                   </div>
                 ))}
               </div>
             </div>
           </motion.section>
 
+          {/* ── KPI tiles ── */}
           <section
             style={{
               display: 'grid',
@@ -412,44 +375,39 @@ export function DashboardClient({
             {stats.map((stat, index) => (
               <motion.article
                 key={stat.label}
-                initial={{ opacity: 0, scale: 0.97, y: 12 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
                 transition={oceanTransition(reduceMotion, {
                   duration: 0.26,
-                  delay: 0.08 + index * 0.08,
-                  ease: [0.4, 0, 0.2, 1],
+                  delay: 0.08 + index * 0.06,
                 })}
-                whileHover={reduceMotion ? undefined : { y: -4 }}
-                style={{
-                  ...cardBase,
-                  padding: 20,
-                  display: 'grid',
-                  gap: 14,
-                }}
+                whileHover={reduceMotion ? undefined : { y: -2 }}
+                style={{ ...card, padding: 20, display: 'grid', gap: 14 }}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
                   <div>
                     <div
                       style={{
-                        color: 'rgba(255,255,255,0.4)',
+                        color: t.textMuted,
                         fontSize: 11,
                         letterSpacing: '0.18em',
                         textTransform: 'uppercase',
+                        fontWeight: 600,
                       }}
                     >
                       {stat.label}
                     </div>
-                    <div style={{ marginTop: 12, color: 'white', fontSize: 40, fontWeight: 700, lineHeight: 1 }}>
+                    <div style={{ marginTop: 12, color: t.text, fontSize: 36, fontWeight: 700, lineHeight: 1 }}>
                       {stat.value}
                     </div>
                   </div>
                   <span
                     style={{
                       borderRadius: 999,
-                      padding: '6px 10px',
-                      background:
-                        stat.trendColor === '#f87171' ? 'rgba(248,113,113,0.12)' : 'rgba(74,222,128,0.12)',
-                      color: stat.trendColor,
+                      padding: '4px 10px',
+                      background: stat.positive ? t.successBg : t.dangerBg,
+                      border: `1px solid ${stat.positive ? t.successBorder : t.dangerBorder}`,
+                      color: stat.positive ? t.success : t.danger,
                       fontSize: 11,
                       fontWeight: 700,
                     }}
@@ -466,10 +424,7 @@ export function DashboardClient({
                         flex: 1,
                         height: `${bar}%`,
                         borderRadius: 999,
-                        background:
-                          barIndex > 4
-                            ? 'linear-gradient(180deg, rgba(56,189,248,0.95), rgba(56,189,248,0.28))'
-                            : 'rgba(255,255,255,0.12)',
+                        background: barIndex > 4 ? t.accent : '#e2e8f0',
                       }}
                     />
                   ))}
@@ -478,33 +433,30 @@ export function DashboardClient({
             ))}
           </section>
 
+          {/* ── Recent activity ── */}
           <motion.section
-            initial={{ opacity: 0, scale: 0.97, y: 12 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
             transition={oceanTransition(reduceMotion, { delay: 0.22, duration: 0.28 })}
-            style={{
-              ...cardBase,
-              overflow: 'hidden',
-            }}
+            style={{ ...card, overflow: 'hidden' }}
           >
             <div
               style={{
-                padding: '20px 22px',
+                padding: '18px 22px',
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
                 gap: 12,
-                borderBottom: '1px solid rgba(255,255,255,0.06)',
+                borderBottom: `1px solid ${t.border}`,
               }}
             >
-              <h3 style={{ margin: 0, color: 'white', fontSize: 18, fontWeight: 700 }}>Recent AI Actions</h3>
+              <h3 style={{ margin: 0, color: t.text, fontSize: 17, fontWeight: 700 }}>Recent Concierge Activity</h3>
               <span
                 style={{
                   borderRadius: 999,
-                  padding: '6px 10px',
-                  background: 'rgba(255,255,255,0.05)',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  color: 'rgba(255,255,255,0.6)',
+                  padding: '4px 12px',
+                  background: t.bgSurfaceMuted,
+                  color: t.textMuted,
                   fontSize: 12,
                   fontWeight: 600,
                 }}
@@ -513,47 +465,69 @@ export function DashboardClient({
               </span>
             </div>
 
-            <div style={{ padding: '8px 16px 14px' }}>
-              {actions.map((action, index) => (
-                <motion.div
-                  key={action.title}
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={oceanTransition(reduceMotion, {
-                    duration: 0.2,
-                    delay: 0.28 + index * 0.08,
-                  })}
-                  whileHover={reduceMotion ? undefined : { backgroundColor: 'rgba(255,255,255,0.03)' }}
+            <div style={{ padding: '4px 8px 8px' }}>
+              {recentActivity.length === 0 ? (
+                <div
                   style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'auto 1fr auto',
-                    gap: 14,
-                    alignItems: 'center',
-                    padding: '14px 10px',
-                    borderBottom: '1px solid rgba(255,255,255,0.05)',
-                    borderRadius: 14,
+                    padding: '36px 16px',
+                    textAlign: 'center',
+                    color: t.textMuted,
+                    fontSize: 13,
+                    lineHeight: 1.6,
                   }}
                 >
-                  <div
-                    style={{
-                      width: 38,
-                      height: 38,
-                      borderRadius: '50%',
-                      display: 'grid',
-                      placeItems: 'center',
-                      background: action.tint,
-                      color: 'white',
-                      fontSize: 11,
-                      fontWeight: 700,
-                      border: '1px solid rgba(255,255,255,0.08)',
-                    }}
-                  >
-                    {action.icon}
-                  </div>
-                  <div style={{ color: 'white', fontSize: 14 }}>{action.title}</div>
-                  <div style={{ color: 'rgba(255,255,255,0.35)', fontSize: 12 }}>{action.time}</div>
-                </motion.div>
-              ))}
+                  No activity yet — once guests start chatting with {conciergeName}, you&apos;ll see live activity here.
+                </div>
+              ) : (
+                recentActivity.map((activity, index) => {
+                  const isAssistant = activity.role === 'assistant'
+                  return (
+                    <motion.div
+                      key={activity.id}
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={oceanTransition(reduceMotion, {
+                        duration: 0.2,
+                        delay: 0.28 + index * 0.06,
+                      })}
+                      whileHover={reduceMotion ? undefined : { backgroundColor: t.bgSurfaceMuted }}
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'auto 1fr auto',
+                        gap: 14,
+                        alignItems: 'center',
+                        padding: '12px 14px',
+                        borderBottom:
+                          index === recentActivity.length - 1
+                            ? 'none'
+                            : `1px solid ${t.borderSoft}`,
+                        borderRadius: 8,
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: 36,
+                          height: 36,
+                          borderRadius: '50%',
+                          display: 'grid',
+                          placeItems: 'center',
+                          background: isAssistant ? t.accentSoftBg : '#f3e8ff',
+                          color: isAssistant ? t.accentText : '#7e22ce',
+                          fontSize: 11,
+                          fontWeight: 700,
+                          border: `1px solid ${isAssistant ? t.accentSoftBorder : '#e9d5ff'}`,
+                        }}
+                      >
+                        {isAssistant ? 'AI' : 'GU'}
+                      </div>
+                      <div style={{ color: t.text, fontSize: 14, lineHeight: 1.5 }}>{activity.title}</div>
+                      <div style={{ color: t.textSubtle, fontSize: 12, whiteSpace: 'nowrap' }}>
+                        {formatRelativeTime(activity.timestamp)}
+                      </div>
+                    </motion.div>
+                  )
+                })
+              )}
             </div>
           </motion.section>
         </main>

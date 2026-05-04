@@ -10,16 +10,16 @@ import { tabContent } from '@/lib/ocean-motion'
 const TOTAL_STEPS = 3
 
 const businessTypeOptions = [
-  { value: 'salon', label: 'Salon' },
   { value: 'restaurant', label: 'Restaurant' },
-  { value: 'spa', label: 'Spa' },
-  { value: 'clinic', label: 'Clinic' },
-  { value: 'other', label: 'Other' },
+  { value: 'cafe', label: 'Café' },
+  { value: 'bar', label: 'Bar / Lounge' },
+  { value: 'bakery', label: 'Bakery' },
+  { value: 'other', label: 'Other hospitality' },
 ] as const
 
 type BusinessTypeValue = (typeof businessTypeOptions)[number]['value']
 
-const systemPromptPlaceholder = `Example: You are the AI concierge for [Business Name]. Be warm, concise, and professional. Help clients book appointments, answer questions about services and hours, and offer to connect them with a human for billing or sensitive topics.`
+const systemPromptPlaceholder = `Example: You are the AI Concierge for [Restaurant Name]. Be warm, attentive, and concise. Help guests with reservations, menu questions, dietary requirements, and special-occasion notes. Confirm party size, date, time, and guest name before treating a reservation as final. Escalate complaints or unusual requests to a manager.`
 
 const labelStyle = {
   display: 'block' as const,
@@ -47,7 +47,7 @@ export default function OnboardingPage() {
   const [authChecked, setAuthChecked] = useState(false)
 
   const [businessName, setBusinessName] = useState('')
-  const [businessType, setBusinessType] = useState<BusinessTypeValue>('salon')
+  const [businessType, setBusinessType] = useState<BusinessTypeValue>('restaurant')
   const [agentName, setAgentName] = useState('')
   const [systemPrompt, setSystemPrompt] = useState('')
 
@@ -182,8 +182,34 @@ export default function OnboardingPage() {
           WebkitBackdropFilter: 'blur(12px)',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 22 }}>
-          <img src="/logo.png" alt="OceanCore" width={52} height={52} style={{ display: 'block', borderRadius: 12 }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 22 }}>
+          <div
+            style={{
+              width: 52,
+              height: 52,
+              borderRadius: 14,
+              background: 'linear-gradient(145deg, rgba(14,165,233,0.22) 0%, rgba(5,13,26,0.85) 100%)',
+              border: '1px solid rgba(56,189,248,0.24)',
+              display: 'grid',
+              placeItems: 'center',
+              flexShrink: 0,
+            }}
+            aria-hidden
+          >
+            <svg
+              width="26"
+              height="26"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="#38bdf8"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M2 12c4-4 6-4 10 0s6 4 10 0" />
+              <path d="M2 17c4-4 6-4 10 0s6 4 10 0" opacity="0.4" />
+            </svg>
+          </div>
           <div>
             <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.2em', color: 'var(--ocean-sky)' }}>OCEANCORE</div>
             <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--ocean-text)', marginTop: 2 }}>Onboarding</div>
@@ -240,23 +266,23 @@ export default function OnboardingPage() {
                 color: 'var(--ocean-text)',
               }}
             >
-              Tell us about your business
+              Tell us about your restaurant
             </h1>
             <p style={{ margin: '10px 0 0', fontSize: 14, color: 'var(--ocean-text-muted)', lineHeight: 1.5 }}>
-              We will use this to personalize your workspace and AI assistant.
+              We&apos;ll use this to personalize your workspace and AI Concierge.
             </p>
 
             <div style={{ marginTop: 24 }}>
-              <label style={labelStyle}>BUSINESS NAME</label>
+              <label style={labelStyle}>RESTAURANT NAME</label>
               <input
                 type="text"
                 value={businessName}
                 onChange={(e) => setBusinessName(e.target.value)}
-                placeholder="e.g. Lumière Salon & Spa"
+                placeholder="e.g. Marea Coastal Kitchen"
                 style={{ ...inputStyle, marginBottom: 20 }}
               />
 
-              <label style={labelStyle}>BUSINESS TYPE</label>
+              <label style={labelStyle}>VENUE TYPE</label>
               <select
                 value={businessType}
                 onChange={(e) => setBusinessType(e.target.value as BusinessTypeValue)}
@@ -284,19 +310,19 @@ export default function OnboardingPage() {
                 color: 'var(--ocean-text)',
               }}
             >
-              Set up your AI agent
+              Set up your AI Concierge
             </h1>
             <p style={{ margin: '10px 0 0', fontSize: 14, color: 'var(--ocean-text-muted)', lineHeight: 1.5 }}>
-              Choose how your assistant introduces itself and how it should behave with customers.
+              Choose how your concierge introduces itself and how it should behave with guests.
             </p>
 
             <div style={{ marginTop: 24 }}>
-              <label style={labelStyle}>AGENT NAME</label>
+              <label style={labelStyle}>CONCIERGE NAME</label>
               <input
                 type="text"
                 value={agentName}
                 onChange={(e) => setAgentName(e.target.value)}
-                placeholder="e.g. Lumière Concierge"
+                placeholder="e.g. Marea Concierge"
                 style={{ ...inputStyle, marginBottom: 20 }}
               />
 
@@ -333,7 +359,7 @@ export default function OnboardingPage() {
               You&apos;re all set!
             </h1>
             <p style={{ margin: '10px 0 0', fontSize: 14, color: 'var(--ocean-text-muted)', lineHeight: 1.5 }}>
-              Here is a quick summary. You can change anything later in Settings.
+              Here&apos;s a quick summary. You can change anything later in Settings.
             </p>
 
             <div
@@ -347,12 +373,12 @@ export default function OnboardingPage() {
                 gap: 14,
               }}
             >
-              <SummaryRow label="Business" value={businessName.trim()} />
+              <SummaryRow label="Restaurant" value={businessName.trim()} />
               <SummaryRow
-                label="Type"
+                label="Venue type"
                 value={businessTypeOptions.find((o) => o.value === businessType)?.label ?? businessType}
               />
-              <SummaryRow label="Agent" value={agentName.trim()} />
+              <SummaryRow label="Concierge" value={agentName.trim()} />
               <div>
                 <p style={{ margin: 0, fontSize: 11, fontWeight: 700, color: 'var(--ocean-text-subtle)', letterSpacing: '0.06em' }}>
                   SYSTEM PROMPT

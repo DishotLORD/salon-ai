@@ -2,14 +2,16 @@
 
 import type { ReactNode } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
 
 import { DashboardOceanNav } from '@/components/dashboard-ocean-nav'
 import { oceanTransition, tabContent } from '@/lib/ocean-motion'
 import { supabase } from '@/lib/supabase'
+import { card, t } from '@/lib/dashboard-theme'
 
 type TabId = 'general' | 'ai' | 'notifications' | 'widget' | 'billing'
-type BusinessType = 'salon' | 'restaurant' | 'spa' | 'clinic'
+type BusinessType = 'restaurant' | 'cafe' | 'bar' | 'bakery' | 'other'
 type DayKey = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun'
 type DayHours = { open: string; close: string; closed: boolean }
 
@@ -40,23 +42,16 @@ const dayOrder: { key: DayKey; label: string }[] = [
 ]
 
 const initialHours: Record<DayKey, DayHours> = {
-  mon: { open: '09:00', close: '19:00', closed: false },
-  tue: { open: '09:00', close: '19:00', closed: false },
-  wed: { open: '09:00', close: '19:00', closed: false },
-  thu: { open: '09:00', close: '19:00', closed: false },
-  fri: { open: '09:00', close: '20:00', closed: false },
-  sat: { open: '10:00', close: '18:00', closed: false },
-  sun: { open: '10:00', close: '16:00', closed: false },
+  mon: { open: '17:00', close: '22:30', closed: false },
+  tue: { open: '17:00', close: '22:30', closed: false },
+  wed: { open: '17:00', close: '22:30', closed: false },
+  thu: { open: '17:00', close: '23:00', closed: false },
+  fri: { open: '17:00', close: '23:30', closed: false },
+  sat: { open: '11:30', close: '23:30', closed: false },
+  sun: { open: '11:30', close: '21:30', closed: false },
 }
 
-const glassCard = {
-  background: 'rgba(8,20,40,0.5)',
-  border: '1px solid rgba(255,255,255,0.07)',
-  borderRadius: 16,
-  backdropFilter: 'blur(16px)',
-  WebkitBackdropFilter: 'blur(16px)',
-  boxShadow: '0 20px 60px rgba(0,0,0,0.28)',
-}
+const glassCard = card
 
 function FieldShell({
   children,
@@ -70,10 +65,10 @@ function FieldShell({
       style={{
         position: 'relative',
         borderRadius: 10,
-        background: 'rgba(255,255,255,0.05)',
-        border: active ? '1px solid rgba(56,189,248,0.5)' : '1px solid rgba(255,255,255,0.1)',
-        boxShadow: active ? '0 0 0 3px rgba(56,189,248,0.08)' : 'none',
-        transition: 'all 0.25s ease',
+        background: t.bgSurface,
+        border: active ? `1px solid ${t.accent}` : `1px solid ${t.border}`,
+        boxShadow: active ? `0 0 0 3px ${t.accentSoftBg}` : 'none',
+        transition: 'all 0.2s ease',
       }}
     >
       {children}
@@ -93,9 +88,10 @@ function FloatingField({ label, value, onChange, type = 'text', rows = 5, multil
           left: 16,
           top: active ? 6 : 16,
           fontSize: active ? 10 : 14,
-          color: active ? '#38bdf8' : 'rgba(255,255,255,0.35)',
+          color: active ? t.accent : t.textMuted,
           letterSpacing: active ? '0.18em' : '0',
           textTransform: active ? 'uppercase' : 'none',
+          fontWeight: active ? 700 : 400,
           pointerEvents: 'none',
           transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)',
         }}
@@ -114,9 +110,9 @@ function FloatingField({ label, value, onChange, type = 'text', rows = 5, multil
             background: 'transparent',
             border: 'none',
             outline: 'none',
-            color: 'white',
+            color: t.text,
             fontSize: 15,
-            padding: '26px 16px 12px',
+            padding: '24px 16px 10px',
             borderRadius: 10,
             resize: 'vertical',
             fontFamily: 'inherit',
@@ -135,9 +131,9 @@ function FloatingField({ label, value, onChange, type = 'text', rows = 5, multil
             background: 'transparent',
             border: 'none',
             outline: 'none',
-            color: 'white',
+            color: t.text,
             fontSize: 15,
-            padding: '26px 16px 12px',
+            padding: '24px 16px 10px',
             borderRadius: 10,
           }}
         />
@@ -158,9 +154,10 @@ function FloatingSelect({ label, value, onChange, options }: FloatingSelectProps
           left: 16,
           top: active ? 6 : 16,
           fontSize: active ? 10 : 14,
-          color: active ? '#38bdf8' : 'rgba(255,255,255,0.35)',
+          color: active ? t.accent : t.textMuted,
           letterSpacing: active ? '0.18em' : '0',
           textTransform: active ? 'uppercase' : 'none',
+          fontWeight: active ? 700 : 400,
           pointerEvents: 'none',
           transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)',
         }}
@@ -177,16 +174,16 @@ function FloatingSelect({ label, value, onChange, options }: FloatingSelectProps
           background: 'transparent',
           border: 'none',
           outline: 'none',
-          color: 'white',
+          color: t.text,
           fontSize: 15,
-          padding: '26px 16px 12px',
+          padding: '24px 16px 10px',
           borderRadius: 10,
           WebkitAppearance: 'none',
           appearance: 'none',
         }}
       >
         {options.map((option) => (
-          <option key={option.value} value={option.value} style={{ color: '#020c1b' }}>
+          <option key={option.value} value={option.value} style={{ color: t.text, background: '#ffffff' }}>
             {option.label}
           </option>
         ))}
@@ -195,8 +192,31 @@ function FloatingSelect({ label, value, onChange, options }: FloatingSelectProps
   )
 }
 
-export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<TabId>('general')
+function SettingsPageInner() {
+  const searchParams = useSearchParams()
+  const tabParam = searchParams.get('tab')
+  const initialTab: TabId =
+    tabParam === 'ai' ||
+    tabParam === 'notifications' ||
+    tabParam === 'widget' ||
+    tabParam === 'billing' ||
+    tabParam === 'general'
+      ? tabParam
+      : 'general'
+  const [activeTab, setActiveTab] = useState<TabId>(initialTab)
+
+  useEffect(() => {
+    if (
+      tabParam === 'ai' ||
+      tabParam === 'notifications' ||
+      tabParam === 'widget' ||
+      tabParam === 'billing' ||
+      tabParam === 'general'
+    ) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- sync active tab with URL changes
+      setActiveTab(tabParam)
+    }
+  }, [tabParam])
   const [saveError, setSaveError] = useState('')
   const [showSaveToast, setShowSaveToast] = useState(false)
   const saveToastTimerRef = useRef<number | null>(null)
@@ -205,21 +225,21 @@ export default function SettingsPage() {
   const [businessRowId, setBusinessRowId] = useState<string | null>(null)
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
 
-  const [businessName, setBusinessName] = useState('Lumière Salon & Spa')
-  const [businessType, setBusinessType] = useState<BusinessType>('salon')
-  const [businessPhone, setBusinessPhone] = useState('+1 (415) 555-0199')
-  const [businessEmail, setBusinessEmail] = useState('hello@lumiere.example.com')
-  const [businessAddress, setBusinessAddress] = useState('1200 Market St, San Francisco, CA 94102')
+  const [businessName, setBusinessName] = useState('')
+  const [businessType, setBusinessType] = useState<BusinessType>('restaurant')
+  const [businessPhone, setBusinessPhone] = useState('')
+  const [businessEmail, setBusinessEmail] = useState('')
+  const [businessAddress, setBusinessAddress] = useState('')
   const [hours, setHours] = useState<Record<DayKey, DayHours>>(initialHours)
 
   const [systemPrompt, setSystemPrompt] = useState(
-    'You are the concierge for Lumière Salon & Spa. Be warm, concise, and professional. Prioritize booking accuracy, confirm services, and escalate sensitive topics to a human.',
+    'You are the AI Concierge for this restaurant. Be warm, attentive, and concise. Help guests with reservations, menu inquiries, dietary requirements, and special-occasion notes. Confirm party size, date, time, and guest name before treating a reservation as final. Escalate complaints or unusual requests to a manager.',
   )
-  const [agentName, setAgentName] = useState('Lumière Concierge')
+  const [agentName, setAgentName] = useState('AI Concierge')
   const [language, setLanguage] = useState('English (US)')
-  const [escalateAngry, setEscalateAngry] = useState(true)
-  const [escalatePricing, setEscalatePricing] = useState(true)
-  const [escalateMedical, setEscalateMedical] = useState(true)
+  const [escalateComplaint, setEscalateComplaint] = useState(true)
+  const [escalateLargeParty, setEscalateLargeParty] = useState(true)
+  const [escalateAllergy, setEscalateAllergy] = useState(true)
 
   const [emailNotifs, setEmailNotifs] = useState(true)
   const [smsNotifs, setSmsNotifs] = useState(false)
@@ -238,7 +258,7 @@ export default function SettingsPage() {
     () =>
       [
         { id: 'general' as const, label: 'General' },
-        { id: 'ai' as const, label: 'AI Agent' },
+        { id: 'ai' as const, label: 'AI Concierge' },
         { id: 'notifications' as const, label: 'Notifications' },
         { id: 'widget' as const, label: 'Widget' },
         { id: 'billing' as const, label: 'Billing' },
@@ -258,39 +278,50 @@ export default function SettingsPage() {
   useEffect(() => {
     let isMounted = true
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (!isMounted) {
-        return
-      }
-      const user = session?.user ?? null
-      if (!user) {
-        setCurrentUserId(null)
-        setIsLoading(false)
-        return
-      }
-      setCurrentUserId(user.id)
+    async function hydrateForUserId(userId: string) {
       const { data, error } = await supabase
         .from('businesses')
         .select('id, name, email, phone, business_type, address, system_prompt, agent_name, language')
-        .eq('user_id', user.id)
+        .eq('user_id', userId)
         .maybeSingle()
-      if (!isMounted) {
-        return
-      }
+      if (!isMounted) return
       if (!error && data) {
         setBusinessRowId(data.id ?? null)
         setBusinessName(data.name ?? '')
         setBusinessEmail(data.email ?? '')
         setBusinessPhone(data.phone ?? '')
-        setBusinessType((data.business_type as BusinessType) ?? 'salon')
+        setBusinessType((data.business_type as BusinessType) ?? 'restaurant')
         setBusinessAddress(data.address ?? '')
-        setSystemPrompt(data.system_prompt ?? '')
-        setAgentName(data.agent_name ?? '')
+        if (data.system_prompt) setSystemPrompt(data.system_prompt)
+        if (data.agent_name) setAgentName(data.agent_name)
         setLanguage(data.language ?? 'English (US)')
       }
       setIsLoading(false)
+    }
+
+    void (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (!isMounted) return
+      if (user) {
+        setCurrentUserId(user.id)
+        await hydrateForUserId(user.id)
+      } else {
+        setIsLoading(false)
+      }
+    })()
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!isMounted) return
+      const user = session?.user ?? null
+      if (!user) {
+        setCurrentUserId(null)
+        return
+      }
+      setCurrentUserId((prev) => prev ?? user.id)
     })
 
     return () => {
@@ -393,9 +424,9 @@ export default function SettingsPage() {
               key={index}
               style={{
                 height: index === 0 ? 56 : 72,
-                borderRadius: 18,
-                background: 'rgba(255,255,255,0.05)',
-                border: '1px solid rgba(255,255,255,0.08)',
+                borderRadius: 12,
+                background: t.bgSurfaceMuted,
+                border: `1px solid ${t.borderSoft}`,
               }}
             />
           ))}
@@ -407,16 +438,17 @@ export default function SettingsPage() {
       return (
         <div style={{ display: 'grid', gap: 16 }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 14 }}>
-            <FloatingField label="Business Name" value={businessName} onChange={setBusinessName} />
+            <FloatingField label="Restaurant Name" value={businessName} onChange={setBusinessName} />
             <FloatingSelect
-              label="Business Type"
+              label="Venue Type"
               value={businessType}
               onChange={(value) => setBusinessType(value as BusinessType)}
               options={[
-                { value: 'salon', label: 'Salon' },
                 { value: 'restaurant', label: 'Restaurant' },
-                { value: 'spa', label: 'Spa' },
-                { value: 'clinic', label: 'Clinic' },
+                { value: 'cafe', label: 'Café' },
+                { value: 'bar', label: 'Bar / Lounge' },
+                { value: 'bakery', label: 'Bakery' },
+                { value: 'other', label: 'Other hospitality' },
               ]}
             />
             <FloatingField label="Phone" value={businessPhone} onChange={setBusinessPhone} />
@@ -425,10 +457,10 @@ export default function SettingsPage() {
 
           <FloatingField label="Address" value={businessAddress} onChange={setBusinessAddress} />
 
-          <div style={{ ...glassCard, borderRadius: 18, padding: 16 }}>
+          <div style={{ ...glassCard, padding: 16 }}>
             <div
               style={{
-                color: 'rgba(255,255,255,0.5)',
+                color: t.textMuted,
                 fontSize: 11,
                 fontWeight: 700,
                 letterSpacing: '0.16em',
@@ -438,25 +470,25 @@ export default function SettingsPage() {
             >
               Working Hours
             </div>
-            <div style={{ display: 'grid', gap: 10 }}>
+            <div style={{ display: 'grid', gap: 8 }}>
               {dayOrder.map((day) => {
                 const row = hours[day.key]
                 return (
                   <div
                     key={day.key}
                     style={{
-                      borderRadius: 16,
-                      border: '1px solid rgba(255,255,255,0.08)',
-                      background: 'rgba(255,255,255,0.04)',
-                      padding: 14,
+                      borderRadius: 10,
+                      border: `1px solid ${t.borderSoft}`,
+                      background: t.bgSurface,
+                      padding: 12,
                       display: 'grid',
                       gridTemplateColumns: 'minmax(100px, 1fr) auto minmax(120px, 1fr) minmax(120px, 1fr)',
                       gap: 12,
                       alignItems: 'center',
                     }}
                   >
-                    <div style={{ color: 'white', fontSize: 14, fontWeight: 700 }}>{day.label}</div>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'rgba(255,255,255,0.65)', fontSize: 13 }}>
+                    <div style={{ color: t.text, fontSize: 14, fontWeight: 600 }}>{day.label}</div>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, color: t.textMuted, fontSize: 13 }}>
                       <input
                         type="checkbox"
                         checked={row.closed}
@@ -480,11 +512,11 @@ export default function SettingsPage() {
                         }))
                       }
                       style={{
-                        borderRadius: 10,
-                        border: '1px solid rgba(255,255,255,0.1)',
-                        background: 'rgba(255,255,255,0.05)',
-                        color: 'white',
-                        padding: '12px 14px',
+                        borderRadius: 8,
+                        border: `1px solid ${t.border}`,
+                        background: t.bgSurface,
+                        color: t.text,
+                        padding: '10px 12px',
                         opacity: row.closed ? 0.45 : 1,
                         outline: 'none',
                       }}
@@ -500,11 +532,11 @@ export default function SettingsPage() {
                         }))
                       }
                       style={{
-                        borderRadius: 10,
-                        border: '1px solid rgba(255,255,255,0.1)',
-                        background: 'rgba(255,255,255,0.05)',
-                        color: 'white',
-                        padding: '12px 14px',
+                        borderRadius: 8,
+                        border: `1px solid ${t.border}`,
+                        background: t.bgSurface,
+                        color: t.text,
+                        padding: '10px 12px',
                         opacity: row.closed ? 0.45 : 1,
                         outline: 'none',
                       }}
@@ -529,7 +561,7 @@ export default function SettingsPage() {
             rows={8}
           />
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 14 }}>
-            <FloatingField label="Agent Name" value={agentName} onChange={setAgentName} />
+            <FloatingField label="Concierge Name" value={agentName} onChange={setAgentName} />
             <FloatingSelect
               label="Language"
               value={language}
@@ -542,10 +574,10 @@ export default function SettingsPage() {
               ]}
             />
           </div>
-          <div style={{ ...glassCard, borderRadius: 18, padding: 16, display: 'grid', gap: 12 }}>
+          <div style={{ ...glassCard, padding: 16, display: 'grid', gap: 10 }}>
             <div
               style={{
-                color: 'rgba(255,255,255,0.5)',
+                color: t.textMuted,
                 fontSize: 11,
                 fontWeight: 700,
                 letterSpacing: '0.16em',
@@ -555,9 +587,9 @@ export default function SettingsPage() {
               Escalation Rules
             </div>
             {[
-              { label: 'Angry customer', checked: escalateAngry, onChange: setEscalateAngry },
-              { label: 'Custom pricing', checked: escalatePricing, onChange: setEscalatePricing },
-              { label: 'Medical questions', checked: escalateMedical, onChange: setEscalateMedical },
+              { label: 'Guest complaint', checked: escalateComplaint, onChange: setEscalateComplaint },
+              { label: 'Large party (8+ guests)', checked: escalateLargeParty, onChange: setEscalateLargeParty },
+              { label: 'Allergy or dietary risk', checked: escalateAllergy, onChange: setEscalateAllergy },
             ].map((item) => (
               <label
                 key={item.label}
@@ -566,11 +598,11 @@ export default function SettingsPage() {
                   alignItems: 'center',
                   justifyContent: 'space-between',
                   gap: 12,
-                  borderRadius: 14,
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  background: 'rgba(255,255,255,0.04)',
+                  borderRadius: 10,
+                  border: `1px solid ${t.borderSoft}`,
+                  background: t.bgSurface,
                   padding: '12px 14px',
-                  color: 'white',
+                  color: t.text,
                   fontSize: 14,
                 }}
               >
@@ -588,7 +620,7 @@ export default function SettingsPage() {
         <div style={{ display: 'grid', gap: 16, maxWidth: 720 }}>
           {[
             {
-              label: 'Email notifications for new bookings',
+              label: 'Email me when a new reservation comes in',
               checked: emailNotifs,
               onChange: setEmailNotifs,
             },
@@ -605,12 +637,13 @@ export default function SettingsPage() {
                 alignItems: 'center',
                 justifyContent: 'space-between',
                 gap: 12,
-                borderRadius: 18,
-                border: '1px solid rgba(255,255,255,0.08)',
-                background: 'rgba(255,255,255,0.04)',
+                borderRadius: 12,
+                border: `1px solid ${t.border}`,
+                background: t.bgSurface,
                 padding: '16px 18px',
-                color: 'white',
+                color: t.text,
                 fontSize: 14,
+                boxShadow: t.shadowSm,
               }}
             >
               {item.label}
@@ -635,9 +668,9 @@ export default function SettingsPage() {
       return (
         <div style={{ display: 'grid', gap: 18 }}>
           <div>
-            <div style={{ color: 'white', fontSize: 22, fontWeight: 700 }}>Embed your AI widget</div>
-            <p style={{ margin: '8px 0 0', color: 'rgba(255,255,255,0.55)', fontSize: 14, lineHeight: 1.65 }}>
-              Add this code to your website to launch the OceanCore assistant for visitors.
+            <div style={{ color: t.text, fontSize: 22, fontWeight: 700 }}>Embed your AI Concierge</div>
+            <p style={{ margin: '8px 0 0', color: t.textMuted, fontSize: 14, lineHeight: 1.65 }}>
+              Drop this snippet into your website to launch the OceanCore concierge for guests.
             </p>
           </div>
           {widgetEmbedSnippet ? (
@@ -645,7 +678,7 @@ export default function SettingsPage() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
                 <div
                   style={{
-                    color: 'rgba(255,255,255,0.5)',
+                    color: t.textMuted,
                     fontSize: 11,
                     fontWeight: 700,
                     letterSpacing: '0.16em',
@@ -666,13 +699,13 @@ export default function SettingsPage() {
                     }
                   }}
                   style={{
-                    borderRadius: 14,
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    background: widgetCopied ? 'rgba(74,222,128,0.14)' : 'rgba(255,255,255,0.05)',
-                    color: widgetCopied ? '#4ade80' : 'rgba(255,255,255,0.8)',
-                    padding: '10px 14px',
+                    borderRadius: 8,
+                    border: `1px solid ${widgetCopied ? t.successBorder : t.border}`,
+                    background: widgetCopied ? t.successBg : t.bgSurface,
+                    color: widgetCopied ? t.success : t.text,
+                    padding: '8px 14px',
                     fontSize: 13,
-                    fontWeight: 700,
+                    fontWeight: 600,
                     cursor: 'pointer',
                   }}
                 >
@@ -683,10 +716,10 @@ export default function SettingsPage() {
                 style={{
                   margin: 0,
                   padding: '16px 18px',
-                  borderRadius: 18,
-                  background: 'rgba(2,12,27,0.8)',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  color: 'white',
+                  borderRadius: 12,
+                  background: t.bgSurfaceMuted,
+                  border: `1px solid ${t.border}`,
+                  color: t.text,
                   overflowX: 'auto',
                   fontSize: 13,
                   lineHeight: 1.6,
@@ -696,9 +729,9 @@ export default function SettingsPage() {
               </pre>
             </div>
           ) : (
-            <div style={{ color: 'rgba(255,255,255,0.48)', fontSize: 14 }}>
+            <div style={{ color: t.textMuted, fontSize: 14 }}>
               {!businessRowId
-                ? 'Save your business profile first so we can generate your widget snippet.'
+                ? 'Save your restaurant profile first so we can generate your widget snippet.'
                 : 'Loading embed URL...'}
             </div>
           )}
@@ -709,10 +742,10 @@ export default function SettingsPage() {
     return (
       <div style={{ display: 'grid', gap: 16, maxWidth: 760 }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14 }}>
-          <div style={{ ...glassCard, borderRadius: 18, padding: 16 }}>
+          <div style={{ ...glassCard, padding: 16 }}>
             <div
               style={{
-                color: 'rgba(255,255,255,0.5)',
+                color: t.textMuted,
                 fontSize: 11,
                 fontWeight: 700,
                 letterSpacing: '0.16em',
@@ -721,12 +754,12 @@ export default function SettingsPage() {
             >
               Plan
             </div>
-            <div style={{ marginTop: 10, color: 'white', fontSize: 28, fontWeight: 700 }}>{plan}</div>
+            <div style={{ marginTop: 10, color: t.text, fontSize: 28, fontWeight: 700 }}>{plan}</div>
           </div>
-          <div style={{ ...glassCard, borderRadius: 18, padding: 16 }}>
+          <div style={{ ...glassCard, padding: 16 }}>
             <div
               style={{
-                color: 'rgba(255,255,255,0.5)',
+                color: t.textMuted,
                 fontSize: 11,
                 fontWeight: 700,
                 letterSpacing: '0.16em',
@@ -735,12 +768,12 @@ export default function SettingsPage() {
             >
               Payment Method
             </div>
-            <div style={{ marginTop: 10, color: 'white', fontSize: 20, fontWeight: 700 }}>•••• {cardLast4}</div>
+            <div style={{ marginTop: 10, color: t.text, fontSize: 20, fontWeight: 700 }}>•••• {cardLast4}</div>
           </div>
         </div>
-        <div style={{ ...glassCard, borderRadius: 18, padding: 18 }}>
-          <div style={{ color: 'white', fontSize: 18, fontWeight: 700 }}>Billing Overview</div>
-          <p style={{ margin: '10px 0 0', color: 'rgba(255,255,255,0.58)', fontSize: 14, lineHeight: 1.65 }}>
+        <div style={{ ...glassCard, padding: 18 }}>
+          <div style={{ color: t.text, fontSize: 18, fontWeight: 700 }}>Billing Overview</div>
+          <p style={{ margin: '10px 0 0', color: t.textMuted, fontSize: 14, lineHeight: 1.65 }}>
             Your subscription is active and your OceanCore environment is fully operational. Upgrade, invoices,
             and usage details can plug into this panel next.
           </p>
@@ -760,13 +793,13 @@ export default function SettingsPage() {
             right: 24,
             zIndex: 9999,
             padding: '12px 18px',
-            borderRadius: 14,
-            background: 'rgba(74,222,128,0.15)',
-            border: '1px solid rgba(74,222,128,0.35)',
-            color: '#4ade80',
+            borderRadius: 12,
+            background: t.successBg,
+            border: `1px solid ${t.successBorder}`,
+            color: t.success,
             fontSize: 14,
-            fontWeight: 700,
-            boxShadow: '0 16px 34px rgba(0,0,0,0.25)',
+            fontWeight: 600,
+            boxShadow: t.shadowLg,
           }}
         >
           Saved!
@@ -784,12 +817,13 @@ export default function SettingsPage() {
                 style={{
                   width: 44,
                   height: 44,
-                  borderRadius: 14,
-                  border: '1px solid rgba(255,255,255,0.12)',
-                  background: 'rgba(5,20,40,0.5)',
-                  color: 'white',
+                  borderRadius: 12,
+                  border: `1px solid ${t.border}`,
+                  background: t.bgSurface,
+                  color: t.text,
                   fontSize: 22,
                   cursor: 'pointer',
+                  boxShadow: t.shadowSm,
                 }}
               >
                 ☰
@@ -812,8 +846,8 @@ export default function SettingsPage() {
                 <h1
                   style={{
                     margin: 0,
-                    color: 'white',
-                    fontSize: 32,
+                    color: t.text,
+                    fontSize: 30,
                     fontWeight: 700,
                     fontFamily: 'var(--font-playfair)',
                     letterSpacing: '-0.03em',
@@ -821,39 +855,34 @@ export default function SettingsPage() {
                 >
                   Settings
                 </h1>
-                <p style={{ margin: '8px 0 0', color: 'rgba(255,255,255,0.45)', fontSize: 14 }}>
-                  Configure your business profile, AI behavior, widget, and delivery preferences.
+                <p style={{ margin: '8px 0 0', color: t.textMuted, fontSize: 14 }}>
+                  Configure your restaurant profile, AI Concierge behavior, widget, and notifications.
                 </p>
               </div>
 
               <div style={{ display: 'grid', gap: 8, justifyItems: isMobile ? 'stretch' : 'end', width: isMobile ? '100%' : 'auto' }}>
                 {saveError ? (
-                  <div style={{ color: '#f87171', fontSize: 13, fontWeight: 600 }}>{saveError}</div>
+                  <div style={{ color: t.danger, fontSize: 13, fontWeight: 600 }}>{saveError}</div>
                 ) : null}
                 <motion.button
                   type="button"
                   onClick={() => void handleSave()}
                   disabled={isLoading || isSaving}
-                  whileHover={isLoading || isSaving || reduceMotion ? undefined : { y: -2 }}
+                  whileHover={isLoading || isSaving || reduceMotion ? undefined : { y: -1 }}
                   whileTap={isLoading || isSaving || reduceMotion ? undefined : { scale: 0.98 }}
                   style={{
                     border: 'none',
-                    borderRadius: 16,
-                    padding: '14px 18px',
-                    background:
-                      isLoading || isSaving
-                        ? 'rgba(255,255,255,0.08)'
-                        : 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)',
-                    color: 'white',
-                    fontWeight: 700,
+                    borderRadius: 10,
+                    padding: '11px 18px',
+                    background: isLoading || isSaving ? t.bgSurfaceMuted : t.accent,
+                    color: isLoading || isSaving ? t.textSubtle : '#ffffff',
+                    fontWeight: 600,
                     fontSize: 13,
                     cursor: isLoading || isSaving ? 'not-allowed' : 'pointer',
-                    boxShadow:
-                      isLoading || isSaving ? 'none' : '0 10px 28px rgba(14,165,233,0.28)',
                     width: isMobile ? '100%' : 'auto',
                   }}
                 >
-                  {isLoading ? 'Loading...' : isSaving ? 'Saving...' : 'Save Changes'}
+                  {isLoading ? 'Loading…' : isSaving ? 'Saving…' : 'Save Changes'}
                 </motion.button>
               </div>
             </motion.section>
@@ -862,9 +891,9 @@ export default function SettingsPage() {
               initial={{ opacity: 0, scale: 0.98, y: 10 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               transition={oceanTransition(reduceMotion, { delay: 0.05, duration: 0.24 })}
-              style={{ ...glassCard, padding: 10, borderRadius: 20 }}
+              style={{ ...glassCard, padding: 6 }}
             >
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                 {tabs.map((tab) => {
                   const active = tab.id === activeTab
                   return (
@@ -875,14 +904,13 @@ export default function SettingsPage() {
                       whileTap={reduceMotion ? undefined : { scale: 0.98 }}
                       style={{
                         border: 'none',
-                        borderRadius: 999,
-                        padding: '11px 16px',
-                        background: active ? 'rgba(56,189,248,0.18)' : 'transparent',
-                        color: active ? '#38bdf8' : 'rgba(255,255,255,0.55)',
+                        borderRadius: 8,
+                        padding: '9px 16px',
+                        background: active ? t.accentSoftBg : 'transparent',
+                        color: active ? t.accent : t.textMuted,
                         fontSize: 13,
-                        fontWeight: 700,
+                        fontWeight: 600,
                         cursor: 'pointer',
-                        boxShadow: active ? '0 0 0 1px rgba(56,189,248,0.18), 0 10px 24px rgba(14,165,233,0.12)' : 'none',
                       }}
                     >
                       {tab.label}
@@ -917,29 +945,33 @@ export default function SettingsPage() {
               type="button"
               onClick={() => void handleSave()}
               disabled={isLoading || isSaving}
-              whileHover={isLoading || isSaving || reduceMotion ? undefined : { y: -2 }}
-              whileTap={isLoading || isSaving || reduceMotion ? undefined : { scale: 0.98 }}
+              whileHover={isLoading || isSaving || reduceMotion ? undefined : { y: -1 }}
+              whileTap={isLoading || isSaving || reduceMotion ? undefined : { scale: 0.99 }}
               style={{
                 border: 'none',
-                borderRadius: 18,
+                borderRadius: 12,
                 width: '100%',
-                padding: '16px 18px',
-                background:
-                  isLoading || isSaving
-                    ? 'rgba(255,255,255,0.08)'
-                    : 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)',
-                color: 'white',
-                fontWeight: 700,
-                fontSize: 13,
+                padding: '14px 18px',
+                background: isLoading || isSaving ? t.bgSurfaceMuted : t.accent,
+                color: isLoading || isSaving ? t.textSubtle : '#ffffff',
+                fontWeight: 600,
+                fontSize: 14,
                 cursor: isLoading || isSaving ? 'not-allowed' : 'pointer',
-                boxShadow: isLoading || isSaving ? 'none' : '0 14px 34px rgba(14,165,233,0.24)',
               }}
             >
-              {isLoading ? 'Loading...' : isSaving ? 'Saving...' : 'Save Configuration'}
+              {isLoading ? 'Loading…' : isSaving ? 'Saving…' : 'Save Configuration'}
             </motion.button>
           </main>
         )}
       </DashboardOceanNav>
     </>
+  )
+}
+
+export default function SettingsPage() {
+  return (
+    <Suspense fallback={null}>
+      <SettingsPageInner />
+    </Suspense>
   )
 }

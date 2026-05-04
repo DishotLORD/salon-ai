@@ -25,14 +25,14 @@
   var scriptUrl
   try {
     scriptUrl = new URL(script.src, window.location.href)
-  } catch (e) {
+  } catch {
     return
   }
 
   var businessId = scriptUrl.searchParams.get('id')
   if (!businessId) {
     if (typeof console !== 'undefined' && console.warn) {
-      console.warn('[Salon AI Widget] Add ?id=YOUR_BUSINESS_ID to the widget.js script URL.')
+      console.warn('[OceanCore Widget] Add ?id=YOUR_BUSINESS_ID to the widget.js script URL.')
     }
     return
   }
@@ -51,7 +51,7 @@
   var hideTimer = null
 
   var iframe = document.createElement('iframe')
-  iframe.setAttribute('title', 'Salon AI chat')
+  iframe.setAttribute('title', 'OceanCore concierge chat')
   iframe.setAttribute('frameborder', '0')
   iframe.style.boxSizing = 'border-box'
   iframe.style.position = 'fixed'
@@ -88,8 +88,8 @@
   button.style.display = 'flex'
   button.style.alignItems = 'center'
   button.style.justifyContent = 'center'
-  button.style.background = 'linear-gradient(135deg, #7c3aed 0%, #dc2626 100%)'
-  button.style.boxShadow = '0 8px 24px rgba(124, 58, 237, 0.45), 0 4px 12px rgba(220, 38, 38, 0.35)'
+  button.style.background = 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)'
+  button.style.boxShadow = '0 8px 24px rgba(14, 165, 233, 0.45), 0 4px 12px rgba(2, 132, 199, 0.35)'
   button.style.transition = 'transform 0.15s ease, box-shadow 0.15s ease'
 
   var svgNs = 'http://www.w3.org/2000/svg'
@@ -145,11 +145,11 @@
 
   button.addEventListener('mouseenter', function () {
     button.style.transform = 'scale(1.05)'
-    button.style.boxShadow = '0 10px 28px rgba(124, 58, 237, 0.5), 0 6px 16px rgba(220, 38, 38, 0.4)'
+    button.style.boxShadow = '0 10px 28px rgba(14, 165, 233, 0.5), 0 6px 16px rgba(2, 132, 199, 0.4)'
   })
   button.addEventListener('mouseleave', function () {
     button.style.transform = 'scale(1)'
-    button.style.boxShadow = '0 8px 24px rgba(124, 58, 237, 0.45), 0 4px 12px rgba(220, 38, 38, 0.35)'
+    button.style.boxShadow = '0 8px 24px rgba(14, 165, 233, 0.45), 0 4px 12px rgba(2, 132, 199, 0.35)'
   })
 
   function mount() {

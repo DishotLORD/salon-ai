@@ -12,23 +12,28 @@ type WidgetMessage = {
   text: string
 }
 
-const initialMessages: WidgetMessage[] = [
-  {
-    id: 'welcome',
-    sender: 'ai',
-    text: 'Hi! I am your AI Assistant. Ask me about bookings, services, or availability.',
-  },
-]
+const DEFAULT_CONCIERGE_NAME = 'AI Concierge'
+
+const buildWelcome = (businessName: string | null, conciergeName: string): WidgetMessage => ({
+  id: 'welcome',
+  sender: 'ai',
+  text: businessName
+    ? `Hi! I'm ${conciergeName} for ${businessName}. Ask me about reservations, the menu, hours, or anything else.`
+    : `Hi! I'm ${conciergeName}. Ask me about reservations, the menu, hours, or anything else.`,
+})
 
 function WidgetPageInner() {
   const searchParams = useSearchParams()
   const businessId = searchParams.get('business_id')
   const [businessName, setBusinessName] = useState<string | null>(null)
+  const [conciergeName, setConciergeName] = useState<string>(DEFAULT_CONCIERGE_NAME)
 
   const [isOpen, setIsOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [draft, setDraft] = useState('')
-  const [messages, setMessages] = useState<WidgetMessage[]>(initialMessages)
+  const [messages, setMessages] = useState<WidgetMessage[]>([
+    buildWelcome(null, DEFAULT_CONCIERGE_NAME),
+  ])
   const [conversationId, setConversationId] = useState<string | null>(null)
   const messagesContainerRef = useRef<HTMLDivElement | null>(null)
 
@@ -89,23 +94,36 @@ function WidgetPageInner() {
     if (!businessId) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- clear name when no business context
       setBusinessName(null)
+      setConciergeName(DEFAULT_CONCIERGE_NAME)
       return
     }
     let cancelled = false
     void (async () => {
-      const { data } = await supabase.from('businesses').select('name').eq('id', businessId).maybeSingle()
-      if (!cancelled && data?.name?.trim()) {
-        setBusinessName(data.name.trim())
-      } else if (!cancelled) {
-        setBusinessName(null)
-      }
+      const { data } = await supabase
+        .from('businesses')
+        .select('name, agent_name')
+        .eq('id', businessId)
+        .maybeSingle()
+      if (cancelled) return
+      const nextName = typeof data?.name === 'string' && data.name.trim() ? data.name.trim() : null
+      const nextConcierge =
+        typeof data?.agent_name === 'string' && data.agent_name.trim()
+          ? data.agent_name.trim()
+          : DEFAULT_CONCIERGE_NAME
+      setBusinessName(nextName)
+      setConciergeName(nextConcierge)
+      setMessages((prev) =>
+        prev.length === 1 && prev[0].id === 'welcome'
+          ? [buildWelcome(nextName, nextConcierge)]
+          : prev,
+      )
     })()
     return () => {
       cancelled = true
     }
   }, [businessId])
 
-  const headerTitle = businessName ?? 'AI Assistant'
+  const headerTitle = businessName ?? conciergeName
 
   const handleSend = async () => {
     const text = draft.trim()
@@ -186,7 +204,7 @@ function WidgetPageInner() {
         {
           id: `ai-error-${Date.now()}`,
           sender: 'ai',
-          text: 'I could not reach the server. Please try again in a moment.',
+          text: "I couldn't reach the server. Please try again in a moment.",
         },
       ])
     } finally {
@@ -206,7 +224,7 @@ function WidgetPageInner() {
       <div style={{ padding: 32, color: 'var(--ocean-text-muted)' }}>
         <h1 style={{ margin: 0, fontSize: 30, color: 'var(--ocean-text)' }}>OceanCore · Widget preview</h1>
         <p style={{ marginTop: 10, maxWidth: 700 }}>
-          Standalone chat widget. Use the bubble in the bottom-right to open the assistant.
+          Standalone chat widget. Use the bubble in the bottom-right to open your AI Concierge.
         </p>
       </div>
 
@@ -271,7 +289,7 @@ function WidgetPageInner() {
                   lineHeight: 1,
                 }}
               >
-                x
+                ×
               </button>
             </header>
 
@@ -324,7 +342,7 @@ function WidgetPageInner() {
                       border: '1px solid var(--ocean-border)',
                     }}
                   >
-                    AI is typing...
+                    {conciergeName} is typing…
                   </div>
                 </div>
               )}
@@ -341,7 +359,7 @@ function WidgetPageInner() {
                       void handleSend()
                     }
                   }}
-                  placeholder="Type your message..."
+                  placeholder="Type your message…"
                   style={{
                     flex: 1,
                     border: '1px solid var(--ocean-border)',

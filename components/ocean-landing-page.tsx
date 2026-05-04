@@ -17,34 +17,34 @@ const MUTED = '#94a3b8'
 
 const features = [
   {
-    title: 'AI Chat Agent',
-    body: 'Respond instantly, escalate gracefully, and keep every conversation on-brand—24/7.',
+    title: 'AI Concierge',
+    body: 'Greet every guest in seconds, answer menu and dietary questions, and escalate gracefully — 24/7.',
   },
   {
-    title: 'Smart Bookings',
-    body: 'Let customers self-serve slots, reminders, and changes while your calendar stays spotless.',
+    title: 'Reservations on autopilot',
+    body: 'Guests book, reschedule, and confirm in chat while your floor team stays focused on service.',
   },
   {
-    title: 'CRM & Analytics',
-    body: 'See who books, who returns, and where revenue flows—without drowning in spreadsheets.',
+    title: 'Guest CRM',
+    body: "See who's a regular, who's celebrating, and who needs a follow-up — without drowning in spreadsheets.",
   },
 ]
 
 const steps = [
   {
     n: '01',
-    title: 'Connect your business',
-    body: 'Sign in, add your services and hours, and tune the agent to your voice.',
+    title: 'Connect your restaurant',
+    body: 'Sign in, add your hours, menu highlights, and tune the AI Concierge to your house voice.',
   },
   {
     n: '02',
     title: 'Deploy the widget',
-    body: 'Drop one snippet on your site. Your AI concierge goes live in minutes.',
+    body: 'Drop one snippet on your website. Your AI Concierge greets guests in minutes.',
   },
   {
     n: '03',
-    title: 'Operate from one hub',
-    body: 'Chats, bookings, and customer context—unified in a calm, focused dashboard.',
+    title: 'Run service from one hub',
+    body: 'Reservations, conversations, and guest context — unified in a calm command deck.',
   },
 ]
 
@@ -330,17 +330,12 @@ export function OceanLandingPage() {
           boxShadow: 'none',
         }}
       >
-        <span
-          style={{
-            fontFamily: 'var(--font-playfair), Georgia, serif',
-            fontSize: 22,
-            fontWeight: 600,
-            letterSpacing: '-0.02em',
-            color: ACCENT,
-          }}
-        >
-          OceanCore
-        </span>
+        <div className="flex flex-col items-start">
+          <div className="text-2xl font-bold" style={{ fontFamily: 'Playfair Display, serif' }}>
+            <span style={{ color: '#38bdf8' }}>Ocean</span>
+            <span style={{ color: 'white' }}>Core</span>
+          </div>
+        </div>
         <Link
           href="/auth/login"
           className="nav-cta-link"
@@ -426,7 +421,7 @@ export function OceanLandingPage() {
             fontWeight: 400,
           }}
         >
-          AI-powered operations for modern business
+          AI-powered front of house for modern restaurants
         </p>
         <div className="hero-cta" style={{ position: 'relative', marginTop: 36 }}>
           <Link
@@ -498,7 +493,7 @@ export function OceanLandingPage() {
           Built for clarity
         </h2>
         <p style={{ margin: '0 auto 52px', maxWidth: 520, textAlign: 'center', color: MUTED, fontSize: 16, lineHeight: 1.6 }}>
-          Everything you need to run the front office—without the noise.
+          Everything you need to run the front of house — without the noise.
         </p>
         <div
           style={{
@@ -632,7 +627,7 @@ export function OceanLandingPage() {
             Ready to start?
           </h2>
           <p style={{ margin: '14px 0 28px', color: MUTED, fontSize: 16, lineHeight: 1.55 }}>
-            Join teams running calmer, sharper operations on OceanCore.
+            Join restaurants running calmer, sharper service on OceanCore.
           </p>
           <Link
             href="/auth/login"

@@ -3,6 +3,7 @@
 import { startTransition, useLayoutEffect, useState, type ReactNode } from 'react'
 import gsap from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
+import { usePathname } from 'next/navigation'
 
 import { LenisReadyContext } from '@/components/lenis-context'
 import { createLenis, destroyLenis } from '@/lib/lenis'
@@ -11,10 +12,32 @@ gsap.registerPlugin(ScrollTrigger)
 
 let tickerFn: ((time: number) => void) | null = null
 
+// Lenis smooth scrolling is reserved for the marketing pages. App surfaces
+// (dashboard, onboarding, widget, login) have nested scroll containers and
+// fixed layouts where smooth scrolling fights trackpad gestures and breaks
+// inner overflow regions.
+function shouldUseLenis(pathname: string | null): boolean {
+  if (!pathname) {
+    return true
+  }
+  if (pathname.startsWith('/dashboard')) return false
+  if (pathname.startsWith('/onboarding')) return false
+  if (pathname.startsWith('/widget')) return false
+  if (pathname.startsWith('/auth')) return false
+  return true
+}
+
 export function LenisProvider({ children }: { children: ReactNode }) {
+  const pathname = usePathname()
   const [ready, setReady] = useState(0)
+  const enabled = shouldUseLenis(pathname)
 
   useLayoutEffect(() => {
+    if (!enabled) {
+      startTransition(() => setReady((n) => n + 1))
+      return
+    }
+
     const reduced =
       typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
@@ -68,7 +91,7 @@ export function LenisProvider({ children }: { children: ReactNode }) {
       destroyLenis()
       ScrollTrigger.refresh()
     }
-  }, [])
+  }, [enabled])
 
   return <LenisReadyContext.Provider value={ready}>{children}</LenisReadyContext.Provider>
 }

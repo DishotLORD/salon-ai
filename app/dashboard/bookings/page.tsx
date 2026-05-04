@@ -1,26 +1,27 @@
 'use client'
 
-import { motion, useReducedMotion } from 'framer-motion'
-import { useEffect, useState } from 'react'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { DashboardOceanNav } from '@/components/dashboard-ocean-nav'
 import { oceanTransition } from '@/lib/ocean-motion'
 import { supabase } from '@/lib/supabase'
+import { card, t } from '@/lib/dashboard-theme'
 
-type BookingStatus = 'confirmed' | 'pending' | 'cancelled'
+// ─── Types ────────────────────────────────────────────────────────────────────
+type ResStatus = 'confirmed' | 'seated' | 'pending' | 'cancelled' | 'no-show'
 
-type WeekBooking = {
+type Reservation = {
   id: string
-  customerName: string
-  service: string
-  staff: string
-  status: BookingStatus
-  dayIndex: number
-  hour: number
-  minute: number
+  guestName: string
+  partySize: number
+  tableNumber: string
+  scheduledAt: Date
+  status: ResStatus
+  specialRequests: string
 }
 
-type AppointmentRow = {
+type DbRow = {
   id: string
   service_name: string | null
   scheduled_at: string
@@ -28,104 +29,1452 @@ type AppointmentRow = {
   customer_id: string | null
 }
 
-const shellCard = {
-  background: 'rgba(8,20,40,0.5)',
-  border: '1px solid rgba(255,255,255,0.07)',
-  borderRadius: 16,
-  backdropFilter: 'blur(16px)',
-  WebkitBackdropFilter: 'blur(16px)',
-  boxShadow: '0 20px 60px rgba(0,0,0,0.28)',
-}
+type ListFilter = 'today' | 'week' | 'all'
+type ModalMode = 'add' | 'edit'
 
-function startOfWeekMonday(date: Date) {
-  const d = new Date(date)
-  const day = d.getDay()
-  const diff = (day + 6) % 7
-  d.setHours(0, 0, 0, 0)
-  d.setDate(d.getDate() - diff)
-  return d
-}
-
-function addDays(date: Date, days: number) {
-  const next = new Date(date)
-  next.setDate(next.getDate() + days)
-  return next
-}
-
-function formatTime(hour: number, minute: number) {
-  const suffix = hour >= 12 ? 'PM' : 'AM'
-  const h12 = ((hour + 11) % 12) + 1
-  const mm = minute.toString().padStart(2, '0')
-  return `${h12}:${mm} ${suffix}`
-}
-
-function normalizeStatus(raw: string | null | undefined): BookingStatus {
-  const status = (raw ?? '').toLowerCase()
-  if (status === 'confirmed') {
-    return 'confirmed'
-  }
-  if (status === 'cancelled' || status === 'canceled') {
-    return 'cancelled'
-  }
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function normalizeStatus(raw: string | null | undefined): ResStatus {
+  const s = (raw ?? '').toLowerCase()
+  if (s === 'confirmed') return 'confirmed'
+  if (s === 'seated') return 'seated'
+  if (s === 'no-show' || s === 'noshow') return 'no-show'
+  if (s === 'completed') return 'seated'
+  if (s === 'cancelled' || s === 'canceled') return 'cancelled'
   return 'pending'
 }
 
-function statusStyle(status: BookingStatus) {
-  if (status === 'confirmed') {
-    return {
-      bg: 'rgba(74,222,128,0.12)',
-      border: 'rgba(74,222,128,0.3)',
-      color: '#4ade80',
-    }
-  }
-  if (status === 'pending') {
-    return {
-      bg: 'rgba(251,191,36,0.12)',
-      border: 'rgba(251,191,36,0.3)',
-      color: '#fbbf24',
-    }
-  }
+// service_name encoding: "Guest Name · Party of N · Table T · Notes: special text"
+// All segments after the first two are optional extras packed in for now (until schema updated).
+function parseReservation(row: DbRow, customerName?: string): Reservation {
+  const parts = (row.service_name ?? '').split(' \u00b7 ') // split on " · "
+  const guestName = customerName?.trim() || parts[0]?.trim() || 'Guest'
+  const partySize = parseInt((parts[1] ?? '').replace(/\D/g, ''), 10) || 1
+
+  const tablePart = parts.find((p) => /^Table /i.test(p.trim()))
+  const tableNumber = tablePart ? tablePart.replace(/^Table /i, '').trim() : '—'
+
+  const notesPart = parts.find((p) => /^Notes:/i.test(p.trim()))
+  const specialRequests = notesPart ? notesPart.replace(/^Notes:\s*/i, '').trim() : ''
+
   return {
-    bg: 'rgba(248,113,113,0.12)',
-    border: 'rgba(248,113,113,0.3)',
-    color: '#f87171',
+    id: row.id,
+    guestName,
+    partySize,
+    tableNumber,
+    scheduledAt: new Date(row.scheduled_at),
+    status: normalizeStatus(row.status),
+    specialRequests,
   }
 }
 
-function mapRowsToWeekBookings(rows: AppointmentRow[], nameById: Map<string, string>): WeekBooking[] {
-  const out: WeekBooking[] = []
-  for (const row of rows) {
-    const at = new Date(row.scheduled_at)
-    if (Number.isNaN(at.getTime())) {
-      continue
+function isSameDay(a: Date, b: Date) {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  )
+}
+
+function startOfWeekMon(d: Date) {
+  const date = new Date(d)
+  const diff = (date.getDay() + 6) % 7
+  date.setHours(0, 0, 0, 0)
+  date.setDate(date.getDate() - diff)
+  return date
+}
+
+function fmtTime(d: Date) {
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+function statusColor(s: ResStatus) {
+  const map: Record<ResStatus, { bg: string; border: string; text: string }> = {
+    confirmed: { bg: t.accentSoftBg, border: t.accentSoftBorder, text: t.accentText },
+    seated:    { bg: t.successBg,    border: t.successBorder,    text: t.success },
+    pending:   { bg: t.warningBg,    border: t.warningBorder,    text: t.warning },
+    cancelled: { bg: t.dangerBg,     border: t.dangerBorder,     text: t.danger },
+    'no-show': { bg: t.bgSurfaceMuted, border: t.border,         text: t.textMuted },
+  }
+  return map[s]
+}
+
+const glass = card
+
+// ─── MonthCalendar ────────────────────────────────────────────────────────────
+function MonthCalendar({
+  displayMonth,
+  reservations,
+  selectedDay,
+  onSelectDay,
+  today,
+}: {
+  displayMonth: Date
+  reservations: Reservation[]
+  selectedDay: Date | null
+  onSelectDay: (d: Date) => void
+  today: Date
+}) {
+  const year = displayMonth.getFullYear()
+  const month = displayMonth.getMonth()
+  const firstDay = new Date(year, month, 1)
+  const lastDate = new Date(year, month + 1, 0).getDate()
+  const startPad = (firstDay.getDay() + 6) % 7
+
+  const cells: { date: Date; inMonth: boolean }[] = []
+  for (let i = startPad - 1; i >= 0; i--)
+    cells.push({ date: new Date(year, month, -i), inMonth: false })
+  for (let d = 1; d <= lastDate; d++)
+    cells.push({ date: new Date(year, month, d), inMonth: true })
+  const tail = cells.length % 7
+  if (tail !== 0) {
+    for (let d = 1; d <= 7 - tail; d++)
+      cells.push({ date: new Date(year, month + 1, d), inMonth: false })
+  }
+
+  const DOW = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+
+  return (
+    <div style={{ ...glass, overflow: 'hidden' }}>
+      {/* DOW headers */}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(7, 1fr)',
+          borderBottom: `1px solid ${t.border}`,
+          background: t.bgSurfaceMuted,
+        }}
+      >
+        {DOW.map((d) => (
+          <div
+            key={d}
+            style={{
+              padding: '12px 0',
+              textAlign: 'center',
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: '1.5px',
+              textTransform: 'uppercase',
+              color: t.textMuted,
+            }}
+          >
+            {d}
+          </div>
+        ))}
+      </div>
+
+      {/* Day grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)' }}>
+        {cells.map(({ date, inMonth }, idx) => {
+          const dayRes = reservations.filter(
+            (r) => isSameDay(r.scheduledAt, date) && r.status !== 'cancelled' && r.status !== 'no-show',
+          )
+          const covers = dayRes.reduce((s, r) => s + r.partySize, 0)
+          const isToday = isSameDay(date, today)
+          const isSelected = selectedDay ? isSameDay(date, selectedDay) : false
+
+          return (
+            <button
+              key={idx}
+              type="button"
+              onClick={() => onSelectDay(date)}
+              style={{
+                minHeight: 80,
+                padding: '10px 8px 8px',
+                background: isSelected ? t.accentSoftBg : t.bgSurface,
+                border: 'none',
+                borderTop: idx >= 7 ? `1px solid ${t.borderSoft}` : 'none',
+                borderRight: (idx + 1) % 7 !== 0 ? `1px solid ${t.borderSoft}` : 'none',
+                outline: isToday
+                  ? `2px solid ${t.accent}`
+                  : isSelected
+                  ? `2px solid ${t.accentSoftBorder}`
+                  : 'none',
+                outlineOffset: -2,
+                cursor: 'pointer',
+                textAlign: 'left',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 4,
+                transition: 'background 0.12s',
+              }}
+            >
+              <span
+                style={{
+                  fontSize: 13,
+                  fontWeight: 700,
+                  color: !inMonth
+                    ? t.textSubtle
+                    : isToday
+                    ? t.accent
+                    : t.text,
+                  alignSelf: 'flex-end',
+                  paddingRight: 2,
+                }}
+              >
+                {date.getDate()}
+              </span>
+              {dayRes.length > 0 && (
+                <>
+                  <span
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 700,
+                      color: t.accentText,
+                      background: t.accentSoftBg,
+                      border: `1px solid ${t.accentSoftBorder}`,
+                      borderRadius: 6,
+                      padding: '2px 6px',
+                      alignSelf: 'flex-start',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {dayRes.length} {dayRes.length === 1 ? 'res' : 'res'}
+                  </span>
+                  <span style={{ fontSize: 10, color: t.textMuted, paddingLeft: 2 }}>
+                    {covers} covers
+                  </span>
+                </>
+              )}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ─── DayPanel ─────────────────────────────────────────────────────────────────
+function DayPanel({
+  day,
+  reservations,
+  onClose,
+  onConfirm,
+  onCancel,
+  onEdit,
+  onAddForDay,
+}: {
+  day: Date
+  reservations: Reservation[]
+  onClose: () => void
+  onConfirm: (id: string) => void
+  onCancel: (id: string) => void
+  onEdit: (r: Reservation) => void
+  onAddForDay: () => void
+}) {
+  const reduceMotion = useReducedMotion()
+  return (
+    <motion.div
+      initial={{ opacity: 0, x: 18 }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: 18 }}
+      transition={oceanTransition(reduceMotion, { duration: 0.2 })}
+      style={{
+        ...glass,
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
+      <div
+        style={{
+          padding: '16px 20px 14px',
+          borderBottom: `1px solid ${t.border}`,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexShrink: 0,
+        }}
+      >
+        <div>
+          <div style={{ color: t.text, fontSize: 15, fontWeight: 700 }}>
+            {day.toLocaleDateString(undefined, {
+              weekday: 'long',
+              month: 'long',
+              day: 'numeric',
+            })}
+          </div>
+          <div style={{ marginTop: 4, color: t.textMuted, fontSize: 12 }}>
+            {reservations.length} reservation{reservations.length !== 1 ? 's' : ''}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          style={{
+            width: 30,
+            height: 30,
+            borderRadius: 8,
+            border: `1px solid ${t.border}`,
+            background: t.bgSurface,
+            color: t.textMuted,
+            cursor: 'pointer',
+            fontSize: 16,
+            display: 'grid',
+            placeItems: 'center',
+          }}
+        >
+          ×
+        </button>
+      </div>
+
+      {/* Add reservation for this day */}
+      <div style={{ padding: '12px 16px 4px' }}>
+        <button
+          type="button"
+          onClick={onAddForDay}
+          style={{
+            width: '100%',
+            padding: '10px 14px',
+            borderRadius: 10,
+            border: `1px solid ${t.accent}`,
+            background: t.accent,
+            color: '#ffffff',
+            fontSize: 13,
+            fontWeight: 600,
+            cursor: 'pointer',
+            textAlign: 'center',
+            letterSpacing: '0.02em',
+          }}
+        >
+          + Add Reservation for {day.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+        </button>
+      </div>
+
+      <div
+        style={{
+          overflowY: 'auto',
+          WebkitOverflowScrolling: 'touch',
+          scrollbarWidth: 'thin',
+          maxHeight: 'calc(100vh - 300px)',
+          position: 'relative',
+          zIndex: 200,
+          padding: '12px 16px',
+        }}
+      >
+        {reservations.length === 0 ? (
+          <div
+            style={{
+              padding: 28,
+              textAlign: 'center',
+              color: t.textMuted,
+              fontSize: 13,
+            }}
+          >
+            No reservations — open availability
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gap: 10 }}>
+            {reservations.map((r) => {
+              const c = statusColor(r.status)
+              return (
+                <div
+                  key={r.id}
+                  style={{
+                    borderRadius: 10,
+                    border: `1px solid ${t.border}`,
+                    background: t.bgSurface,
+                    padding: 14,
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'flex-start',
+                      gap: 8,
+                    }}
+                  >
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ color: t.text, fontSize: 13, fontWeight: 700 }}>
+                        {r.guestName}
+                      </div>
+                      <div
+                        style={{ marginTop: 4, color: t.textMuted, fontSize: 12 }}
+                      >
+                        {fmtTime(r.scheduledAt)} · Party of {r.partySize} · Table{' '}
+                        {r.tableNumber}
+                      </div>
+                      {r.specialRequests && (
+                        <div
+                          style={{
+                            marginTop: 6,
+                            color: t.textMuted,
+                            fontSize: 11,
+                            fontStyle: 'italic',
+                          }}
+                        >
+                          {r.specialRequests}
+                        </div>
+                      )}
+                    </div>
+                    <span
+                      style={{
+                        flexShrink: 0,
+                        padding: '3px 8px',
+                        borderRadius: 999,
+                        background: c.bg,
+                        border: `1px solid ${c.border}`,
+                        color: c.text,
+                        fontSize: 10,
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                      }}
+                    >
+                      {r.status}
+                    </span>
+                  </div>
+                  <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
+                    {r.status === 'pending' && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => onConfirm(r.id)}
+                          style={{
+                            flex: 1,
+                            padding: '7px 10px',
+                            borderRadius: 8,
+                            border: `1px solid ${t.accent}`,
+                            background: t.accent,
+                            color: '#ffffff',
+                            fontSize: 12,
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Confirm
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onCancel(r.id)}
+                          style={{
+                            flex: 1,
+                            padding: '7px 10px',
+                            borderRadius: 8,
+                            border: `1px solid ${t.dangerBorder}`,
+                            background: t.dangerBg,
+                            color: t.danger,
+                            fontSize: 12,
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => onEdit(r)}
+                      style={{
+                        flex: r.status === 'pending' ? 'none' : 1,
+                        padding: '7px 10px',
+                        borderRadius: 8,
+                        border: `1px solid ${t.border}`,
+                        background: t.bgSurface,
+                        color: t.text,
+                        fontSize: 12,
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Edit
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </motion.div>
+  )
+}
+
+// ─── List View ────────────────────────────────────────────────────────────────
+function ReservationListView({
+  reservations,
+  filter,
+  onFilterChange,
+  loading,
+  onConfirm,
+  onCancel,
+  onEdit,
+  isMobile,
+}: {
+  reservations: Reservation[]
+  filter: ListFilter
+  onFilterChange: (f: ListFilter) => void
+  loading: boolean
+  onConfirm: (id: string) => void
+  onCancel: (id: string) => void
+  onEdit: (r: Reservation) => void
+  isMobile: boolean
+}) {
+  const FILTERS: { key: ListFilter; label: string }[] = [
+    { key: 'today', label: 'Today' },
+    { key: 'week', label: 'This Week' },
+    { key: 'all', label: 'All' },
+  ]
+
+  const emptyMsg = 'No reservations — open availability'
+
+  return (
+    <div style={{ ...glass, overflow: 'hidden' }}>
+      {/* Filter tabs */}
+      <div
+        style={{
+          padding: '14px 18px 0',
+          display: 'flex',
+          gap: 4,
+          borderBottom: `1px solid ${t.border}`,
+          paddingBottom: 0,
+        }}
+      >
+        {FILTERS.map(({ key, label }) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => onFilterChange(key)}
+            style={{
+              padding: '9px 16px',
+              borderRadius: '8px 8px 0 0',
+              border: 'none',
+              background: filter === key ? t.accentSoftBg : 'transparent',
+              color: filter === key ? t.accent : t.textMuted,
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: 'pointer',
+              borderBottom: filter === key ? `2px solid ${t.accent}` : '2px solid transparent',
+              marginBottom: -1,
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {isMobile ? (
+        /* ── Mobile card list ── */
+        <div style={{ padding: 12, display: 'grid', gap: 10 }}>
+          {loading ? (
+            Array.from({ length: 3 }).map((_, idx) => (
+              <div
+                key={idx}
+                style={{
+                  height: 86,
+                  borderRadius: 10,
+                  background: t.bgSurfaceMuted,
+                  border: `1px solid ${t.borderSoft}`,
+                }}
+              />
+            ))
+          ) : reservations.length === 0 ? (
+            <div style={{ padding: 24, textAlign: 'center', color: t.textMuted }}>
+              {emptyMsg}
+            </div>
+          ) : (
+            reservations.map((r) => {
+              const c = statusColor(r.status)
+              return (
+                <div
+                  key={r.id}
+                  style={{
+                    borderRadius: 10,
+                    border: `1px solid ${t.border}`,
+                    background: t.bgSurface,
+                    padding: 14,
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                    <div>
+                      <div style={{ color: t.text, fontSize: 13, fontWeight: 700 }}>
+                        {r.guestName}
+                      </div>
+                      <div style={{ marginTop: 4, color: t.textMuted, fontSize: 12 }}>
+                        {fmtTime(r.scheduledAt)} · Party of {r.partySize} · Table {r.tableNumber}
+                      </div>
+                    </div>
+                    <span
+                      style={{
+                        flexShrink: 0,
+                        padding: '3px 8px',
+                        borderRadius: 999,
+                        background: c.bg,
+                        border: `1px solid ${c.border}`,
+                        color: c.text,
+                        fontSize: 10,
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                      }}
+                    >
+                      {r.status}
+                    </span>
+                  </div>
+                  <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
+                    {r.status === 'pending' && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => onConfirm(r.id)}
+                          style={{
+                            flex: 1,
+                            padding: '7px',
+                            borderRadius: 8,
+                            border: `1px solid ${t.accent}`,
+                            background: t.accent,
+                            color: '#ffffff',
+                            fontSize: 12,
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Confirm
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onCancel(r.id)}
+                          style={{
+                            flex: 1,
+                            padding: '7px',
+                            borderRadius: 8,
+                            border: `1px solid ${t.dangerBorder}`,
+                            background: t.dangerBg,
+                            color: t.danger,
+                            fontSize: 12,
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => onEdit(r)}
+                      style={{
+                        padding: '7px 14px',
+                        borderRadius: 8,
+                        border: `1px solid ${t.border}`,
+                        background: t.bgSurface,
+                        color: t.text,
+                        fontSize: 12,
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Edit
+                    </button>
+                  </div>
+                </div>
+              )
+            })
+          )}
+        </div>
+      ) : (
+        /* ── Desktop table ── */
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 680 }}>
+            <thead>
+              <tr style={{ borderBottom: `1px solid ${t.border}`, background: t.bgSurfaceMuted }}>
+                {['Time', 'Guest', 'Party Size', 'Table', 'Status', 'Actions'].map((col) => (
+                  <th
+                    key={col}
+                    style={{
+                      padding: '13px 18px',
+                      textAlign: 'left',
+                      color: t.textMuted,
+                      fontSize: 11,
+                      fontWeight: 700,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.12em',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {col}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                Array.from({ length: 4 }).map((_, idx) => (
+                  <tr key={idx} style={{ borderBottom: `1px solid ${t.borderSoft}` }}>
+                    {Array.from({ length: 6 }).map((__, c) => (
+                      <td key={c} style={{ padding: '16px 18px' }}>
+                        <div
+                          style={{
+                            height: 12,
+                            borderRadius: 6,
+                            background: t.bgSurfaceMuted,
+                          }}
+                        />
+                      </td>
+                    ))}
+                  </tr>
+                ))
+              ) : reservations.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={6}
+                    style={{
+                      padding: 32,
+                      textAlign: 'center',
+                      color: t.textMuted,
+                    }}
+                  >
+                    {emptyMsg}
+                  </td>
+                </tr>
+              ) : (
+                reservations.map((r) => {
+                  const c = statusColor(r.status)
+                  return (
+                    <tr
+                      key={r.id}
+                      style={{
+                        borderBottom: `1px solid ${t.borderSoft}`,
+                        transition: 'background 0.12s',
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.background = t.bgSurfaceMuted
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = 'transparent'
+                      }}
+                    >
+                      <td
+                        style={{
+                          padding: '14px 18px',
+                          color: t.textMuted,
+                          fontSize: 13,
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {fmtTime(r.scheduledAt)}
+                      </td>
+                      <td
+                        style={{
+                          padding: '14px 18px',
+                          color: t.text,
+                          fontSize: 13,
+                          fontWeight: 600,
+                        }}
+                      >
+                        {r.guestName}
+                      </td>
+                      <td
+                        style={{
+                          padding: '14px 18px',
+                          color: t.textMuted,
+                          fontSize: 13,
+                          textAlign: 'center',
+                        }}
+                      >
+                        {r.partySize}
+                      </td>
+                      <td
+                        style={{
+                          padding: '14px 18px',
+                          color: t.textMuted,
+                          fontSize: 13,
+                        }}
+                      >
+                        {r.tableNumber}
+                      </td>
+                      <td style={{ padding: '14px 18px' }}>
+                        <span
+                          style={{
+                            padding: '4px 10px',
+                            borderRadius: 999,
+                            background: c.bg,
+                            border: `1px solid ${c.border}`,
+                            color: c.text,
+                            fontSize: 10,
+                            fontWeight: 700,
+                            textTransform: 'uppercase',
+                          }}
+                        >
+                          {r.status}
+                        </span>
+                      </td>
+                      <td style={{ padding: '14px 18px' }}>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          {r.status === 'pending' && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => onConfirm(r.id)}
+                                style={{
+                                  padding: '5px 12px',
+                                  borderRadius: 6,
+                                  border: `1px solid ${t.accent}`,
+                                  background: t.accent,
+                                  color: '#ffffff',
+                                  fontSize: 11,
+                                  fontWeight: 600,
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                Confirm
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => onCancel(r.id)}
+                                style={{
+                                  padding: '5px 12px',
+                                  borderRadius: 6,
+                                  border: `1px solid ${t.dangerBorder}`,
+                                  background: t.dangerBg,
+                                  color: t.danger,
+                                  fontSize: 11,
+                                  fontWeight: 600,
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => onEdit(r)}
+                            style={{
+                              padding: '5px 12px',
+                              borderRadius: 6,
+                              border: `1px solid ${t.border}`,
+                              background: t.bgSurface,
+                              color: t.text,
+                              fontSize: 11,
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            Edit
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Reservation Modal (Add + Edit) ───────────────────────────────────────────
+const STATUS_OPTIONS: ResStatus[] = ['pending', 'confirmed', 'seated', 'cancelled', 'no-show']
+
+function ReservationModal({
+  mode,
+  editReservation,
+  onClose,
+  businessId,
+  onAdded,
+  onUpdated,
+  initialDate,
+}: {
+  mode: ModalMode
+  editReservation: Reservation | null
+  onClose: () => void
+  businessId: string | null
+  onAdded: (r: Reservation) => void
+  onUpdated: (r: Reservation) => void
+  initialDate?: string
+}) {
+  const reduceMotion = useReducedMotion()
+  const isEdit = mode === 'edit' && editReservation !== null
+
+  const nowDefault = new Date()
+  const defaultDate = initialDate ?? nowDefault.toISOString().split('T')[0]
+  const defaultTime = `${String(nowDefault.getHours() + 1).padStart(2, '0')}:00`
+
+  const [guestName, setGuestName] = useState(
+    isEdit ? editReservation!.guestName : '',
+  )
+  const [partySize, setPartySize] = useState(isEdit ? editReservation!.partySize : 2)
+  const [date, setDate] = useState(
+    isEdit
+      ? editReservation!.scheduledAt.toISOString().split('T')[0]
+      : defaultDate,
+  )
+  const [time, setTime] = useState(() => {
+    if (isEdit) {
+      const h = String(editReservation!.scheduledAt.getHours()).padStart(2, '0')
+      const m = String(editReservation!.scheduledAt.getMinutes()).padStart(2, '0')
+      return `${h}:${m}`
     }
-    out.push({
-      id: row.id,
-      customerName: row.customer_id ? (nameById.get(row.customer_id) ?? 'Customer') : 'Customer',
-      service: row.service_name?.trim() ? row.service_name : 'Appointment',
-      staff: '—',
-      status: normalizeStatus(row.status),
-      dayIndex: (at.getDay() + 6) % 7,
-      hour: at.getHours(),
-      minute: at.getMinutes(),
-    })
+    return defaultTime
+  })
+  const [tableNumber, setTableNumber] = useState(
+    isEdit && editReservation!.tableNumber !== '—' ? editReservation!.tableNumber : '',
+  )
+  const [specialRequests, setSpecialRequests] = useState(
+    isEdit ? editReservation!.specialRequests : '',
+  )
+  const [editStatus, setEditStatus] = useState<ResStatus>(
+    isEdit ? editReservation!.status : 'pending',
+  )
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [focusedField, setFocusedField] = useState<string | null>(null)
+  const dateInputRef = useRef<HTMLInputElement>(null)
+
+  const handleSubmit = async () => {
+    if (!guestName.trim()) {
+      setError('Guest name is required.')
+      return
+    }
+    if (!date || !time) {
+      setError('Date and time are required.')
+      return
+    }
+    if (!businessId && !isEdit) {
+      setError('Business not found — please reload.')
+      return
+    }
+
+    setError('')
+    setSaving(true)
+
+    const scheduledAt = new Date(`${date}T${time}`)
+
+    // Pack all fields into service_name (notes column doesn't exist in schema yet)
+    const svcParts = [
+      guestName.trim().replace(/\u00b7/g, '-'),
+      `Party of ${partySize}`,
+      tableNumber.trim() ? `Table ${tableNumber.trim()}` : null,
+      specialRequests.trim() ? `Notes: ${specialRequests.trim()}` : null,
+    ].filter(Boolean)
+    const serviceName = svcParts.join(' \u00b7 ')
+
+    if (isEdit) {
+      const { error: updateError } = await supabase
+        .from('appointments')
+        .update({
+          service_name: serviceName,
+          scheduled_at: scheduledAt.toISOString(),
+          status: editStatus,
+        })
+        .eq('id', editReservation!.id)
+
+      setSaving(false)
+      if (updateError) {
+        setError(updateError.message)
+        return
+      }
+
+      onUpdated({
+        ...editReservation!,
+        guestName: guestName.trim(),
+        partySize,
+        tableNumber: tableNumber.trim() || '—',
+        scheduledAt,
+        status: editStatus,
+        specialRequests: specialRequests.trim(),
+      })
+      return
+    }
+
+    // Add mode
+    const { data, error: insertError } = await supabase
+      .from('appointments')
+      .insert({
+        business_id: businessId,
+        service_name: serviceName,
+        scheduled_at: scheduledAt.toISOString(),
+        status: 'confirmed',
+      })
+      .select('id, service_name, scheduled_at, status, customer_id')
+      .single()
+
+    setSaving(false)
+    if (insertError || !data) {
+      setError(insertError?.message ?? 'Failed to add reservation.')
+      return
+    }
+
+    onAdded(parseReservation(data as DbRow))
   }
-  out.sort((a, b) => a.dayIndex - b.dayIndex || a.hour * 60 + a.minute - (b.hour * 60 + b.minute))
-  return out
+
+  // ── UI helpers ───────────────────────────────────────────────────────────────
+  const TIME_SLOTS = Array.from({ length: 22 }, (_, i) => {
+    const totalMins = 12 * 60 + i * 30
+    const h = Math.floor(totalMins / 60)
+    const m = totalMins % 60
+    const value = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+    const period = h < 12 ? 'AM' : 'PM'
+    const dh = h > 12 ? h - 12 : h
+    return { value, label: `${dh}:${String(m).padStart(2, '0')} ${period}` }
+  })
+
+  const displayDate = date
+    ? new Date(date + 'T12:00:00').toLocaleDateString(undefined, {
+        weekday: 'long',
+        month: 'long',
+        day: 'numeric',
+      })
+    : 'Select date'
+
+  const guestFloating = focusedField === 'guest' || guestName.length > 0
+
+  const inp: React.CSSProperties = {
+    width: '100%',
+    borderRadius: 10,
+    background: t.bgSurface,
+    color: t.text,
+    paddingLeft: 16,
+    paddingRight: 16,
+    fontSize: 15,
+    outline: 'none',
+    fontFamily: 'inherit',
+    boxSizing: 'border-box',
+    colorScheme: 'light',
+  }
+
+  const iField = (field: string): React.CSSProperties =>
+    focusedField === field
+      ? { border: `1px solid ${t.accent}`, boxShadow: `0 0 0 3px ${t.accentSoftBg}` }
+      : { border: `1px solid ${t.border}` }
+
+  const secLabel: React.CSSProperties = {
+    display: 'block',
+    color: t.textMuted,
+    fontSize: 11,
+    fontWeight: 700,
+    letterSpacing: '0.12em',
+    textTransform: 'uppercase',
+    marginBottom: 8,
+  }
+
+  const stepBtn: React.CSSProperties = {
+    width: 36,
+    height: 36,
+    borderRadius: '50%',
+    border: `1px solid ${t.border}`,
+    background: t.bgSurface,
+    color: t.text,
+    fontSize: 20,
+    cursor: 'pointer',
+    display: 'grid',
+    placeItems: 'center',
+    flexShrink: 0,
+  }
+
+  return (
+    /* Overlay */
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.18 }}
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1000,
+        background: 'rgba(15, 23, 42, 0.45)',
+      }}
+    >
+      {/* Card */}
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.96, y: 20 }}
+        transition={
+          reduceMotion
+            ? { duration: 0.15 }
+            : { type: 'spring', stiffness: 320, damping: 26 }
+        }
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          position: 'relative',
+          width: 520,
+          maxWidth: '95vw',
+          maxHeight: '92vh',
+          overflowY: 'auto',
+          background: '#ffffff',
+          border: `1px solid ${t.border}`,
+          borderRadius: 16,
+          padding: 32,
+          boxShadow: '0 25px 50px rgba(15,23,42,0.15)',
+        }}
+      >
+        {/* ── Header ── */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
+          <div>
+            <h2
+              style={{
+                margin: 0,
+                color: t.text,
+                fontSize: 26,
+                fontWeight: 700,
+                fontFamily: 'var(--font-playfair)',
+                letterSpacing: '-0.02em',
+                lineHeight: 1.2,
+              }}
+            >
+              {isEdit ? 'Edit Reservation' : 'Add Reservation'}
+            </h2>
+            <p style={{ margin: '6px 0 0', color: t.textMuted, fontSize: 13 }}>
+              {isEdit ? 'Update reservation details' : 'Book a table for your guests'}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              flexShrink: 0,
+              marginLeft: 16,
+              width: 32,
+              height: 32,
+              borderRadius: 8,
+              border: `1px solid ${t.border}`,
+              background: t.bgSurface,
+              color: t.textMuted,
+              cursor: 'pointer',
+              fontSize: 18,
+              display: 'grid',
+              placeItems: 'center',
+            }}
+          >
+            ×
+          </button>
+        </div>
+
+        {/* Divider */}
+        <div style={{ height: 1, background: t.border, marginBottom: 24 }} />
+
+        {/* ── Form ── */}
+        <div style={{ display: 'grid', gap: 20 }}>
+
+          {/* Guest Name — floating label */}
+          <div style={{ position: 'relative' }}>
+            <input
+              type="text"
+              value={guestName}
+              onChange={(e) => setGuestName(e.target.value)}
+              onFocus={() => setFocusedField('guest')}
+              onBlur={() => setFocusedField(null)}
+              placeholder=""
+              style={{
+                ...inp,
+                ...iField('guest'),
+                paddingTop: guestFloating ? 22 : 16,
+                paddingBottom: guestFloating ? 10 : 16,
+                transition: 'border-color 0.15s, box-shadow 0.15s, padding 0.15s',
+              }}
+            />
+            <span
+              style={{
+                position: 'absolute',
+                left: 16,
+                top: guestFloating ? 8 : 15,
+                fontSize: guestFloating ? 11 : 15,
+                fontWeight: guestFloating ? 700 : 400,
+                letterSpacing: guestFloating ? '0.1em' : 0,
+                textTransform: guestFloating ? 'uppercase' : 'none',
+                color: focusedField === 'guest'
+                  ? t.accent
+                  : guestFloating
+                  ? t.textMuted
+                  : t.textSubtle,
+                pointerEvents: 'none',
+                transition: 'all 0.15s ease',
+                userSelect: 'none',
+              }}
+            >
+              Guest name
+            </span>
+          </div>
+
+          {/* Party Size — stepper */}
+          <div>
+            <span style={secLabel}>Party Size</span>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+                background: t.bgSurface,
+                border: `1px solid ${t.border}`,
+                borderRadius: 10,
+                padding: '8px 14px',
+              }}
+            >
+              <button type="button" onClick={() => setPartySize((s) => Math.max(1, s - 1))} style={stepBtn}>
+                −
+              </button>
+              <div style={{ flex: 1, textAlign: 'center', color: t.text, fontSize: 16, fontWeight: 600 }}>
+                {partySize} {partySize === 1 ? 'guest' : 'guests'}
+              </div>
+              <button type="button" onClick={() => setPartySize((s) => Math.min(20, s + 1))} style={stepBtn}>
+                +
+              </button>
+            </div>
+          </div>
+
+          {/* Date + Time */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            {/* Date — click to open native picker */}
+            <div>
+              <span style={secLabel}>Date</span>
+              <div
+                style={{
+                  position: 'relative',
+                  background: t.bgSurface,
+                  border: `1px solid ${t.border}`,
+                  borderRadius: 10,
+                  padding: '13px 14px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  overflow: 'hidden',
+                }}
+              >
+                <span style={{ fontSize: 15, flexShrink: 0 }}>📅</span>
+                <span
+                  style={{
+                    color: date ? t.text : t.textSubtle,
+                    fontSize: 13,
+                    fontWeight: 500,
+                    lineHeight: 1.3,
+                    flex: 1,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {displayDate}
+                </span>
+                <input
+                  ref={dateInputRef}
+                  type="date"
+                  value={date}
+                  min={isEdit ? undefined : new Date().toISOString().split('T')[0]}
+                  onChange={(e) => setDate(e.target.value)}
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    opacity: 0,
+                    cursor: 'pointer',
+                    width: '100%',
+                    colorScheme: 'light',
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Time — dropdown with restaurant hours */}
+            <div>
+              <span style={secLabel}>Time</span>
+              <div style={{ position: 'relative' }}>
+                <span
+                  style={{
+                    position: 'absolute',
+                    left: 14,
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    fontSize: 15,
+                    pointerEvents: 'none',
+                    zIndex: 1,
+                  }}
+                >
+                  🕐
+                </span>
+                <select
+                  value={time}
+                  onChange={(e) => setTime(e.target.value)}
+                  onFocus={() => setFocusedField('time')}
+                  onBlur={() => setFocusedField(null)}
+                  style={{
+                    ...inp,
+                    ...iField('time'),
+                    paddingTop: 13,
+                    paddingBottom: 13,
+                    paddingLeft: 40,
+                    appearance: 'none',
+                    WebkitAppearance: 'none',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {TIME_SLOTS.map(({ value, label }) => (
+                    <option key={value} value={value} style={{ color: t.text, background: '#ffffff' }}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Table Number */}
+          <input
+            type="text"
+            value={tableNumber}
+            onChange={(e) => setTableNumber(e.target.value)}
+            onFocus={() => setFocusedField('table')}
+            onBlur={() => setFocusedField(null)}
+            placeholder="Table number (optional)"
+            style={{
+              ...inp,
+              ...iField('table'),
+              paddingTop: 16,
+              paddingBottom: 16,
+            }}
+          />
+
+          {/* Edit-mode status */}
+          {isEdit && (
+            <div>
+              <span style={secLabel}>Status</span>
+              <select
+                value={editStatus}
+                onChange={(e) => setEditStatus(e.target.value as ResStatus)}
+                onFocus={() => setFocusedField('status')}
+                onBlur={() => setFocusedField(null)}
+                style={{
+                  ...inp,
+                  ...iField('status'),
+                  paddingTop: 13,
+                  paddingBottom: 13,
+                  appearance: 'none',
+                  WebkitAppearance: 'none',
+                  cursor: 'pointer',
+                }}
+              >
+                {STATUS_OPTIONS.map((s) => (
+                  <option key={s} value={s} style={{ color: t.text, background: '#ffffff' }}>
+                    {s.charAt(0).toUpperCase() + s.slice(1)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Special Requests */}
+          <textarea
+            value={specialRequests}
+            onChange={(e) => setSpecialRequests(e.target.value)}
+            onFocus={() => setFocusedField('notes')}
+            onBlur={() => setFocusedField(null)}
+            placeholder="Dietary requirements, special occasion, seating preference..."
+            rows={3}
+            style={{
+              ...inp,
+              ...iField('notes'),
+              paddingTop: 14,
+              paddingBottom: 14,
+              resize: 'none',
+              lineHeight: 1.6,
+            }}
+          />
+
+          {/* Error */}
+          {error && (
+            <div
+              style={{
+                padding: '12px 16px',
+                borderRadius: 10,
+                background: t.dangerBg,
+                border: `1px solid ${t.dangerBorder}`,
+                color: t.danger,
+                fontSize: 13,
+              }}
+            >
+              {error}
+            </div>
+          )}
+
+          {/* Submit */}
+          <motion.button
+            type="button"
+            onClick={() => void handleSubmit()}
+            disabled={saving}
+            whileHover={saving || reduceMotion ? undefined : { scale: 1.01 }}
+            whileTap={saving || reduceMotion ? undefined : { scale: 0.98 }}
+            style={{
+              width: '100%',
+              height: 50,
+              border: 'none',
+              borderRadius: 10,
+              background: saving ? t.bgSurfaceMuted : t.accent,
+              color: saving ? t.textSubtle : '#ffffff',
+              fontWeight: 600,
+              fontSize: 14,
+              letterSpacing: '0.04em',
+              cursor: saving ? 'not-allowed' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+              marginTop: 4,
+            }}
+          >
+            {saving ? (
+              <>
+                <motion.span
+                  animate={{ rotate: 360 }}
+                  transition={{ repeat: Infinity, duration: 0.7, ease: 'linear' }}
+                  style={{
+                    width: 16,
+                    height: 16,
+                    borderRadius: '50%',
+                    border: `2px solid ${t.border}`,
+                    borderTopColor: t.accent,
+                    display: 'inline-block',
+                  }}
+                />
+                {isEdit ? 'Saving…' : 'Confirming…'}
+              </>
+            ) : isEdit ? (
+              'Save Changes'
+            ) : (
+              'Confirm Reservation'
+            )}
+          </motion.button>
+        </div>
+      </motion.div>
+    </motion.div>
+  )
 }
 
+// ─── Main Page ────────────────────────────────────────────────────────────────
 export default function BookingsPage() {
-  const [weekBookings, setWeekBookings] = useState<WeekBooking[]>([])
+  const [view, setView] = useState<'calendar' | 'list'>('calendar')
+  const [monthOffset, setMonthOffset] = useState(0)
+  const [selectedDay, setSelectedDay] = useState<Date | null>(null)
+  const [listFilter, setListFilter] = useState<ListFilter>('today')
+  const [reservations, setReservations] = useState<Reservation[]>([])
+  const [loading, setLoading] = useState(true)
+  const [businessId, setBusinessId] = useState<string | null>(null)
+  const [showAddModal, setShowAddModal] = useState(false)
+  const [editReservation, setEditReservation] = useState<Reservation | null>(null)
+  const [prefilledDate, setPrefilledDate] = useState<string | undefined>(undefined)
   const reduceMotion = useReducedMotion()
 
   const today = new Date()
-  const monday = startOfWeekMonday(today)
-  const weekDays = Array.from({ length: 7 }, (_, index) => addDays(monday, index))
+  const displayMonth = new Date(today.getFullYear(), today.getMonth() + monthOffset, 1)
+  const monthLabel = displayMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
+
+  // ─── Load data ─────────────────────────────────────────────────────────────
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [updateError, setUpdateError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset loading + error on month change before async refetch
+    setLoading(true)
+    setLoadError(null)
 
-    async function loadAppointments() {
+    async function load() {
       const {
         data: { user: userFromGet },
       } = await supabase.auth.getUser()
@@ -136,69 +1485,157 @@ export default function BookingsPage() {
 
       if (!user) {
         if (!cancelled) {
-          setWeekBookings([])
+          setReservations([])
+          setBusinessId(null)
+          setLoading(false)
         }
         return
       }
 
-      const { data: business } = await supabase.from('businesses').select('id').eq('user_id', user.id).maybeSingle()
+      const { data: business } = await supabase
+        .from('businesses')
+        .select('id')
+        .eq('user_id', user.id)
+        .maybeSingle()
 
       if (!business?.id) {
         if (!cancelled) {
-          setWeekBookings([])
+          setReservations([])
+          setBusinessId(null)
+          setLoading(false)
         }
         return
       }
 
-      const weekStart = startOfWeekMonday(new Date())
-      weekStart.setHours(0, 0, 0, 0)
-      const weekEndExclusive = addDays(weekStart, 7)
-      weekEndExclusive.setHours(0, 0, 0, 0)
+      if (!cancelled) setBusinessId(business.id)
+
+      const start = new Date(displayMonth.getFullYear(), displayMonth.getMonth(), 1)
+      const end = new Date(displayMonth.getFullYear(), displayMonth.getMonth() + 1, 1)
 
       const { data: rows, error } = await supabase
         .from('appointments')
         .select('id, service_name, scheduled_at, status, customer_id')
         .eq('business_id', business.id)
-        .gte('scheduled_at', weekStart.toISOString())
-        .lt('scheduled_at', weekEndExclusive.toISOString())
+        .gte('scheduled_at', start.toISOString())
+        .lt('scheduled_at', end.toISOString())
         .order('scheduled_at', { ascending: true })
 
-      if (error || !rows) {
-        if (!cancelled) {
-          setWeekBookings([])
-        }
+      if (cancelled) return
+
+      if (error) {
+        setReservations([])
+        setLoadError("We couldn't load reservations.")
+        setLoading(false)
         return
       }
 
-      const typed = rows as AppointmentRow[]
-      const customerIds = [...new Set(typed.map((row) => row.customer_id).filter((id): id is string => Boolean(id)))]
+      if (!rows) {
+        setReservations([])
+        setLoading(false)
+        return
+      }
 
+      const typed = rows as DbRow[]
+      const ids = [
+        ...new Set(typed.map((r) => r.customer_id).filter((id): id is string => Boolean(id))),
+      ]
       const nameById = new Map<string, string>()
-      if (customerIds.length > 0) {
-        const { data: customers } = await supabase.from('customers').select('id, name').in('id', customerIds)
-        for (const customer of customers ?? []) {
-          if (customer.id && customer.name != null) {
-            nameById.set(String(customer.id), String(customer.name))
-          }
+
+      if (ids.length > 0) {
+        const { data: customers } = await supabase
+          .from('customers')
+          .select('id, name')
+          .in('id', ids)
+        for (const c of customers ?? []) {
+          if (c.id && c.name) nameById.set(String(c.id), String(c.name))
         }
       }
 
       if (!cancelled) {
-        setWeekBookings(mapRowsToWeekBookings(typed, nameById))
+        setReservations(
+          typed.map((r) =>
+            parseReservation(r, r.customer_id ? nameById.get(r.customer_id) : undefined),
+          ),
+        )
+        setLoading(false)
       }
     }
 
-    void loadAppointments()
-
+    void load()
+    const { data: sub } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_IN' || event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED') {
+        if (!cancelled) void load()
+      }
+    })
     return () => {
       cancelled = true
+      sub.subscription.unsubscribe()
     }
-  }, [])
+  }, [monthOffset]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ─── Helpers ───────────────────────────────────────────────────────────────
+  async function updateStatus(id: string, status: ResStatus) {
+    const previous = reservations
+    setReservations((prev) => prev.map((r) => (r.id === id ? { ...r, status } : r)))
+    setUpdateError(null)
+    const { error } = await supabase.from('appointments').update({ status }).eq('id', id)
+    if (error) {
+      setReservations(previous)
+      setUpdateError("Couldn't update reservation. Please try again.")
+    }
+  }
+
+  // ─── Stats ─────────────────────────────────────────────────────────────────
+  const stats = useMemo(() => {
+    const todayRes = reservations.filter(
+      (r) =>
+        isSameDay(r.scheduledAt, today) &&
+        r.status !== 'cancelled' &&
+        r.status !== 'no-show',
+    )
+    const todayCovers = todayRes.reduce((s, r) => s + r.partySize, 0)
+
+    const weekStart = startOfWeekMon(today)
+    const weekEnd = new Date(weekStart)
+    weekEnd.setDate(weekEnd.getDate() + 7)
+    const weekCount = reservations.filter(
+      (r) =>
+        r.scheduledAt >= weekStart &&
+        r.scheduledAt < weekEnd &&
+        r.status !== 'cancelled',
+    ).length
+
+    const pending = reservations.filter((r) => r.status === 'pending').length
+    return { todayCovers, weekCount, pending }
+  }, [reservations]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ─── Filtered list ─────────────────────────────────────────────────────────
+  const listReservations = useMemo(() => {
+    if (listFilter === 'today') return reservations.filter((r) => isSameDay(r.scheduledAt, today))
+    if (listFilter === 'week') {
+      const ws = startOfWeekMon(today)
+      const we = new Date(ws)
+      we.setDate(we.getDate() + 7)
+      return reservations.filter((r) => r.scheduledAt >= ws && r.scheduledAt < we)
+    }
+    return reservations
+  }, [reservations, listFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const selectedDayReservations = useMemo(
+    () =>
+      selectedDay
+        ? reservations.filter((r) => isSameDay(r.scheduledAt, selectedDay))
+        : [],
+    [reservations, selectedDay],
+  )
+
+  const showModal = showAddModal || editReservation !== null
 
   return (
     <DashboardOceanNav activeNav="Bookings">
       {({ isMobile, openNav }) => (
-        <main style={{ display: 'grid', gap: 20 }}>
+        <main style={{ display: 'grid', gap: 20, paddingBottom: 48 }}>
+          {/* Mobile hamburger */}
           {isMobile ? (
             <motion.button
               type="button"
@@ -207,283 +1644,374 @@ export default function BookingsPage() {
               style={{
                 width: 44,
                 height: 44,
-                borderRadius: 14,
-                border: '1px solid rgba(255,255,255,0.12)',
-                background: 'rgba(5,20,40,0.5)',
-                color: 'white',
+                borderRadius: 12,
+                border: `1px solid ${t.border}`,
+                background: t.bgSurface,
+                color: t.text,
                 fontSize: 22,
                 cursor: 'pointer',
+                boxShadow: t.shadowSm,
               }}
             >
               ☰
             </motion.button>
           ) : null}
 
-          <motion.section
+          {/* ── HEADER ── */}
+          <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={oceanTransition(reduceMotion, { duration: 0.24 })}
+            transition={oceanTransition(reduceMotion, { duration: 0.22 })}
             style={{
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: isMobile ? 'flex-start' : 'center',
               flexDirection: isMobile ? 'column' : 'row',
               gap: 16,
+              flexWrap: 'wrap',
             }}
           >
             <div>
               <h1
                 style={{
                   margin: 0,
-                  color: 'white',
-                  fontSize: 32,
+                  color: t.text,
+                  fontSize: 30,
                   fontWeight: 700,
                   fontFamily: 'var(--font-playfair)',
                   letterSpacing: '-0.03em',
                 }}
               >
-                Bookings
+                Reservations
               </h1>
-              <p style={{ margin: '8px 0 0', color: 'rgba(255,255,255,0.42)', fontSize: 14 }}>
-                Week of {monday.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} to{' '}
-                {addDays(monday, 6).toLocaleDateString(undefined, {
-                  month: 'short',
-                  day: 'numeric',
-                  year: 'numeric',
-                })}
+              <p style={{ margin: '6px 0 0', color: t.textMuted, fontSize: 13 }}>
+                Manage your restaurant reservations
               </p>
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              {/* Today button — jumps back to current month */}
+              <button
+                type="button"
+                onClick={() => setMonthOffset(0)}
+                style={{
+                  padding: '0 14px',
+                  height: 34,
+                  borderRadius: 8,
+                  border: `1px solid ${monthOffset === 0 ? t.accent : t.border}`,
+                  background: monthOffset === 0 ? t.accentSoftBg : t.bgSurface,
+                  color: monthOffset === 0 ? t.accent : t.text,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  letterSpacing: '0.04em',
+                }}
+              >
+                Today
+              </button>
+
+              {/* Month navigation — ← Month Year → */}
               <div
                 style={{
-                  ...shellCard,
-                  borderRadius: 16,
-                  padding: '6px',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: 6,
+                  gap: 2,
+                  padding: 4,
+                  borderRadius: 8,
+                  border: `1px solid ${t.border}`,
+                  background: t.bgSurface,
                 }}
               >
                 <button
                   type="button"
+                  onClick={() => setMonthOffset((o) => o - 1)}
+                  title="Previous month"
                   style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: 12,
-                    border: '1px solid rgba(255,255,255,0.08)',
-                    background: 'rgba(255,255,255,0.04)',
-                    color: 'rgba(255,255,255,0.7)',
+                    width: 32,
+                    height: 32,
+                    borderRadius: 6,
+                    border: 'none',
+                    background: 'transparent',
+                    color: t.text,
+                    fontSize: 16,
                     cursor: 'pointer',
                   }}
                 >
                   ←
                 </button>
+                <span
+                  style={{
+                    padding: '0 10px',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: t.text,
+                    whiteSpace: 'nowrap',
+                    minWidth: 110,
+                    textAlign: 'center',
+                    letterSpacing: '0.02em',
+                  }}
+                >
+                  {monthLabel}
+                </span>
                 <button
                   type="button"
+                  onClick={() => setMonthOffset((o) => o + 1)}
+                  title="Next month"
                   style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: 12,
-                    border: '1px solid rgba(255,255,255,0.08)',
-                    background: 'rgba(255,255,255,0.04)',
-                    color: 'rgba(255,255,255,0.7)',
+                    width: 32,
+                    height: 32,
+                    borderRadius: 6,
+                    border: 'none',
+                    background: 'transparent',
+                    color: t.text,
+                    fontSize: 16,
                     cursor: 'pointer',
                   }}
                 >
                   →
                 </button>
               </div>
-              <motion.button
-                type="button"
-                whileHover={reduceMotion ? undefined : { y: -2 }}
-                whileTap={reduceMotion ? undefined : { scale: 0.98 }}
+
+              {/* Calendar | List toggle */}
+              <div
                 style={{
-                  border: 'none',
-                  borderRadius: 16,
-                  padding: '12px 16px',
-                  background: 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)',
-                  color: 'white',
-                  fontSize: 13,
-                  fontWeight: 700,
-                  boxShadow: '0 10px 28px rgba(14,165,233,0.28)',
-                  cursor: 'pointer',
+                  display: 'flex',
+                  padding: 3,
+                  borderRadius: 8,
+                  border: `1px solid ${t.border}`,
+                  background: t.bgSurface,
                 }}
               >
-                Add Booking
-              </motion.button>
-            </div>
-          </motion.section>
-
-          {isMobile ? (
-            <div style={{ display: 'grid', gap: 14 }}>
-              {weekDays.map((day, index) => {
-                const dayBookings = weekBookings.filter((booking) => booking.dayIndex === index)
-
-                return (
-                  <motion.section
-                    key={day.toISOString()}
-                    initial={{ opacity: 0, scale: 0.97, y: 10 }}
-                    animate={{ opacity: 1, scale: 1, y: 0 }}
-                    transition={oceanTransition(reduceMotion, { delay: index * 0.04, duration: 0.2 })}
-                    style={{ ...shellCard, padding: 16 }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                      <div style={{ color: 'white', fontSize: 16, fontWeight: 700 }}>
-                        {day.toLocaleDateString(undefined, { weekday: 'long' })}
-                      </div>
-                      <div style={{ color: 'rgba(255,255,255,0.38)', fontSize: 12 }}>
-                        {day.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-                      </div>
-                    </div>
-
-                    <div style={{ marginTop: 12, display: 'grid', gap: 10 }}>
-                      {dayBookings.length === 0 ? (
-                        <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 13 }}>No bookings scheduled.</div>
-                      ) : (
-                        dayBookings.map((booking) => {
-                          const status = statusStyle(booking.status)
-                          return (
-                            <div
-                              key={booking.id}
-                              style={{
-                                borderRadius: 16,
-                                padding: 14,
-                                background: 'rgba(8,20,40,0.4)',
-                                border: '1px solid rgba(255,255,255,0.07)',
-                              }}
-                            >
-                              <div style={{ color: 'white', fontSize: 13, fontWeight: 700 }}>
-                                {formatTime(booking.hour, booking.minute)} • {booking.customerName}
-                              </div>
-                              <div style={{ marginTop: 6, color: 'rgba(255,255,255,0.62)', fontSize: 12 }}>
-                                {booking.service}
-                              </div>
-                              <span
-                                style={{
-                                  display: 'inline-block',
-                                  marginTop: 10,
-                                  padding: '5px 8px',
-                                  borderRadius: 999,
-                                  border: `1px solid ${status.border}`,
-                                  background: status.bg,
-                                  color: status.color,
-                                  fontSize: 10,
-                                  fontWeight: 700,
-                                }}
-                              >
-                                {booking.status}
-                              </span>
-                            </div>
-                          )
-                        })
-                      )}
-                    </div>
-                  </motion.section>
-                )
-              })}
-            </div>
-          ) : (
-            <motion.section
-              initial={{ opacity: 0, scale: 0.98, y: 12 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              transition={oceanTransition(reduceMotion, { delay: 0.06, duration: 0.24 })}
-              style={{
-                ...shellCard,
-                padding: 16,
-                display: 'grid',
-                gridTemplateColumns: 'repeat(7, minmax(0, 1fr))',
-                gap: 12,
-                alignItems: 'start',
-              }}
-            >
-              {weekDays.map((day, index) => {
-                const dayBookings = weekBookings.filter((booking) => booking.dayIndex === index)
-                const isToday = index === (today.getDay() + 6) % 7
-
-                return (
-                  <div
-                    key={day.toISOString()}
+                {(['calendar', 'list'] as const).map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => setView(v)}
                     style={{
-                      minHeight: 520,
-                      borderRadius: 16,
-                      padding: 14,
-                      background: 'rgba(8,20,40,0.4)',
-                      border: isToday ? '1px solid #38bdf8' : '1px solid rgba(255,255,255,0.07)',
-                      display: 'grid',
-                      alignContent: 'start',
-                      gap: 10,
+                      padding: '6px 14px',
+                      borderRadius: 6,
+                      border: 'none',
+                      background: view === v ? t.accentSoftBg : 'transparent',
+                      color: view === v ? t.accent : t.textMuted,
+                      fontSize: 12,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      transition: 'background 0.15s, color 0.15s',
                     }}
                   >
-                    <div>
-                      <div style={{ color: 'rgba(255,255,255,0.42)', fontSize: 11, letterSpacing: '0.16em', textTransform: 'uppercase' }}>
-                        {day.toLocaleDateString(undefined, { weekday: 'short' })}
-                      </div>
-                      <div style={{ marginTop: 6, color: 'white', fontSize: 22, fontWeight: 700 }}>
-                        {day.getDate()}
-                      </div>
-                    </div>
+                    {v === 'calendar' ? 'Calendar' : 'List'}
+                  </button>
+                ))}
+              </div>
 
-                    <div style={{ display: 'grid', gap: 10 }}>
-                      {dayBookings.length === 0 ? (
-                        <div
-                          style={{
-                            borderRadius: 14,
-                            border: '1px dashed rgba(255,255,255,0.08)',
-                            padding: 14,
-                            color: 'rgba(255,255,255,0.32)',
-                            fontSize: 12,
-                          }}
-                        >
-                          Open availability
-                        </div>
-                      ) : (
-                        dayBookings.map((booking) => {
-                          const status = statusStyle(booking.status)
-                          return (
-                            <div
-                              key={booking.id}
-                              style={{
-                                borderRadius: 16,
-                                padding: 12,
-                                background: 'rgba(8,20,40,0.4)',
-                                border: '1px solid rgba(255,255,255,0.07)',
-                              }}
-                            >
-                              <div style={{ color: 'white', fontSize: 12, fontWeight: 700 }}>
-                                {formatTime(booking.hour, booking.minute)}
-                              </div>
-                              <div style={{ marginTop: 5, color: 'white', fontSize: 13, fontWeight: 600 }}>
-                                {booking.customerName}
-                              </div>
-                              <div style={{ marginTop: 4, color: 'rgba(255,255,255,0.58)', fontSize: 12 }}>
-                                {booking.service}
-                              </div>
-                              <span
-                                style={{
-                                  display: 'inline-block',
-                                  marginTop: 10,
-                                  padding: '5px 8px',
-                                  borderRadius: 999,
-                                  border: `1px solid ${status.border}`,
-                                  background: status.bg,
-                                  color: status.color,
-                                  fontSize: 10,
-                                  fontWeight: 700,
-                                }}
-                              >
-                                {booking.status}
-                              </span>
-                            </div>
-                          )
-                        })
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
-            </motion.section>
-          )}
+              {/* Add Reservation */}
+              <motion.button
+                type="button"
+                whileHover={reduceMotion ? undefined : { y: -1 }}
+                whileTap={reduceMotion ? undefined : { scale: 0.98 }}
+                onClick={() => setShowAddModal(true)}
+                style={{
+                  border: 'none',
+                  borderRadius: 8,
+                  padding: '9px 18px',
+                  background: t.accent,
+                  color: '#ffffff',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                + Add Reservation
+              </motion.button>
+            </div>
+          </motion.div>
+
+          {/* ── ERRORS ── */}
+          {loadError || updateError ? (
+            <motion.div
+              role="alert"
+              initial={{ opacity: 0, y: -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              style={{
+                borderRadius: 10,
+                border: `1px solid ${t.dangerBorder}`,
+                background: t.dangerBg,
+                color: t.danger,
+                padding: '12px 16px',
+                fontSize: 13,
+                display: 'flex',
+                gap: 12,
+                alignItems: 'center',
+                justifyContent: 'space-between',
+              }}
+            >
+              <span>{loadError ?? updateError}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setLoadError(null)
+                  setUpdateError(null)
+                }}
+                style={{
+                  border: 'none',
+                  background: 'transparent',
+                  color: t.danger,
+                  cursor: 'pointer',
+                  fontSize: 13,
+                  fontWeight: 700,
+                }}
+              >
+                Dismiss
+              </button>
+            </motion.div>
+          ) : null}
+
+          {/* ── STATS ── */}
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={oceanTransition(reduceMotion, { delay: 0.05, duration: 0.22 })}
+            style={{
+              display: 'grid',
+              gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, minmax(0, 1fr))',
+              gap: 14,
+            }}
+          >
+            {[
+              { label: "Today's Covers", value: loading ? '—' : String(stats.todayCovers) },
+              { label: 'This Week', value: loading ? '—' : String(stats.weekCount) },
+              { label: 'Pending', value: loading ? '—' : String(stats.pending) },
+            ].map(({ label, value }) => (
+              <div key={label} style={{ ...glass, padding: 16 }}>
+                <div
+                  style={{
+                    color: t.textMuted,
+                    fontSize: 11,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.16em',
+                    fontWeight: 600,
+                  }}
+                >
+                  {label}
+                </div>
+                <div
+                  style={{ marginTop: 10, color: t.text, fontSize: 28, fontWeight: 700 }}
+                >
+                  {value}
+                </div>
+              </div>
+            ))}
+          </motion.div>
+
+          {/* ── MAIN VIEW ── */}
+          <AnimatePresence mode="wait">
+            {view === 'calendar' ? (
+              <motion.div
+                key="calendar"
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                transition={oceanTransition(reduceMotion, { duration: 0.18 })}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns:
+                    selectedDay && !isMobile ? 'minmax(0, 1fr) 340px' : '1fr',
+                  gap: 16,
+                  alignItems: 'start',
+                }}
+              >
+                <MonthCalendar
+                  displayMonth={displayMonth}
+                  reservations={reservations}
+                  selectedDay={selectedDay}
+                  onSelectDay={(d) =>
+                    setSelectedDay((prev) =>
+                      prev && isSameDay(prev, d) ? null : d,
+                    )
+                  }
+                  today={today}
+                />
+                <AnimatePresence>
+                  {selectedDay && (
+                    <DayPanel
+                      key={selectedDay.toISOString()}
+                      day={selectedDay}
+                      reservations={selectedDayReservations}
+                      onClose={() => setSelectedDay(null)}
+                      onConfirm={(id) => void updateStatus(id, 'confirmed')}
+                      onCancel={(id) => void updateStatus(id, 'cancelled')}
+                      onEdit={(r) => setEditReservation(r)}
+                      onAddForDay={() => {
+                        const d = selectedDay
+                        const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+                        setPrefilledDate(iso)
+                        setShowAddModal(true)
+                      }}
+                    />
+                  )}
+                </AnimatePresence>
+              </motion.div>
+            ) : (
+              <motion.div
+                key="list"
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                transition={oceanTransition(reduceMotion, { duration: 0.18 })}
+              >
+                <ReservationListView
+                  reservations={listReservations}
+                  filter={listFilter}
+                  onFilterChange={setListFilter}
+                  loading={loading}
+                  onConfirm={(id) => void updateStatus(id, 'confirmed')}
+                  onCancel={(id) => void updateStatus(id, 'cancelled')}
+                  onEdit={(r) => setEditReservation(r)}
+                  isMobile={isMobile}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* ── MODAL ── */}
+          <AnimatePresence>
+            {showModal && (
+              <ReservationModal
+                mode={editReservation ? 'edit' : 'add'}
+                editReservation={editReservation}
+                initialDate={editReservation ? undefined : prefilledDate}
+                onClose={() => {
+                  setShowAddModal(false)
+                  setEditReservation(null)
+                  setPrefilledDate(undefined)
+                }}
+                businessId={businessId}
+                onAdded={(newRes) => {
+                  if (
+                    newRes.scheduledAt.getFullYear() === displayMonth.getFullYear() &&
+                    newRes.scheduledAt.getMonth() === displayMonth.getMonth()
+                  ) {
+                    setReservations((prev) =>
+                      [...prev, newRes].sort(
+                        (a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime(),
+                      ),
+                    )
+                  }
+                  setShowAddModal(false)
+                  setPrefilledDate(undefined)
+                }}
+                onUpdated={(updated) => {
+                  setReservations((prev) =>
+                    prev
+                      .map((r) => (r.id === updated.id ? updated : r))
+                      .sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime()),
+                  )
+                  setEditReservation(null)
+                }}
+              />
+            )}
+          </AnimatePresence>
         </main>
       )}
     </DashboardOceanNav>
