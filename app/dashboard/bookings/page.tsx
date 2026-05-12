@@ -213,7 +213,7 @@ function MonthCalendar({
                 {date.getDate()}
               </span>
               {dayRes.length > 0 && (
-                <>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 3, alignSelf: 'flex-start' }}>
                   <span
                     style={{
                       fontSize: 10,
@@ -223,16 +223,16 @@ function MonthCalendar({
                       border: `1px solid ${t.accentSoftBorder}`,
                       borderRadius: 6,
                       padding: '2px 6px',
-                      alignSelf: 'flex-start',
                       whiteSpace: 'nowrap',
+                      lineHeight: 1.4,
                     }}
                   >
-                    {dayRes.length} {dayRes.length === 1 ? 'res' : 'res'}
+                    {dayRes.length} {dayRes.length === 1 ? 'booking' : 'bookings'}
                   </span>
-                  <span style={{ fontSize: 10, color: t.textMuted, paddingLeft: 2 }}>
-                    {covers} covers
+                  <span style={{ fontSize: 9, color: t.textMuted, paddingLeft: 2, lineHeight: 1.2 }}>
+                    {covers} {covers === 1 ? 'guest' : 'guests'}
                   </span>
-                </>
+                </div>
               )}
             </button>
           )
@@ -249,6 +249,7 @@ function DayPanel({
   onClose,
   onConfirm,
   onCancel,
+  onDelete,
   onEdit,
   onAddForDay,
 }: {
@@ -257,6 +258,7 @@ function DayPanel({
   onClose: () => void
   onConfirm: (id: string) => void
   onCancel: (id: string) => void
+  onDelete: (id: string) => void
   onEdit: (r: Reservation) => void
   onAddForDay: () => void
 }) {
@@ -460,23 +462,43 @@ function DayPanel({
                         </button>
                       </>
                     )}
-                    <button
-                      type="button"
-                      onClick={() => onEdit(r)}
-                      style={{
-                        flex: r.status === 'pending' ? 'none' : 1,
-                        padding: '7px 10px',
-                        borderRadius: 8,
-                        border: `1px solid ${t.border}`,
-                        background: t.bgSurface,
-                        color: t.text,
-                        fontSize: 12,
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                      }}
-                    >
-                      Edit
-                    </button>
+                    {(r.status === 'cancelled' || r.status === 'no-show') ? (
+                      <button
+                        type="button"
+                        onClick={() => onDelete(r.id)}
+                        style={{
+                          flex: 1,
+                          padding: '7px 10px',
+                          borderRadius: 8,
+                          border: `1px solid ${t.dangerBorder}`,
+                          background: t.dangerBg,
+                          color: t.danger,
+                          fontSize: 12,
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Delete
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => onEdit(r)}
+                        style={{
+                          flex: r.status === 'pending' ? 'none' : 1,
+                          padding: '7px 10px',
+                          borderRadius: 8,
+                          border: `1px solid ${t.border}`,
+                          background: t.bgSurface,
+                          color: t.text,
+                          fontSize: 12,
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Edit
+                      </button>
+                    )}
                   </div>
                 </div>
               )
@@ -496,6 +518,7 @@ function ReservationListView({
   loading,
   onConfirm,
   onCancel,
+  onDelete,
   onEdit,
   isMobile,
 }: {
@@ -505,6 +528,7 @@ function ReservationListView({
   loading: boolean
   onConfirm: (id: string) => void
   onCancel: (id: string) => void
+  onDelete: (id: string) => void
   onEdit: (r: Reservation) => void
   isMobile: boolean
 }) {
@@ -647,22 +671,42 @@ function ReservationListView({
                         </button>
                       </>
                     )}
-                    <button
-                      type="button"
-                      onClick={() => onEdit(r)}
-                      style={{
-                        padding: '7px 14px',
-                        borderRadius: 8,
-                        border: `1px solid ${t.border}`,
-                        background: t.bgSurface,
-                        color: t.text,
-                        fontSize: 12,
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                      }}
-                    >
-                      Edit
-                    </button>
+                    {(r.status === 'cancelled' || r.status === 'no-show') ? (
+                      <button
+                        type="button"
+                        onClick={() => onDelete(r.id)}
+                        style={{
+                          flex: 1,
+                          padding: '7px 14px',
+                          borderRadius: 8,
+                          border: `1px solid ${t.dangerBorder}`,
+                          background: t.dangerBg,
+                          color: t.danger,
+                          fontSize: 12,
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Delete
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => onEdit(r)}
+                        style={{
+                          padding: '7px 14px',
+                          borderRadius: 8,
+                          border: `1px solid ${t.border}`,
+                          background: t.bgSurface,
+                          color: t.text,
+                          fontSize: 12,
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Edit
+                      </button>
+                    )}
                   </div>
                 </div>
               )
@@ -834,22 +878,41 @@ function ReservationListView({
                               </button>
                             </>
                           )}
-                          <button
-                            type="button"
-                            onClick={() => onEdit(r)}
-                            style={{
-                              padding: '5px 12px',
-                              borderRadius: 6,
-                              border: `1px solid ${t.border}`,
-                              background: t.bgSurface,
-                              color: t.text,
-                              fontSize: 11,
-                              fontWeight: 600,
-                              cursor: 'pointer',
-                            }}
-                          >
-                            Edit
-                          </button>
+                          {(r.status === 'cancelled' || r.status === 'no-show') ? (
+                            <button
+                              type="button"
+                              onClick={() => onDelete(r.id)}
+                              style={{
+                                padding: '5px 12px',
+                                borderRadius: 6,
+                                border: `1px solid ${t.dangerBorder}`,
+                                background: t.dangerBg,
+                                color: t.danger,
+                                fontSize: 11,
+                                fontWeight: 600,
+                                cursor: 'pointer',
+                              }}
+                            >
+                              Delete
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => onEdit(r)}
+                              style={{
+                                padding: '5px 12px',
+                                borderRadius: 6,
+                                border: `1px solid ${t.border}`,
+                                background: t.bgSurface,
+                                color: t.text,
+                                fontSize: 11,
+                                fontWeight: 600,
+                                cursor: 'pointer',
+                              }}
+                            >
+                              Edit
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -1024,7 +1087,7 @@ function ReservationModal({
   const inp: React.CSSProperties = {
     width: '100%',
     borderRadius: 10,
-    background: t.bgSurface,
+    background: 'rgba(255,255,255,0.06)',
     color: t.text,
     paddingLeft: 16,
     paddingRight: 16,
@@ -1032,7 +1095,7 @@ function ReservationModal({
     outline: 'none',
     fontFamily: 'inherit',
     boxSizing: 'border-box',
-    colorScheme: 'light',
+    colorScheme: 'dark',
   }
 
   const iField = (field: string): React.CSSProperties =>
@@ -1099,11 +1162,11 @@ function ReservationModal({
           maxWidth: '95vw',
           maxHeight: '92vh',
           overflowY: 'auto',
-          background: '#ffffff',
-          border: `1px solid ${t.border}`,
+          background: t.bgApp,
+          border: `1px solid ${t.borderStrong}`,
           borderRadius: 16,
           padding: 32,
-          boxShadow: '0 25px 50px rgba(15,23,42,0.15)',
+          boxShadow: '0 25px 50px rgba(0,0,0,0.6)',
         }}
       >
         {/* ── Header ── */}
@@ -1202,7 +1265,7 @@ function ReservationModal({
                 display: 'flex',
                 alignItems: 'center',
                 gap: 12,
-                background: t.bgSurface,
+                background: 'rgba(255,255,255,0.06)',
                 border: `1px solid ${t.border}`,
                 borderRadius: 10,
                 padding: '8px 14px',
@@ -1228,7 +1291,7 @@ function ReservationModal({
               <div
                 style={{
                   position: 'relative',
-                  background: t.bgSurface,
+                  background: 'rgba(255,255,255,0.06)',
                   border: `1px solid ${t.border}`,
                   borderRadius: 10,
                   padding: '13px 14px',
@@ -1266,7 +1329,7 @@ function ReservationModal({
                     opacity: 0,
                     cursor: 'pointer',
                     width: '100%',
-                    colorScheme: 'light',
+                    colorScheme: 'dark',
                   }}
                 />
               </div>
@@ -1306,7 +1369,7 @@ function ReservationModal({
                   }}
                 >
                   {TIME_SLOTS.map(({ value, label }) => (
-                    <option key={value} value={value} style={{ color: t.text, background: '#ffffff' }}>
+                    <option key={value} value={value} style={{ color: '#ffffff', background: '#1a2a4a' }}>
                       {label}
                     </option>
                   ))}
@@ -1351,7 +1414,7 @@ function ReservationModal({
                 }}
               >
                 {STATUS_OPTIONS.map((s) => (
-                  <option key={s} value={s} style={{ color: t.text, background: '#ffffff' }}>
+                  <option key={s} value={s} style={{ color: '#ffffff', background: '#1a2a4a' }}>
                     {s.charAt(0).toUpperCase() + s.slice(1)}
                   </option>
                 ))}
@@ -1587,6 +1650,17 @@ export default function BookingsPage() {
     if (error) {
       setReservations(previous)
       setUpdateError("Couldn't update reservation. Please try again.")
+    }
+  }
+
+  async function deleteReservation(id: string) {
+    const previous = reservations
+    setReservations((prev) => prev.filter((r) => r.id !== id))
+    setUpdateError(null)
+    const { error } = await supabase.from('appointments').delete().eq('id', id)
+    if (error) {
+      setReservations(previous)
+      setUpdateError("Couldn't delete reservation. Please try again.")
     }
   }
 
@@ -1884,7 +1958,7 @@ export default function BookingsPage() {
             }}
           >
             {[
-              { label: "Today's Covers", value: loading ? '—' : String(stats.todayCovers) },
+              { label: 'Guests Today', value: loading ? '—' : String(stats.todayCovers) },
               { label: 'This Week', value: loading ? '—' : String(stats.weekCount) },
               { label: 'Pending', value: loading ? '—' : String(stats.pending) },
             ].map(({ label, value }) => (
@@ -1946,6 +2020,7 @@ export default function BookingsPage() {
                       onClose={() => setSelectedDay(null)}
                       onConfirm={(id) => void updateStatus(id, 'confirmed')}
                       onCancel={(id) => void updateStatus(id, 'cancelled')}
+                      onDelete={(id) => void deleteReservation(id)}
                       onEdit={(r) => setEditReservation(r)}
                       onAddForDay={() => {
                         const d = selectedDay
@@ -1972,6 +2047,7 @@ export default function BookingsPage() {
                   loading={loading}
                   onConfirm={(id) => void updateStatus(id, 'confirmed')}
                   onCancel={(id) => void updateStatus(id, 'cancelled')}
+                  onDelete={(id) => void deleteReservation(id)}
                   onEdit={(r) => setEditReservation(r)}
                   isMobile={isMobile}
                 />

@@ -1,7 +1,7 @@
 'use client'
 
 import { AnimatePresence, motion } from 'framer-motion'
-import { Suspense, useEffect, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 
 import { supabase } from '@/lib/supabase'
@@ -13,6 +13,7 @@ type WidgetMessage = {
 }
 
 const DEFAULT_CONCIERGE_NAME = 'AI Concierge'
+const SESSION_TTL_MS = 24 * 60 * 60 * 1000
 
 const buildWelcome = (businessName: string | null, conciergeName: string): WidgetMessage => ({
   id: 'welcome',
@@ -22,6 +23,35 @@ const buildWelcome = (businessName: string | null, conciergeName: string): Widge
     : `Hi! I'm ${conciergeName}. Ask me about reservations, the menu, hours, or anything else.`,
 })
 
+function storageKey(businessId: string) {
+  return `oceancore-conv-${businessId}`
+}
+
+function saveSession(businessId: string, convId: string) {
+  try {
+    localStorage.setItem(storageKey(businessId), JSON.stringify({ id: convId, ts: Date.now() }))
+  } catch { /* storage full / blocked — non-critical */ }
+}
+
+function loadSession(businessId: string): string | null {
+  try {
+    const raw = localStorage.getItem(storageKey(businessId))
+    if (!raw) return null
+    const { id, ts } = JSON.parse(raw) as { id: string; ts: number }
+    if (Date.now() - ts > SESSION_TTL_MS) {
+      localStorage.removeItem(storageKey(businessId))
+      return null
+    }
+    return id
+  } catch {
+    return null
+  }
+}
+
+function clearSession(businessId: string) {
+  try { localStorage.removeItem(storageKey(businessId)) } catch { /* noop */ }
+}
+
 function WidgetPageInner() {
   const searchParams = useSearchParams()
   const businessId = searchParams.get('business_id')
@@ -30,17 +60,68 @@ function WidgetPageInner() {
 
   const [isOpen, setIsOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [historyLoading, setHistoryLoading] = useState(false)
   const [draft, setDraft] = useState('')
   const [messages, setMessages] = useState<WidgetMessage[]>([
     buildWelcome(null, DEFAULT_CONCIERGE_NAME),
   ])
   const [conversationId, setConversationId] = useState<string | null>(null)
   const messagesContainerRef = useRef<HTMLDivElement | null>(null)
+  const restoredRef = useRef(false)
 
+  // Restore session from localStorage on mount / businessId change
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- new embed target needs fresh conversation
-    setConversationId(null)
+    restoredRef.current = false
+    if (!businessId) {
+      setConversationId(null)
+      return
+    }
+    const saved = loadSession(businessId)
+    if (saved) {
+      setConversationId(saved)
+      restoredRef.current = true
+    } else {
+      setConversationId(null)
+    }
   }, [businessId])
+
+  // When conversationId is restored, fetch message history from DB
+  useEffect(() => {
+    if (!conversationId || !restoredRef.current) return
+    restoredRef.current = false
+
+    let cancelled = false
+    setHistoryLoading(true)
+
+    void (async () => {
+      const { data: rows } = await supabase
+        .from('messages')
+        .select('id, role, content')
+        .eq('conversation_id', conversationId)
+        .order('created_at', { ascending: true })
+
+      if (cancelled) return
+
+      if (rows && rows.length > 0) {
+        const history: WidgetMessage[] = rows.map((r) => ({
+          id: r.id,
+          sender: r.role === 'user' ? 'customer' as const : 'ai' as const,
+          text: r.content ?? '',
+        }))
+        setMessages(history)
+      }
+      setHistoryLoading(false)
+    })()
+
+    return () => { cancelled = true }
+  }, [conversationId])
+
+  // Persist conversationId to localStorage whenever it changes
+  useEffect(() => {
+    if (conversationId && businessId) {
+      saveSession(businessId, conversationId)
+    }
+  }, [conversationId, businessId])
 
   useEffect(() => {
     if (!conversationId) {
@@ -68,10 +149,7 @@ function WidgetPageInner() {
 
           if (isAssistant) {
             setMessages((prev) => {
-              // ID already in state — realtime delivered twice, skip
               if (prev.some((m) => m.id === incomingId)) return prev
-              // Find our own optimistically-rendered AI message (temp id starts with 'ai-')
-              // and replace its temp id with the real DB UUID — same pattern as customer messages.
               const ownIdx = prev.findLastIndex(
                 (m) => m.sender === 'ai' && m.text === content && m.id.startsWith('ai-'),
               )
@@ -80,14 +158,11 @@ function WidgetPageInner() {
                 next[ownIdx] = { ...next[ownIdx], id: incomingId }
                 return next
               }
-              // No optimistic match — this is an operator message from the dashboard
               return [...prev, { id: incomingId, sender: 'ai', text: content }]
             })
             return
           }
 
-          // Customer messages are added optimistically with a temp id.
-          // Replace the optimistic entry by content to avoid duplicates.
           setMessages((prev) => {
             if (prev.some((m) => m.id === incomingId)) return prev
             const optimisticIdx = prev.findLastIndex(
@@ -109,6 +184,22 @@ function WidgetPageInner() {
     }
   }, [conversationId])
 
+  // Presence heartbeat — lets the dashboard see that the guest is online
+  useEffect(() => {
+    if (!isOpen || !conversationId) return
+
+    const channel = supabase.channel(`presence:conv:${conversationId}`)
+    channel.subscribe(async (status) => {
+      if (status === 'SUBSCRIBED') {
+        await channel.track({ online_at: Date.now() })
+      }
+    })
+
+    return () => {
+      void supabase.removeChannel(channel)
+    }
+  }, [isOpen, conversationId])
+
   useEffect(() => {
     if (!isOpen) {
       return
@@ -122,7 +213,6 @@ function WidgetPageInner() {
 
   useEffect(() => {
     if (!businessId) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- clear name when no business context
       setBusinessName(null)
       setConciergeName(DEFAULT_CONCIERGE_NAME)
       return
@@ -152,6 +242,12 @@ function WidgetPageInner() {
       cancelled = true
     }
   }, [businessId])
+
+  const handleNewChat = useCallback(() => {
+    if (businessId) clearSession(businessId)
+    setConversationId(null)
+    setMessages([buildWelcome(businessName, conciergeName)])
+  }, [businessId, businessName, conciergeName])
 
   const headerTitle = businessName ?? conciergeName
 
@@ -189,9 +285,6 @@ function WidgetPageInner() {
           body.conversation_id = conversationId
         }
       }
-      if (!conversationId && businessId) {
-        console.log('[widget] creating new conversation with business_id:', businessId)
-      }
 
       const response = await fetch('/api/chat', {
         method: 'POST',
@@ -222,7 +315,6 @@ function WidgetPageInner() {
           : 'Sorry, something went wrong. Please try again.'
 
       setMessages((prev) => {
-        // Realtime may have already delivered this exact message — skip if duplicate text
         const lastAi = [...prev].reverse().find((m) => m.sender === 'ai')
         if (lastAi && lastAi.text === aiText && !lastAi.id.startsWith('ai-')) return prev
         return [
@@ -310,29 +402,57 @@ function WidgetPageInner() {
                   <span style={{ fontSize: 12, color: 'var(--ocean-text-muted)' }}>Online</span>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setIsOpen(false)}
-                style={{
-                  border: 'none',
-                  borderRadius: 8,
-                  width: 30,
-                  height: 30,
-                  cursor: 'pointer',
-                  background: 'var(--ocean-surface)',
-                  color: 'var(--ocean-text-muted)',
-                  fontSize: 18,
-                  lineHeight: 1,
-                }}
-              >
-                ×
-              </button>
+              <div style={{ display: 'flex', gap: 6 }}>
+                {conversationId && (
+                  <button
+                    type="button"
+                    onClick={handleNewChat}
+                    title="New chat"
+                    style={{
+                      border: 'none',
+                      borderRadius: 8,
+                      height: 30,
+                      padding: '0 10px',
+                      cursor: 'pointer',
+                      background: 'var(--ocean-surface)',
+                      color: 'var(--ocean-text-muted)',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      letterSpacing: '0.02em',
+                    }}
+                  >
+                    New Chat
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setIsOpen(false)}
+                  style={{
+                    border: 'none',
+                    borderRadius: 8,
+                    width: 30,
+                    height: 30,
+                    cursor: 'pointer',
+                    background: 'var(--ocean-surface)',
+                    color: 'var(--ocean-text-muted)',
+                    fontSize: 18,
+                    lineHeight: 1,
+                  }}
+                >
+                  ×
+                </button>
+              </div>
             </header>
 
             <div
               ref={messagesContainerRef}
               style={{ flex: 1, padding: '14px 12px', overflowY: 'auto', background: 'var(--ocean-deep)' }}
             >
+              {historyLoading && (
+                <div style={{ padding: '20px 0', textAlign: 'center', color: 'var(--ocean-text-muted)', fontSize: 13 }}>
+                  Loading conversation…
+                </div>
+              )}
               {messages.map((message) => {
                 const isCustomer = message.sender === 'customer'
                 return (

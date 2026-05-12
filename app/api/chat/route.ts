@@ -373,6 +373,16 @@ async function tryCreateReservationFromChat(params: {
 
   if (!business_id || !customer_id) return false
 
+  // Prevent duplicates: skip if a reservation already exists for this conversation
+  const { count } = await supabaseAdmin
+    .from('appointments')
+    .select('id', { count: 'exact', head: true })
+    .eq('conversation_id', conversation_id)
+  if (count && count > 0) {
+    console.log('[booking] Reservation already exists for conversation, skipping')
+    return false
+  }
+
   // Require a real name — never create a reservation for 'Website visitor' or 'Guest'
   const guestName = extractGuestNameFromConversation(chatMessages, assistantText)
   if (!guestName || /^(guest|website visitor)$/i.test(guestName.trim())) return false
