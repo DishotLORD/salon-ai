@@ -52,7 +52,7 @@ function normalizeStatus(raw: string | null | undefined): ConversationStatus {
   if (key === 'waiting') {
     return 'Waiting'
   }
-  if (key === 'resolved') {
+  if (key === 'resolved' || key === 'closed') {
     return 'Resolved'
   }
   if (key === 'active' || key === 'live' || key === '') {
@@ -105,7 +105,10 @@ function mapDbConversationToConversation(row: DbConversationRow): Conversation {
   const lastActivity = row.updated_at ?? last?.created_at
   return {
     id: row.id,
-    customerName: row.customer_name?.trim() || 'Guest',
+    customerName:
+      row.customer_name?.trim() && row.customer_name.trim().toLowerCase() !== 'website visitor'
+        ? row.customer_name.trim()
+        : 'Guest',
     preview,
     time: formatRelativeTime(lastActivity),
     status: normalizeStatus(row.status),
@@ -145,6 +148,9 @@ export default function ChatsInboxPage() {
   const [conciergeName, setConciergeName] = useState('AI Concierge')
   const [takeoverError, setTakeoverError] = useState('')
   const [businessId, setBusinessId] = useState<string | null>(null)
+  const [filterTab, setFilterTab] = useState<'All' | 'Active' | 'Human' | 'Closed'>('All')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [hoveredId, setHoveredId] = useState<string | null>(null)
   const messagesScrollRef = useRef<HTMLDivElement | null>(null)
   const reduceMotion = useReducedMotion()
 
@@ -216,6 +222,7 @@ export default function ChatsInboxPage() {
       setInboxLoaded(true)
 
       if (error) {
+        console.error('[chats] conversations fetch error:', error.message)
         setInboxFetchError(true)
         setConversationList([])
         setSelectedId('')
@@ -223,6 +230,8 @@ export default function ChatsInboxPage() {
       }
 
       setInboxFetchError(false)
+
+      console.log('[chats] business_id:', business.id, '| conversations returned:', data?.length ?? 0, data)
 
       if (!data?.length) {
         setConversationList([])
@@ -247,6 +256,25 @@ export default function ChatsInboxPage() {
     }
     return conversationList.find((conversation) => conversation.id === selectedId) ?? null
   }, [conversationList, selectedId])
+
+  const filteredList = useMemo(() => {
+    const statusOrder: Record<ConversationStatus, number> = { Live: 0, Human: 1, Waiting: 2, Resolved: 3 }
+    let list = conversationList
+    if (filterTab === 'Active') list = list.filter((c) => c.status === 'Live')
+    else if (filterTab === 'Human') list = list.filter((c) => c.status === 'Human')
+    else if (filterTab === 'Closed') list = list.filter((c) => c.status === 'Resolved')
+    else {
+      // "All" — sort active/human first, resolved last
+      list = [...list].sort((a, b) => statusOrder[a.status] - statusOrder[b.status])
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase()
+      list = list.filter(
+        (c) => c.customerName.toLowerCase().includes(q) || c.preview.toLowerCase().includes(q),
+      )
+    }
+    return list
+  }, [conversationList, filterTab, searchQuery])
 
   useEffect(() => {
     if (!selectedId) {
@@ -278,8 +306,12 @@ export default function ChatsInboxPage() {
               if (conversation.messages.some((message) => message.id === incoming.id)) {
                 return conversation
               }
+              // List fields explicitly — status is never touched here so
+              // human/AI takeover state is always preserved.
               return {
-                ...conversation,
+                id: conversation.id,
+                customerName: conversation.customerName,
+                status: conversation.status,
                 messages: [...conversation.messages, incoming],
                 preview: incoming.text,
                 time: formatRelativeTime(inserted.created_at),
@@ -348,6 +380,33 @@ export default function ChatsInboxPage() {
 
   const isTakenOver = selectedConversation?.status === 'Human'
 
+  const handleReopen = async (conversationId: string) => {
+    const { error } = await supabase.from('conversations').update({ status: 'active' }).eq('id', conversationId)
+    if (!error) {
+      setConversationList((prev) =>
+        prev.map((c) => (c.id === conversationId ? { ...c, status: 'Live' } : c)),
+      )
+      // If on Closed filter the row disappears — clear selection so the right panel empties
+      if (selectedId === conversationId && filterTab === 'Closed') {
+        setSelectedId('')
+      }
+    }
+  }
+
+  const handleResolve = async (conversationId: string) => {
+    const { error } = await supabase.from('conversations').update({ status: 'closed' }).eq('id', conversationId)
+    if (!error) {
+      setConversationList((prev) =>
+        prev.map((c) => (c.id === conversationId ? { ...c, status: 'Resolved' } : c)),
+      )
+      // Only clear selection if the current filter will hide the resolved row.
+      // In 'All' and 'Closed' views the row stays visible (muted), so keep it selected.
+      if (selectedId === conversationId && (filterTab === 'Active' || filterTab === 'Human')) {
+        setSelectedId('')
+      }
+    }
+  }
+
   const handleTakeOverToggle = async () => {
     if (!selectedId || !selectedConversation) {
       return
@@ -410,7 +469,6 @@ export default function ChatsInboxPage() {
                   messages: [...conversation.messages, manualAssistantMessage],
                   preview: manualAssistantMessage.text,
                   time: 'now',
-                  status: 'Live',
                 }
               : conversation,
           ),
@@ -587,195 +645,269 @@ export default function ChatsInboxPage() {
               overflow: 'hidden',
             }}
           >
-            <div
-              style={{
-                padding: '20px 20px 16px',
-                borderBottom: `1px solid ${t.border}`,
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                gap: 12,
-              }}
-            >
-              <div>
-                <h1 style={{ margin: 0, color: t.text, fontSize: 17, fontWeight: 700 }}>Guest Conversations</h1>
-                <p style={{ margin: '6px 0 0', color: t.textMuted, fontSize: 13 }}>
-                  {conversationList.length} {conversationList.length === 1 ? 'thread' : 'threads'}
-                </p>
+            {/* ── Header ── */}
+            <div style={{ padding: '16px 16px 0', borderBottom: `1px solid ${t.border}` }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <h1 style={{ margin: 0, color: t.text, fontSize: 15, fontWeight: 700 }}>Conversations</h1>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {conversationList.filter((c) => c.status === 'Live' || c.status === 'Human').length > 0 && (
+                    <span style={{ borderRadius: 6, padding: '2px 8px', background: '#38bdf8', color: '#fff', fontSize: 12, fontWeight: 600 }}>
+                      {conversationList.filter((c) => c.status === 'Live' || c.status === 'Human').length} active
+                    </span>
+                  )}
+                  {isMobile && (
+                    <motion.button
+                      type="button"
+                      onClick={openNav}
+                      whileTap={reduceMotion ? undefined : { scale: 0.98 }}
+                      style={{ width: 34, height: 34, borderRadius: 8, border: `1px solid ${t.border}`, background: t.bgSurface, color: t.text, fontSize: 16, cursor: 'pointer' }}
+                    >
+                      ☰
+                    </motion.button>
+                  )}
+                </div>
               </div>
-              {isMobile ? (
-                <motion.button
-                  type="button"
-                  onClick={openNav}
-                  whileTap={reduceMotion ? undefined : { scale: 0.98 }}
-                  style={{
-                    width: 38,
-                    height: 38,
-                    borderRadius: 10,
-                    border: `1px solid ${t.border}`,
-                    background: t.bgSurface,
-                    color: t.text,
-                    fontSize: 18,
-                    cursor: 'pointer',
-                  }}
-                >
-                  ☰
-                </motion.button>
-              ) : conversationList.length > 0 ? (
-                <span
-                  style={{
-                    borderRadius: 999,
-                    padding: '5px 10px',
-                    background: t.accentSoftBg,
-                    border: `1px solid ${t.accentSoftBorder}`,
-                    color: t.accentText,
-                    fontSize: 11,
-                    fontWeight: 700,
-                  }}
-                >
-                  {conversationList.filter((c) => c.status === 'Live' || c.status === 'Human').length} active
-                </span>
-              ) : null}
-            </div>
 
-            <div
-              style={{
-                padding: 10,
-                overflowY: 'auto',
-                WebkitOverflowScrolling: 'touch',
-                flex: 1,
-                minHeight: 0,
-              }}
-            >
-              {!inboxLoaded ? (
-                <div style={{ display: 'grid', gap: 8, padding: 6 }}>
-                  {Array.from({ length: 4 }).map((_, idx) => (
-                    <div
-                      key={idx}
-                      style={{
-                        height: 64,
-                        borderRadius: 12,
-                        background: t.bgSurfaceMuted,
-                        border: `1px solid ${t.borderSoft}`,
-                      }}
-                    />
-                  ))}
-                </div>
-              ) : null}
+              {/* Search */}
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search guests or messages…"
+                style={{
+                  width: '100%',
+                  boxSizing: 'border-box',
+                  padding: '7px 10px',
+                  borderRadius: 8,
+                  border: `1px solid ${t.border}`,
+                  background: t.bgSurfaceMuted,
+                  color: t.text,
+                  fontSize: 12,
+                  outline: 'none',
+                  marginBottom: 10,
+                }}
+              />
 
-              {inboxFetchError ? (
-                <div style={{ padding: 20, color: t.danger, fontSize: 14, lineHeight: 1.5 }}>
-                  We couldn&apos;t load the inbox right now.
-                </div>
-              ) : null}
-
-              {inboxLoaded && !inboxFetchError && conversationList.length === 0 ? (
-                <div
-                  style={{
-                    padding: '32px 20px',
-                    color: t.textMuted,
-                    fontSize: 14,
-                    lineHeight: 1.6,
-                    textAlign: 'center',
-                  }}
-                >
-                  No conversations yet.
-                  <div style={{ marginTop: 6, color: t.textSubtle, fontSize: 12 }}>
-                    Guest chats will appear here as soon as your AI Concierge greets them.
-                  </div>
-                </div>
-              ) : null}
-
-              {conversationList.map((conversation, index) => {
-                const isSelected = conversation.id === selectedId
-                const statusStyle = getStatusStyle(conversation.status)
-
-                return (
-                  <motion.button
-                    key={conversation.id}
+              {/* Filter tabs — pill style */}
+              <div style={{ display: 'flex', gap: 4, paddingBottom: 12 }}>
+                {(['All', 'Active', 'Human', 'Closed'] as const).map((tab) => (
+                  <button
+                    key={tab}
                     type="button"
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={oceanTransition(reduceMotion, { delay: 0.04 + index * 0.03, duration: 0.16 })}
-                    whileHover={reduceMotion ? undefined : { backgroundColor: isSelected ? t.accentSoftBg : t.bgSurfaceMuted }}
-                    onClick={() => setSelectedId(conversation.id)}
+                    onClick={() => setFilterTab(tab)}
                     style={{
-                      width: '100%',
-                      marginBottom: 6,
-                      padding: '12px 12px',
-                      borderRadius: 10,
-                      borderLeft: isSelected ? `3px solid ${t.accent}` : '3px solid transparent',
-                      borderTop: '1px solid transparent',
-                      borderRight: '1px solid transparent',
-                      borderBottom: '1px solid transparent',
-                      background: isSelected ? t.accentSoftBg : 'transparent',
-                      color: 'inherit',
-                      textAlign: 'left',
+                      flex: 1,
+                      padding: '5px 0',
+                      borderRadius: 999,
+                      border: 'none',
+                      background: filterTab === tab ? '#38bdf8' : 'rgba(255,255,255,0.06)',
+                      color: filterTab === tab ? '#0d1f3c' : 'rgba(255,255,255,0.45)',
+                      fontSize: 11,
+                      fontWeight: filterTab === tab ? 700 : 500,
                       cursor: 'pointer',
+                      transition: 'background 0.15s, color 0.15s',
                     }}
                   >
-                    <div style={{ display: 'grid', gridTemplateColumns: '40px 1fr auto', gap: 12, alignItems: 'center' }}>
-                      <div
-                        style={{
-                          width: 40,
-                          height: 40,
-                          borderRadius: '50%',
-                          display: 'grid',
-                          placeItems: 'center',
-                          background: t.accent,
-                          color: '#ffffff',
-                          fontSize: 12,
-                          fontWeight: 700,
-                        }}
-                      >
+                    {tab}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* ── List ── */}
+            <div style={{ overflowY: 'auto', WebkitOverflowScrolling: 'touch', flex: 1, minHeight: 0, padding: '6px 8px' }}>
+              {!inboxLoaded && (
+                <div style={{ display: 'grid', gap: 4, padding: '4px 0' }}>
+                  {Array.from({ length: 5 }).map((_, idx) => (
+                    <div key={idx} style={{ height: 56, borderRadius: 8, background: t.bgSurfaceMuted }} />
+                  ))}
+                </div>
+              )}
+
+              {inboxFetchError && (
+                <div style={{ padding: 20, color: t.danger, fontSize: 13 }}>
+                  Couldn&apos;t load conversations.
+                </div>
+              )}
+
+              {inboxLoaded && !inboxFetchError && filteredList.length === 0 && (
+                <div style={{ padding: '28px 12px', color: t.textMuted, fontSize: 13, textAlign: 'center', lineHeight: 1.6 }}>
+                  {conversationList.length === 0
+                    ? 'No conversations yet.'
+                    : 'No matches.'}
+                </div>
+              )}
+
+              {filteredList.map((conversation, index) => {
+                const isSelected = conversation.id === selectedId
+                const isClosed = conversation.status === 'Resolved'
+                const isHovered = hoveredId === conversation.id
+                // In "All" tab, show a divider before the first Resolved row
+                const showDivider =
+                  filterTab === 'All' &&
+                  isClosed &&
+                  index > 0 &&
+                  filteredList[index - 1].status !== 'Resolved'
+
+                return (
+                  <motion.div
+                    key={conversation.id}
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={oceanTransition(reduceMotion, { delay: 0.02 + index * 0.02, duration: 0.14 })}
+                    onMouseEnter={() => setHoveredId(conversation.id)}
+                    onMouseLeave={() => setHoveredId(null)}
+                    style={{ position: 'relative', marginBottom: 2 }}
+                  >
+                    {showDivider && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 4px 6px', marginBottom: 2 }}>
+                        <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.07)' }} />
+                        <span style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.25)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>Resolved</span>
+                        <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.07)' }} />
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setSelectedId(conversation.id)}
+                      style={{
+                        width: '100%',
+                        height: 56,
+                        padding: '0 10px',
+                        borderRadius: 8,
+                        borderLeft: isSelected ? '2px solid #38bdf8' : '2px solid transparent',
+                        border: '1px solid transparent',
+                        borderLeftWidth: 2,
+                        background: isSelected
+                          ? 'rgba(56,189,248,0.1)'
+                          : isHovered
+                          ? 'rgba(255,255,255,0.04)'
+                          : 'transparent',
+                        color: 'inherit',
+                        textAlign: 'left',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 10,
+                        opacity: isClosed ? 0.5 : 1,
+                        transition: 'background 0.12s, opacity 0.15s',
+                      }}
+                    >
+                      {/* Avatar */}
+                      <div style={{
+                        flexShrink: 0,
+                        width: 32,
+                        height: 32,
+                        borderRadius: '50%',
+                        display: 'grid',
+                        placeItems: 'center',
+                        background: isClosed ? 'rgba(255,255,255,0.08)' : '#38bdf8',
+                        color: isClosed ? 'rgba(255,255,255,0.35)' : '#0d1f3c',
+                        fontSize: 11,
+                        fontWeight: 700,
+                      }}>
                         {getInitials(conversation.customerName)}
                       </div>
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                          <div
-                            style={{
-                              color: t.text,
-                              fontSize: 13,
-                              fontWeight: 700,
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                            }}
-                          >
-                            {conversation.customerName}
-                          </div>
-                        </div>
-                        <div
-                          style={{
-                            marginTop: 3,
-                            color: t.textMuted,
-                            fontSize: 12,
+
+                      {/* Content */}
+                      <div style={{ flex: 1, minWidth: 0, paddingRight: isHovered ? 28 : 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+                          <span style={{
+                            fontSize: 13,
+                            fontWeight: 600,
+                            color: '#ffffff',
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
                             whiteSpace: 'nowrap',
-                          }}
-                        >
-                          {conversation.preview}
+                          }}>
+                            {conversation.customerName}
+                          </span>
+                          <span style={{ flexShrink: 0, fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>{conversation.time}</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                          <span style={{
+                            fontSize: 11,
+                            color: 'rgba(255,255,255,0.5)',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            flex: 1,
+                          }}>
+                            {conversation.preview}
+                          </span>
+                          {isClosed ? (
+                            <span style={{ flexShrink: 0, fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.3)', borderRadius: 4, padding: '1px 6px', background: 'rgba(255,255,255,0.06)' }}>
+                              Resolved
+                            </span>
+                          ) : conversation.status === 'Human' ? (
+                            <span style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, fontWeight: 600, color: '#f59e0b', borderRadius: 4, padding: '1px 6px', background: 'rgba(245,158,11,0.12)' }}>
+                              Human
+                            </span>
+                          ) : conversation.status === 'Live' ? (
+                            <span style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, fontWeight: 600, color: '#4ade80' }}>
+                              <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#4ade80', flexShrink: 0 }} />
+                              Live
+                            </span>
+                          ) : null}
                         </div>
                       </div>
-                      <div style={{ display: 'grid', justifyItems: 'end', gap: 6 }}>
-                        <div style={{ color: t.textSubtle, fontSize: 11 }}>{conversation.time}</div>
-                        <span
-                          style={{
-                            padding: '3px 8px',
-                            borderRadius: 999,
-                            border: `1px solid ${statusStyle.border}`,
-                            background: statusStyle.background,
-                            color: statusStyle.color,
-                            fontSize: 10,
-                            fontWeight: 700,
-                          }}
-                        >
-                          {conversation.status === 'Live' ? 'Live' : conversation.status}
-                        </span>
-                      </div>
-                    </div>
-                  </motion.button>
+                    </button>
+
+                    {/* Resolve button — active rows only */}
+                    {isHovered && !isClosed && (
+                      <button
+                        type="button"
+                        title="Mark as resolved"
+                        onClick={(e) => { e.stopPropagation(); void handleResolve(conversation.id) }}
+                        style={{
+                          position: 'absolute',
+                          right: 8,
+                          top: '50%',
+                          translate: '0 -50%',
+                          width: 22,
+                          height: 22,
+                          borderRadius: 5,
+                          border: '1px solid rgba(255,255,255,0.12)',
+                          background: 'rgba(255,255,255,0.07)',
+                          color: 'rgba(255,255,255,0.5)',
+                          fontSize: 13,
+                          lineHeight: 1,
+                          cursor: 'pointer',
+                          display: 'grid',
+                          placeItems: 'center',
+                        }}
+                      >
+                        ✓
+                      </button>
+                    )}
+
+                    {/* Reopen button — closed rows only */}
+                    {isHovered && isClosed && (
+                      <button
+                        type="button"
+                        title="Reopen conversation"
+                        onClick={(e) => { e.stopPropagation(); void handleReopen(conversation.id) }}
+                        style={{
+                          position: 'absolute',
+                          right: 8,
+                          top: '50%',
+                          translate: '0 -50%',
+                          width: 22,
+                          height: 22,
+                          borderRadius: 5,
+                          border: '1px solid rgba(56,189,248,0.25)',
+                          background: 'rgba(56,189,248,0.08)',
+                          color: 'rgba(56,189,248,0.7)',
+                          fontSize: 13,
+                          lineHeight: 1,
+                          cursor: 'pointer',
+                          display: 'grid',
+                          placeItems: 'center',
+                        }}
+                      >
+                        ↩
+                      </button>
+                    )}
+                  </motion.div>
                 )
               })}
             </div>

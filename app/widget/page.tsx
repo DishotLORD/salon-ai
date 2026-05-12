@@ -62,13 +62,43 @@ function WidgetPageInner() {
           if (typeof row.id !== 'string') {
             return
           }
-          const sender: WidgetMessage['sender'] = row.role === 'assistant' ? 'ai' : 'customer'
           const incomingId = row.id
+          const content = row.content ?? ''
+          const isAssistant = row.role === 'assistant'
+
+          if (isAssistant) {
+            setMessages((prev) => {
+              // ID already in state — realtime delivered twice, skip
+              if (prev.some((m) => m.id === incomingId)) return prev
+              // Find our own optimistically-rendered AI message (temp id starts with 'ai-')
+              // and replace its temp id with the real DB UUID — same pattern as customer messages.
+              const ownIdx = prev.findLastIndex(
+                (m) => m.sender === 'ai' && m.text === content && m.id.startsWith('ai-'),
+              )
+              if (ownIdx !== -1) {
+                const next = [...prev]
+                next[ownIdx] = { ...next[ownIdx], id: incomingId }
+                return next
+              }
+              // No optimistic match — this is an operator message from the dashboard
+              return [...prev, { id: incomingId, sender: 'ai', text: content }]
+            })
+            return
+          }
+
+          // Customer messages are added optimistically with a temp id.
+          // Replace the optimistic entry by content to avoid duplicates.
           setMessages((prev) => {
-            if (prev.some((message) => message.id === incomingId)) {
-              return prev
+            if (prev.some((m) => m.id === incomingId)) return prev
+            const optimisticIdx = prev.findLastIndex(
+              (m) => m.sender === 'customer' && m.text === content && m.id.startsWith('customer-'),
+            )
+            if (optimisticIdx !== -1) {
+              const next = [...prev]
+              next[optimisticIdx] = { id: incomingId, sender: 'customer', text: content }
+              return next
             }
-            return [...prev, { id: incomingId, sender, text: row.content ?? '' }]
+            return [...prev, { id: incomingId, sender: 'customer', text: content }]
           })
         }
       )
@@ -159,6 +189,9 @@ function WidgetPageInner() {
           body.conversation_id = conversationId
         }
       }
+      if (!conversationId && businessId) {
+        console.log('[widget] creating new conversation with business_id:', businessId)
+      }
 
       const response = await fetch('/api/chat', {
         method: 'POST',
@@ -188,16 +221,19 @@ function WidgetPageInner() {
           ? data.message
           : 'Sorry, something went wrong. Please try again.'
 
-      if (!businessId || !data.conversation_id) {
-        setMessages((prev) => [
+      setMessages((prev) => {
+        // Realtime may have already delivered this exact message — skip if duplicate text
+        const lastAi = [...prev].reverse().find((m) => m.sender === 'ai')
+        if (lastAi && lastAi.text === aiText && !lastAi.id.startsWith('ai-')) return prev
+        return [
           ...prev,
           {
             id: `ai-${Date.now()}`,
             sender: 'ai',
             text: aiText,
           },
-        ])
-      }
+        ]
+      })
     } catch {
       setMessages((prev) => [
         ...prev,

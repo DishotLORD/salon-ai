@@ -1,16 +1,31 @@
 'use client'
 
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 
 import { supabase } from '@/lib/supabase'
 import { modalContent, modalOverlay } from '@/lib/ocean-motion'
 
-export function DashboardLogoutButton() {
+export function DashboardLogoutButton({
+  iconOnly,
+  hidden,
+  open: controlledOpen,
+  onOpenChange,
+}: {
+  iconOnly?: boolean
+  hidden?: boolean
+  open?: boolean
+  onOpenChange?: (v: boolean) => void
+} = {}) {
   const router = useRouter()
-  const [open, setOpen] = useState(false)
+  const [internalOpen, setInternalOpen] = useState(false)
+  const open = controlledOpen ?? internalOpen
+  const setOpen = useCallback(
+    (v: boolean) => (onOpenChange ?? setInternalOpen)(v),
+    [onOpenChange],
+  )
   const [mounted, setMounted] = useState(false)
   const [isSigningOut, setIsSigningOut] = useState(false)
   const reduceMotion = useReducedMotion()
@@ -32,7 +47,7 @@ export function DashboardLogoutButton() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [open, isSigningOut])
+  }, [open, isSigningOut, setOpen])
 
   async function confirmLogout() {
     setIsSigningOut(true)
@@ -175,6 +190,42 @@ export function DashboardLogoutButton() {
         )
       : null
 
+  if (hidden) {
+    return <>{modal}</>
+  }
+
+  if (iconOnly) {
+    return (
+      <>
+        <motion.button
+          type="button"
+          onClick={() => setOpen(true)}
+          whileHover={{ scale: 1.05, backgroundColor: 'rgba(248,113,113,0.12)' }}
+          whileTap={{ scale: 0.95 }}
+          style={{
+            width: 44,
+            height: 44,
+            border: 'none',
+            borderRadius: 12,
+            background: 'transparent',
+            color: '#6b9e88',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+            <polyline points="16 17 21 12 16 7" />
+            <line x1="21" y1="12" x2="9" y2="12" />
+          </svg>
+        </motion.button>
+        {modal}
+      </>
+    )
+  }
+
   return (
     <>
       <motion.button
@@ -188,10 +239,10 @@ export function DashboardLogoutButton() {
         whileTap={{ scale: 0.98 }}
         style={{
           width: '100%',
-          border: '1px solid #e2e8f0',
+          border: '1px solid rgba(255,255,255,0.08)',
           borderRadius: 10,
-          background: '#ffffff',
-          color: '#475569',
+          background: 'rgba(255,255,255,0.04)',
+          color: '#5b8a9e',
           fontWeight: 600,
           fontSize: 13,
           padding: '11px 14px',

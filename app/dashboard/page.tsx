@@ -116,7 +116,7 @@ export default async function Dashboard() {
     <DashboardClient
       businessDisplayName={businessDisplayName}
       conciergeName={conciergeName}
-      userEmail={user.email ?? 'User'}
+      businessId={businessId}
       activeChats={activeChats}
       messageCount={messageCount}
       recentActivity={recentActivity}

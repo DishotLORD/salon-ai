@@ -76,9 +76,8 @@ function isSameDay(a: Date, b: Date) {
 }
 
 function startOfWeekMon(d: Date) {
-  const date = new Date(d)
+  const date = new Date(d.getFullYear(), d.getMonth(), d.getDate())
   const diff = (date.getDay() + 6) % 7
-  date.setHours(0, 0, 0, 0)
   date.setDate(date.getDate() - diff)
   return date
 }
@@ -896,11 +895,13 @@ function ReservationModal({
     isEdit ? editReservation!.guestName : '',
   )
   const [partySize, setPartySize] = useState(isEdit ? editReservation!.partySize : 2)
-  const [date, setDate] = useState(
-    isEdit
-      ? editReservation!.scheduledAt.toISOString().split('T')[0]
-      : defaultDate,
-  )
+  const [date, setDate] = useState(() => {
+    if (isEdit) {
+      const d = editReservation!.scheduledAt
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    }
+    return defaultDate
+  })
   const [time, setTime] = useState(() => {
     if (isEdit) {
       const h = String(editReservation!.scheduledAt.getHours()).padStart(2, '0')
@@ -940,9 +941,9 @@ function ReservationModal({
     setError('')
     setSaving(true)
 
-    const scheduledAt = new Date(`${date}T${time}`)
+    const wallClock = `${date}T${time}:00`
+    const scheduledAt = new Date(wallClock)
 
-    // Pack all fields into service_name (notes column doesn't exist in schema yet)
     const svcParts = [
       guestName.trim().replace(/\u00b7/g, '-'),
       `Party of ${partySize}`,
@@ -956,7 +957,7 @@ function ReservationModal({
         .from('appointments')
         .update({
           service_name: serviceName,
-          scheduled_at: scheduledAt.toISOString(),
+          scheduled_at: wallClock,
           status: editStatus,
         })
         .eq('id', editReservation!.id)
@@ -979,13 +980,12 @@ function ReservationModal({
       return
     }
 
-    // Add mode
     const { data, error: insertError } = await supabase
       .from('appointments')
       .insert({
         business_id: businessId,
         service_name: serviceName,
-        scheduled_at: scheduledAt.toISOString(),
+        scheduled_at: wallClock,
         status: 'confirmed',
       })
       .select('id, service_name, scheduled_at, status, customer_id')
@@ -1460,7 +1460,8 @@ export default function BookingsPage() {
   const [prefilledDate, setPrefilledDate] = useState<string | undefined>(undefined)
   const reduceMotion = useReducedMotion()
 
-  const today = new Date()
+  const now = new Date()
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   const displayMonth = new Date(today.getFullYear(), today.getMonth() + monthOffset, 1)
   const monthLabel = displayMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
 
@@ -1509,15 +1510,19 @@ export default function BookingsPage() {
 
       if (!cancelled) setBusinessId(business.id)
 
-      const start = new Date(displayMonth.getFullYear(), displayMonth.getMonth(), 1)
-      const end = new Date(displayMonth.getFullYear(), displayMonth.getMonth() + 1, 1)
+      const p2 = (n: number) => String(n).padStart(2, '0')
+      const y = displayMonth.getFullYear()
+      const mo = displayMonth.getMonth()
+      const startStr = `${y}-${p2(mo + 1)}-01T00:00:00`
+      const endDate = new Date(y, mo + 1, 1)
+      const endStr = `${endDate.getFullYear()}-${p2(endDate.getMonth() + 1)}-01T00:00:00`
 
       const { data: rows, error } = await supabase
         .from('appointments')
         .select('id, service_name, scheduled_at, status, customer_id')
         .eq('business_id', business.id)
-        .gte('scheduled_at', start.toISOString())
-        .lt('scheduled_at', end.toISOString())
+        .gte('scheduled_at', startStr)
+        .lt('scheduled_at', endStr)
         .order('scheduled_at', { ascending: true })
 
       if (cancelled) return

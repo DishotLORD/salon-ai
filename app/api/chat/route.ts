@@ -30,15 +30,34 @@ CRITICAL RULES:
 - Keep responses concise (2–4 sentences). Never repeat questions already answered.
 `
 
+type MenuEntry = { name: string; price: number | null; description: string | null; category: string | null }
+
 function buildSystemPrompt(
   conciergeName: string,
   restaurantName: string,
   customPrompt: string | null | undefined,
+  menuItems?: MenuEntry[] | null,
+  menuPdfText?: string | null,
 ): string {
   const base = customPrompt?.trim()
     ? customPrompt.trim()
     : `You are ${conciergeName}, the AI Concierge for ${restaurantName}. Help guests with reservations, menu inquiries, dietary requirements, and general questions. Be warm, attentive, and concise.`
-  return `${base}\n\n${BOOKING_FLOW_RULES}`
+  let prompt = `${base}\n\n${BOOKING_FLOW_RULES}`
+  if (menuItems && menuItems.length > 0) {
+    const lines = menuItems.map((item) => {
+      const cat = item.category ?? 'Other'
+      const price = item.price != null
+        ? ` — $${Number.isInteger(item.price) ? item.price : item.price.toFixed(2)}`
+        : ''
+      const desc = item.description?.trim() ? ` (${item.description.trim()})` : ''
+      return `- ${cat}: ${item.name}${price}${desc}`
+    })
+    prompt += `\n\nMENU:\n${lines.join('\n')}`
+  }
+  if (menuPdfText?.trim()) {
+    prompt += `\n\nMENU (from uploaded PDF):\n${menuPdfText.trim()}`
+  }
+  return prompt
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -88,19 +107,26 @@ function extractGuestName(text: string): string | null {
   const t = text.trim()
   if (!t) return null
 
-  // High-confidence: explicit name statement from the user
+  // High-confidence: explicit name statement from the user (supports single or multi-word names)
   const explicit: RegExp[] = [
-    /\b(?:my\s+name\s+is|name\s+is|i(?:'m| am))\s+([A-Z][a-zA-Z''-]+(?:\s+[A-Z][a-zA-Z''-]+)+)/i,
+    /\b(?:my\s+name\s+is|name\s+is|i(?:'m| am))\s+([A-Z][a-zA-Z''-]+(?:\s+[A-Z][a-zA-Z''-]+)*)/i,
     /\b(?:for|under)\s+(?:the\s+name\s+)?([A-Z][a-zA-Z''-]+(?:\s+[A-Z][a-zA-Z''-]+)*)/,
     /\b(?:it(?:'s| is)|that(?:'s| is))\s+([A-Z][a-zA-Z''-]+(?:\s+[A-Z][a-zA-Z''-]+)*)/,
-    /^([A-Z][a-zA-Z''-]+\s+[A-Z][a-zA-Z''-]+)\s*[.!,]?\s*$/m, // standalone "First Last"
+    /^([A-Z][a-zA-Z''-]+(?:\s+[A-Z][a-zA-Z''-]+)*)\s*[.!,]?\s*$/m, // standalone name (single or multi-word)
   ]
+
+  const stopWords = new Set([
+    'yes', 'no', 'sure', 'ok', 'okay', 'thanks', 'thank', 'please', 'hello',
+    'hi', 'hey', 'great', 'good', 'nice', 'perfect', 'awesome', 'cool',
+    'right', 'fine', 'absolutely', 'definitely', 'tonight', 'tomorrow',
+    'today', 'table', 'reservation', 'book', 'menu', 'price', 'check',
+  ])
 
   for (const pattern of explicit) {
     const match = t.match(pattern)
     if (match?.[1]) {
       const name = match[1].replace(/\s+/g, ' ').trim()
-      if (name.length >= 3 && name.length <= 80) return name
+      if (name.length >= 2 && name.length <= 80 && !stopWords.has(name.toLowerCase())) return name
     }
   }
 
@@ -115,12 +141,28 @@ function extractGuestNameFromConversation(
   allMessages: ChatMessage[],
   assistantText: string,
 ): string | null {
+  // Check user messages (most recent first)
   const userTexts = allMessages.filter((m) => m.role === 'user').map((m) => m.content)
   for (const t of [...userTexts].reverse()) {
     const n = extractGuestName(t)
     if (n) return n
   }
-  return extractGuestName(assistantText)
+  // Check assistant text (AI may echo the name)
+  const fromAssistant = extractGuestName(assistantText)
+  if (fromAssistant) return fromAssistant
+
+  // Last resort: look for AI confirmation patterns like "reservation for Yana" / "Thank you, Yana"
+  const aiNamePatterns = [
+    /\breservation\s+(?:for|under)\s+([A-Z][a-zA-Z''-]+(?:\s+[A-Z][a-zA-Z''-]+)*)/,
+    /\b(?:thank\s+you|thanks),?\s+([A-Z][a-zA-Z''-]+)/i,
+    /\b(?:see\s+you|expect\s+you),?\s+([A-Z][a-zA-Z''-]+)/i,
+  ]
+  for (const pat of aiNamePatterns) {
+    const m = assistantText.match(pat)
+    if (m?.[1] && m[1].length >= 2 && m[1].length <= 80) return m[1].trim()
+  }
+
+  return null
 }
 
 function extractPhone(text: string): string | null {
@@ -211,6 +253,11 @@ function extractPartySize(text: string): number | null {
     const n = parseInt(m3[1], 10)
     if (n >= 1 && n <= 30) return n
   }
+  const m4 = text.match(/^\s*(\d{1,2})\s*$/m)
+  if (m4) {
+    const n = parseInt(m4[1], 10)
+    if (n >= 1 && n <= 20) return n
+  }
   return null
 }
 
@@ -247,6 +294,21 @@ function parseScheduledAt(text: string): Date | null {
   if (monthDay) {
     const tryParse = new Date(`${monthDay[1]} ${monthDay[2]}, ${monthDay[3] ?? new Date().getFullYear()}`)
     if (!Number.isNaN(tryParse.getTime())) return tryParse
+  }
+  if (/\btoday\b/i.test(text)) {
+    const d = new Date()
+    const tm = text.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i)
+    if (tm) {
+      let h = parseInt(tm[1], 10)
+      const mi = tm[2] ? parseInt(tm[2], 10) : 0
+      const ap = tm[3].toUpperCase()
+      if (ap === 'PM' && h < 12) h += 12
+      if (ap === 'AM' && h === 12) h = 0
+      d.setHours(h, mi, 0, 0)
+    } else {
+      d.setHours(19, 0, 0, 0)
+    }
+    return d
   }
   if (/\btonight\b/i.test(text)) {
     const d = new Date()
@@ -332,6 +394,22 @@ async function tryCreateReservationFromChat(params: {
   const svcParts = [guestName, `Party of ${partySize}`]
   const serviceName = svcParts.join(' · ').slice(0, 500)
 
+  // Store as a "wall-clock" timestamp so bookings display shows the time the
+  // guest intended regardless of server/client timezone differences.
+  // Format: "2026-05-12T11:00:00" (no Z, no offset) — Supabase interprets
+  // bare timestamps as UTC which the client then displays directly.
+  const pad2 = (n: number) => String(n).padStart(2, '0')
+  const wallClock = `${scheduledAt.getFullYear()}-${pad2(scheduledAt.getMonth() + 1)}-${pad2(scheduledAt.getDate())}T${pad2(scheduledAt.getHours())}:${pad2(scheduledAt.getMinutes())}:00`
+
+  console.log('[booking] Creating reservation:', {
+    guestName,
+    partySize,
+    wallClock,
+    serviceName,
+    parsedTimeSource: parsedTime ? 'parsed' : 'fallback-7pm',
+    scheduledAtLocal: scheduledAt.toString(),
+  })
+
   const { error } = await supabaseAdmin
     .from('appointments')
     .insert({
@@ -339,11 +417,14 @@ async function tryCreateReservationFromChat(params: {
       customer_id,
       conversation_id,
       service_name: serviceName,
-      scheduled_at: scheduledAt.toISOString(),
+      scheduled_at: wallClock,
       status: 'pending' as const,
     })
     .select('id')
     .maybeSingle()
+
+  if (error) console.error('[booking] Insert failed:', error.message)
+  else console.log('[booking] Reservation created successfully')
 
   return !error
 }
@@ -412,7 +493,7 @@ export async function POST(request: Request) {
     // ── Fetch business ────────────────────────────────────────────────────────
     const { data: business, error: bizError } = await supabaseAdmin
       .from('businesses')
-      .select('id, name, email, system_prompt, agent_name')
+      .select('id, name, email, system_prompt, agent_name, menu_pdf_text')
       .eq('id', business_id)
       .maybeSingle()
 
@@ -420,9 +501,25 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Business not found' }, { status: 404 })
     }
 
+    // Fetch menu; fall back to name+price only if description/category columns haven't been added yet
+    const { data: menuItemsFull, error: menuErr } = await supabaseAdmin
+      .from('services')
+      .select('name, price, description, category')
+      .eq('business_id', business_id)
+      .order('name')
+    let menuItems: MenuEntry[] | null = menuItemsFull
+    if (menuErr) {
+      const { data: menuBasic } = await supabaseAdmin
+        .from('services')
+        .select('name, price')
+        .eq('business_id', business_id)
+        .order('name')
+      menuItems = menuBasic?.map((r) => ({ ...r, description: null, category: null })) ?? null
+    }
+
     const restaurantName = business.name?.trim() || 'this restaurant'
     const conciergeName = business.agent_name?.trim() || 'AI Concierge'
-    const systemPrompt = buildSystemPrompt(conciergeName, restaurantName, business.system_prompt)
+    const systemPrompt = buildSystemPrompt(conciergeName, restaurantName, business.system_prompt, menuItems, (business as Record<string, unknown>).menu_pdf_text as string | null)
 
     const lastUserContent = getLastUserMessageContent(chatMessages)
     if (!lastUserContent?.trim()) {
@@ -546,7 +643,7 @@ export async function POST(request: Request) {
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [{ role: 'system', content: systemPrompt }, ...toOpenAiMessages(chatMessages)],
-      max_tokens: 500,
+      max_tokens: 1500,
     })
 
     const assistantText = completion.choices[0].message?.content ?? ''

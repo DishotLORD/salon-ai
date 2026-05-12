@@ -10,10 +10,19 @@ import { oceanTransition, tabContent } from '@/lib/ocean-motion'
 import { supabase } from '@/lib/supabase'
 import { card, t } from '@/lib/dashboard-theme'
 
-type TabId = 'general' | 'ai' | 'notifications' | 'widget' | 'billing'
+type TabId = 'general' | 'ai' | 'menu' | 'notifications' | 'widget' | 'billing'
 type BusinessType = 'restaurant' | 'cafe' | 'bar' | 'bakery' | 'other'
 type DayKey = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun'
 type DayHours = { open: string; close: string; closed: boolean }
+type MenuCategory = 'Starters' | 'Mains' | 'Desserts' | 'Drinks'
+type MenuItem = {
+  id: string
+  name: string
+  price: number | null
+  description: string | null
+  category: string | null
+  duration_minutes: number | null
+}
 
 type FloatingFieldProps = {
   label: string
@@ -49,6 +58,19 @@ const initialHours: Record<DayKey, DayHours> = {
   fri: { open: '17:00', close: '23:30', closed: false },
   sat: { open: '11:30', close: '23:30', closed: false },
   sun: { open: '11:30', close: '21:30', closed: false },
+}
+
+const MENU_CATEGORIES: MenuCategory[] = ['Starters', 'Mains', 'Desserts', 'Drinks']
+
+const CATEGORY_STYLE: Record<string, { bg: string; color: string }> = {
+  Starters: { bg: 'rgba(245,158,11,0.15)', color: '#f59e0b' },
+  Mains:    { bg: 'rgba(56,189,248,0.15)',  color: '#38bdf8' },
+  Desserts: { bg: 'rgba(236,72,153,0.15)',  color: '#ec4899' },
+  Drinks:   { bg: 'rgba(16,185,129,0.15)',  color: '#10b981' },
+}
+
+function catStyle(category: string | null) {
+  return CATEGORY_STYLE[category ?? ''] ?? { bg: 'rgba(99,102,241,0.15)', color: '#6366f1' }
 }
 
 const glassCard = card
@@ -197,6 +219,7 @@ function SettingsPageInner() {
   const tabParam = searchParams.get('tab')
   const initialTab: TabId =
     tabParam === 'ai' ||
+    tabParam === 'menu' ||
     tabParam === 'notifications' ||
     tabParam === 'widget' ||
     tabParam === 'billing' ||
@@ -208,6 +231,7 @@ function SettingsPageInner() {
   useEffect(() => {
     if (
       tabParam === 'ai' ||
+      tabParam === 'menu' ||
       tabParam === 'notifications' ||
       tabParam === 'widget' ||
       tabParam === 'billing' ||
@@ -252,6 +276,24 @@ function SettingsPageInner() {
     typeof window !== 'undefined' ? window.location.origin : '',
   )
   const [widgetCopied, setWidgetCopied] = useState(false)
+
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([])
+  const [menuLoading, setMenuLoading] = useState(false)
+  const menuLoadKeyRef = useRef('')
+  const [menuFormOpen, setMenuFormOpen] = useState(false)
+  const [menuEditId, setMenuEditId] = useState<string | null>(null)
+  const [menuForm, setMenuForm] = useState({ name: '', price: '', description: '', category: 'Mains' as MenuCategory })
+  const [menuFormSaving, setMenuFormSaving] = useState(false)
+  const [menuFormError, setMenuFormError] = useState('')
+  const [menuDeleteId, setMenuDeleteId] = useState<string | null>(null)
+  const [menuCategoryFilter, setMenuCategoryFilter] = useState<'All' | MenuCategory>('All')
+  const [hoveredItemId, setHoveredItemId] = useState<string | null>(null)
+  const [menuPdfText, setMenuPdfText] = useState<string | null>(null)
+  const [menuPdfUploading, setMenuPdfUploading] = useState(false)
+  const [menuPdfError, setMenuPdfError] = useState('')
+  const [menuPdfExpanded, setMenuPdfExpanded] = useState(false)
+  const menuPdfInputRef = useRef<HTMLInputElement>(null)
+
   const reduceMotion = useReducedMotion()
 
   const tabs = useMemo(
@@ -259,6 +301,7 @@ function SettingsPageInner() {
       [
         { id: 'general' as const, label: 'General' },
         { id: 'ai' as const, label: 'AI Concierge' },
+        { id: 'menu' as const, label: 'Menu' },
         { id: 'notifications' as const, label: 'Notifications' },
         { id: 'widget' as const, label: 'Widget' },
         { id: 'billing' as const, label: 'Billing' },
@@ -281,7 +324,7 @@ function SettingsPageInner() {
     async function hydrateForUserId(userId: string) {
       const { data, error } = await supabase
         .from('businesses')
-        .select('id, name, email, phone, business_type, address, system_prompt, agent_name, language')
+        .select('id, name, email, phone, business_type, address, system_prompt, agent_name, language, menu_pdf_text')
         .eq('user_id', userId)
         .maybeSingle()
       if (!isMounted) return
@@ -295,6 +338,7 @@ function SettingsPageInner() {
         if (data.system_prompt) setSystemPrompt(data.system_prompt)
         if (data.agent_name) setAgentName(data.agent_name)
         setLanguage(data.language ?? 'English (US)')
+        setMenuPdfText((data as Record<string, unknown>).menu_pdf_text as string | null ?? null)
       }
       setIsLoading(false)
     }
@@ -413,6 +457,154 @@ function SettingsPageInner() {
     }, 3000)
 
     setIsSaving(false)
+  }
+
+  useEffect(() => {
+    if (activeTab !== 'menu' || !businessRowId) return
+    const key = `${activeTab}:${businessRowId}`
+    if (menuLoadKeyRef.current === key) return
+    menuLoadKeyRef.current = key
+    let cancelled = false
+    setMenuLoading(true)
+    void (async () => {
+      const res = await fetch(`/api/menu?business_id=${encodeURIComponent(businessRowId)}`)
+      const json = (await res.json()) as { items?: MenuItem[]; error?: string }
+      if (!cancelled) {
+        setMenuItems(json.items ?? [])
+        setMenuLoading(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [activeTab, businessRowId])
+
+  const openMenuAdd = () => {
+    setMenuEditId(null)
+    setMenuForm({ name: '', price: '', description: '', category: 'Mains' })
+    setMenuFormOpen(true)
+  }
+
+  const openMenuEdit = (item: MenuItem) => {
+    setMenuEditId(item.id)
+    setMenuForm({
+      name: item.name,
+      price: item.price != null ? String(item.price) : '',
+      description: item.description ?? '',
+      category: (item.category as MenuCategory) ?? 'Mains',
+    })
+    setMenuFormOpen(true)
+  }
+
+  const handleMenuSave = async () => {
+    if (!menuForm.name.trim()) {
+      setMenuFormError('Name is required.')
+      return
+    }
+    if (!businessRowId) {
+      setMenuFormError('Business not loaded yet. Please wait.')
+      return
+    }
+    const priceVal = menuForm.price !== '' ? parseFloat(menuForm.price) : null
+    if (priceVal !== null && isNaN(priceVal)) {
+      setMenuFormError('Price must be a valid number.')
+      return
+    }
+    setMenuFormSaving(true)
+    setMenuFormError('')
+    const payload = {
+      business_id: businessRowId,
+      name: menuForm.name.trim(),
+      price: priceVal,
+      description: menuForm.description.trim() || null,
+      category: menuForm.category || null,
+    }
+    if (menuEditId) {
+      const res = await fetch('/api/menu', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: menuEditId, ...payload }),
+      })
+      const json = (await res.json()) as { ok?: boolean; error?: string }
+      if (!res.ok || json.error) {
+        setMenuFormError(json.error ?? 'Failed to update. Please try again.')
+        setMenuFormSaving(false)
+        return
+      }
+      setMenuItems((prev) => prev.map((item) => (item.id === menuEditId ? { ...item, ...payload } : item)))
+    } else {
+      const res = await fetch('/api/menu', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const json = (await res.json()) as { item?: MenuItem; error?: string }
+      if (!res.ok || json.error) {
+        setMenuFormError(json.error ?? 'Failed to save. Please try again.')
+        setMenuFormSaving(false)
+        return
+      }
+      if (json.item) {
+        setMenuItems((prev) => [...prev, json.item!])
+      }
+    }
+    setMenuFormSaving(false)
+    setMenuFormOpen(false)
+    setMenuEditId(null)
+    setMenuFormError('')
+    setMenuForm({ name: '', price: '', description: '', category: 'Mains' })
+  }
+
+  const handleMenuDelete = async (id: string) => {
+    if (!businessRowId) return
+    setMenuDeleteId(id)
+    const res = await fetch('/api/menu', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, business_id: businessRowId }),
+    })
+    if (res.ok) {
+      setMenuItems((prev) => prev.filter((item) => item.id !== id))
+    }
+    setMenuDeleteId(null)
+  }
+
+  const handleMenuPdfUpload = async (file: File) => {
+    if (!businessRowId) return
+    setMenuPdfUploading(true)
+    setMenuPdfError('')
+
+    type PdfMenuResponse = { text?: string; pages?: number; error?: string; usedOcr?: boolean }
+    const postPdf = async (forceOcr: boolean) => {
+      const fd = new FormData()
+      fd.append('business_id', businessRowId)
+      fd.append('file', file)
+      if (forceOcr) fd.append('force_ocr', '1')
+      return fetch('/api/menu/pdf', { method: 'POST', body: fd })
+    }
+
+    let res = await postPdf(false)
+    let data = (await res.json()) as PdfMenuResponse
+    // pdf-parse often returns a single stray line; if vision was skipped and text is tiny, retry once.
+    if (res.ok && data.text && data.text.length < 400 && !data.usedOcr) {
+      res = await postPdf(true)
+      data = (await res.json()) as PdfMenuResponse
+    }
+
+    if (res.ok && data.text) {
+      setMenuPdfText(data.text)
+    } else {
+      setMenuPdfError(data.error ?? 'Upload failed')
+    }
+    setMenuPdfUploading(false)
+  }
+
+  const handleMenuPdfClear = async () => {
+    if (!businessRowId) return
+    const res = await fetch('/api/menu/pdf', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ business_id: businessRowId }),
+    })
+    if (res.ok) setMenuPdfText(null)
   }
 
   const tabPanel = (() => {
@@ -611,6 +803,379 @@ function SettingsPageInner() {
               </label>
             ))}
           </div>
+        </div>
+      )
+    }
+
+    if (activeTab === 'menu') {
+      const filteredMenuItems =
+        menuCategoryFilter === 'All'
+          ? menuItems
+          : menuItems.filter((item) => (item.category ?? 'Other') === menuCategoryFilter)
+
+      const fieldStyle = {
+        borderRadius: 8,
+        border: `1px solid ${t.border}`,
+        background: t.bgSurface,
+        color: t.text,
+        padding: '10px 12px',
+        fontSize: 14,
+        outline: 'none',
+        width: '100%',
+      } as const
+
+      const labelStyle = {
+        fontSize: 11,
+        fontWeight: 700,
+        color: t.textMuted,
+        letterSpacing: '0.12em',
+        textTransform: 'uppercase',
+      } as const
+
+      return (
+        <div style={{ display: 'grid', gap: 20 }}>
+
+          {/* ── Header ── */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+            <div>
+              <div style={{ color: t.text, fontSize: 18, fontWeight: 700 }}>Menu</div>
+              <div style={{ color: t.textMuted, fontSize: 13, marginTop: 3 }}>
+                Your AI Concierge will automatically know these items.
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={
+                menuFormOpen
+                  ? () => { setMenuFormOpen(false); setMenuEditId(null); setMenuFormError('') }
+                  : openMenuAdd
+              }
+              style={{
+                borderRadius: 10,
+                border: menuFormOpen ? `1px solid ${t.border}` : 'none',
+                background: menuFormOpen ? 'transparent' : '#38bdf8',
+                color: menuFormOpen ? t.textMuted : '#fff',
+                padding: '9px 18px',
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {menuFormOpen ? '✕ Cancel' : '+ Add Item'}
+            </button>
+          </div>
+
+          {/* ── Add / Edit form ── */}
+          {menuFormOpen && (
+            <div style={{ ...glassCard, padding: 20, display: 'grid', gap: 16, borderColor: t.accentSoftBorder }}>
+              <div style={{ color: t.textMuted, fontSize: 11, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase' }}>
+                {menuEditId ? 'Edit item' : 'New item'}
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 12 }}>
+                <div style={{ display: 'grid', gap: 6 }}>
+                  <label style={labelStyle}>Name *</label>
+                  <input
+                    value={menuForm.name}
+                    onChange={(e) => setMenuForm((p) => ({ ...p, name: e.target.value }))}
+                    placeholder="e.g. Margherita Pizza"
+                    style={fieldStyle}
+                  />
+                </div>
+                <div style={{ display: 'grid', gap: 6 }}>
+                  <label style={labelStyle}>Price ($)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={menuForm.price}
+                    onChange={(e) => setMenuForm((p) => ({ ...p, price: e.target.value }))}
+                    placeholder="0.00"
+                    style={fieldStyle}
+                  />
+                </div>
+                <div style={{ display: 'grid', gap: 6 }}>
+                  <label style={labelStyle}>Category</label>
+                  <select
+                    value={menuForm.category}
+                    onChange={(e) => setMenuForm((p) => ({ ...p, category: e.target.value as MenuCategory }))}
+                    style={{ ...fieldStyle, WebkitAppearance: 'none', appearance: 'none' }}
+                  >
+                    {MENU_CATEGORIES.map((c) => (
+                      <option key={c} value={c} style={{ background: '#0d1f3c' }}>{c}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gap: 6 }}>
+                <label style={labelStyle}>Description</label>
+                <input
+                  value={menuForm.description}
+                  onChange={(e) => setMenuForm((p) => ({ ...p, description: e.target.value }))}
+                  placeholder="Optional — shown to guests and used by the AI"
+                  style={fieldStyle}
+                />
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                {menuFormError
+                  ? <div style={{ fontSize: 13, color: t.danger, fontWeight: 500 }}>{menuFormError}</div>
+                  : <div />}
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button
+                    type="button"
+                    onClick={() => { setMenuFormOpen(false); setMenuEditId(null); setMenuFormError('') }}
+                    style={{ borderRadius: 8, border: `1px solid ${t.border}`, background: 'transparent', color: t.textMuted, padding: '9px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleMenuSave()}
+                    disabled={menuFormSaving || !menuForm.name.trim()}
+                    style={{
+                      borderRadius: 8,
+                      border: 'none',
+                      background: !menuForm.name.trim() || menuFormSaving ? t.bgSurfaceMuted : t.accent,
+                      color: !menuForm.name.trim() || menuFormSaving ? t.textSubtle : '#fff',
+                      padding: '9px 22px',
+                      fontSize: 13,
+                      fontWeight: 600,
+                      cursor: !menuForm.name.trim() || menuFormSaving ? 'not-allowed' : 'pointer',
+                      minWidth: 110,
+                    }}
+                  >
+                    {menuFormSaving ? 'Saving…' : menuEditId ? 'Save Changes' : 'Add Item'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── Category filter tabs ── */}
+          {!menuLoading && menuItems.length > 0 && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {(['All', ...MENU_CATEGORIES] as const).map((cat) => {
+                const isActive = menuCategoryFilter === cat
+                const count = cat === 'All'
+                  ? menuItems.length
+                  : menuItems.filter((i) => (i.category ?? 'Other') === cat).length
+                if (cat !== 'All' && count === 0) return null
+                return (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => setMenuCategoryFilter(cat)}
+                    style={{
+                      borderRadius: 999,
+                      border: isActive ? 'none' : `1px solid ${t.border}`,
+                      background: isActive ? '#38bdf8' : 'transparent',
+                      color: isActive ? '#fff' : t.textMuted,
+                      padding: '5px 14px',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                    }}
+                  >
+                    {cat}
+                    <span style={{ opacity: 0.55, fontWeight: 500 }}>{count}</span>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+
+          {/* ── Content ── */}
+          {menuLoading ? (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} style={{ height: 104, borderRadius: 14, background: t.bgSurfaceMuted, border: `1px solid ${t.borderSoft}` }} />
+              ))}
+            </div>
+          ) : menuItems.length === 0 ? (
+            <div style={{ display: 'grid', justifyItems: 'center', gap: 12, padding: '52px 20px', textAlign: 'center' }}>
+              <div style={{ fontSize: 44, lineHeight: 1 }}>🍴</div>
+              <div style={{ color: t.text, fontSize: 16, fontWeight: 700 }}>No menu items yet</div>
+              <div style={{ color: t.textMuted, fontSize: 13, maxWidth: 300 }}>
+                Add your first dish so the AI can answer guest questions about your menu.
+              </div>
+              <button
+                type="button"
+                onClick={openMenuAdd}
+                style={{ marginTop: 6, borderRadius: 10, border: 'none', background: t.accent, color: '#fff', padding: '10px 24px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+              >
+                + Add First Item
+              </button>
+            </div>
+          ) : filteredMenuItems.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '32px 0', color: t.textMuted, fontSize: 14 }}>
+              No {menuCategoryFilter} items yet.
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 14 }}>
+              {filteredMenuItems.map((item) => {
+                const cs = catStyle(item.category)
+                const isDeleting = menuDeleteId === item.id
+                const isHovered = hoveredItemId === item.id
+                return (
+                  <div
+                    key={item.id}
+                    onMouseEnter={() => setHoveredItemId(item.id)}
+                    onMouseLeave={() => setHoveredItemId(null)}
+                    style={{
+                      position: 'relative',
+                      borderRadius: 12,
+                      border: `1px solid ${isHovered ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.1)'}`,
+                      background: isHovered ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.05)',
+                      padding: 16,
+                      display: 'grid',
+                      gap: 10,
+                      opacity: isDeleting ? 0.4 : 1,
+                      transition: 'border-color 0.15s, background 0.15s, opacity 0.15s',
+                    }}
+                  >
+                    {/* Name row + action buttons */}
+                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+                      <div style={{ fontSize: 15, fontWeight: 600, color: t.text, lineHeight: 1.35, flex: 1 }}>{item.name}</div>
+                      <div style={{ display: 'flex', gap: 4, flexShrink: 0, opacity: isHovered && !isDeleting ? 1 : 0, transition: 'opacity 0.15s', pointerEvents: isHovered && !isDeleting ? 'auto' : 'none' }}>
+                        <button
+                          type="button"
+                          onClick={() => openMenuEdit(item)}
+                          title="Edit"
+                          style={{ width: 26, height: 26, borderRadius: 6, border: `1px solid ${t.border}`, background: t.bgSurface, color: t.textMuted, cursor: 'pointer', display: 'grid', placeItems: 'center', fontSize: 12 }}
+                        >
+                          ✏️
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleMenuDelete(item.id)}
+                          title="Delete"
+                          style={{ width: 26, height: 26, borderRadius: 6, border: '1px solid rgba(248,113,113,0.3)', background: 'rgba(248,113,113,0.08)', color: t.danger, cursor: 'pointer', display: 'grid', placeItems: 'center', fontSize: 12 }}
+                        >
+                          🗑
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Price */}
+                    {item.price != null && (
+                      <div style={{ fontSize: 20, fontWeight: 700, color: '#38bdf8', lineHeight: 1 }}>
+                        ${Number.isInteger(item.price) ? item.price : item.price.toFixed(2)}
+                      </div>
+                    )}
+
+                    {/* Category badge */}
+                    <div>
+                      <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 999, background: cs.bg, color: cs.color, letterSpacing: '0.05em' }}>
+                        {item.category ?? 'Other'}
+                      </span>
+                    </div>
+
+                    {/* Description */}
+                    {item.description ? (
+                      <div style={{ fontSize: 13, color: t.textMuted, lineHeight: 1.5 }}>{item.description}</div>
+                    ) : null}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
+          {/* ── PDF Menu Upload ── */}
+          <input
+            ref={menuPdfInputRef}
+            type="file"
+            accept="application/pdf"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              if (file) void handleMenuPdfUpload(file)
+              e.target.value = ''
+            }}
+          />
+
+          {menuPdfUploading && (
+            <div style={{ ...glassCard, padding: 24, display: 'flex', alignItems: 'center', gap: 16 }}>
+              <div style={{ width: 44, height: 44, borderRadius: 10, background: 'rgba(56,189,248,0.12)', border: '1px solid rgba(56,189,248,0.25)', display: 'grid', placeItems: 'center', fontSize: 22, flexShrink: 0 }}>📄</div>
+              <div style={{ flex: 1 }}>
+                <div style={{ color: t.text, fontSize: 15, fontWeight: 600 }}>Reading PDF…</div>
+                <div style={{ color: t.textMuted, fontSize: 13, marginTop: 3 }}>Extracting text, this may take a moment</div>
+              </div>
+            </div>
+          )}
+          {!menuPdfUploading && menuPdfText && (
+            <div style={{ ...glassCard, padding: 0, borderColor: 'rgba(74,222,128,0.2)', overflow: 'hidden' }}>
+              <div style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 12, background: 'rgba(74,222,128,0.04)' }}>
+                <div style={{ width: 8, height: 8, borderRadius: 99, background: '#4ade80', flexShrink: 0, boxShadow: '0 0 8px rgba(74,222,128,0.5)' }} />
+                <div style={{ flex: 1, display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                  <span style={{ color: t.text, fontSize: 14, fontWeight: 600 }}>PDF Menu Active</span>
+                  <span style={{ color: t.textMuted, fontSize: 12 }}>
+                    {menuPdfText.length.toLocaleString()} chars
+                  </span>
+                </div>
+                <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                  <button
+                    type="button"
+                    onClick={() => setMenuPdfExpanded((v) => !v)}
+                    style={{ borderRadius: 6, border: `1px solid ${t.borderSoft}`, background: 'transparent', color: t.textMuted, padding: '5px 10px', fontSize: 11, fontWeight: 600, cursor: 'pointer', transition: 'color 0.15s' }}
+                  >
+                    {menuPdfExpanded ? 'Hide' : 'Preview'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => menuPdfInputRef.current?.click()}
+                    style={{ borderRadius: 6, border: `1px solid ${t.borderSoft}`, background: 'transparent', color: t.textMuted, padding: '5px 10px', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}
+                  >
+                    Replace
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleMenuPdfClear()}
+                    style={{ borderRadius: 6, border: '1px solid rgba(248,113,113,0.2)', background: 'transparent', color: t.danger, padding: '5px 10px', fontSize: 11, fontWeight: 600, cursor: 'pointer', opacity: 0.8 }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+              {menuPdfExpanded && (
+                <div style={{ borderTop: `1px solid ${t.borderSoft}`, padding: '14px 18px', maxHeight: 360, overflowY: 'auto' }}>
+                  <div style={{ fontSize: 12, color: t.textMuted, lineHeight: 1.7, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+                    {menuPdfText}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          {!menuPdfUploading && !menuPdfText && (
+            <div
+              style={{ borderRadius: 12, border: '1.5px dashed rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.02)', padding: 24, display: 'flex', alignItems: 'center', gap: 16, cursor: 'pointer' }}
+              onClick={() => menuPdfInputRef.current?.click()}
+            >
+              <div style={{ width: 44, height: 44, borderRadius: 10, background: 'rgba(255,255,255,0.06)', display: 'grid', placeItems: 'center', fontSize: 22, flexShrink: 0 }}>📄</div>
+              <div style={{ flex: 1 }}>
+                <div style={{ color: t.text, fontSize: 15, fontWeight: 600 }}>Upload PDF Menu</div>
+                <div style={{ color: t.textMuted, fontSize: 13, marginTop: 3 }}>
+                  The AI will read the full PDF and answer guest questions from it
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); menuPdfInputRef.current?.click() }}
+                style={{ borderRadius: 8, border: 'none', background: '#38bdf8', color: '#fff', padding: '8px 18px', fontSize: 13, fontWeight: 600, cursor: 'pointer', flexShrink: 0 }}
+              >
+                Upload PDF
+              </button>
+            </div>
+          )}
+
+          {menuPdfError && (
+            <div style={{ fontSize: 13, color: t.danger, fontWeight: 500, padding: '0 4px' }}>{menuPdfError}</div>
+          )}
         </div>
       )
     }
@@ -941,26 +1506,28 @@ function SettingsPageInner() {
               </AnimatePresence>
             </motion.section>
 
-            <motion.button
-              type="button"
-              onClick={() => void handleSave()}
-              disabled={isLoading || isSaving}
-              whileHover={isLoading || isSaving || reduceMotion ? undefined : { y: -1 }}
-              whileTap={isLoading || isSaving || reduceMotion ? undefined : { scale: 0.99 }}
-              style={{
-                border: 'none',
-                borderRadius: 12,
-                width: '100%',
-                padding: '14px 18px',
-                background: isLoading || isSaving ? t.bgSurfaceMuted : t.accent,
-                color: isLoading || isSaving ? t.textSubtle : '#ffffff',
-                fontWeight: 600,
-                fontSize: 14,
-                cursor: isLoading || isSaving ? 'not-allowed' : 'pointer',
-              }}
-            >
-              {isLoading ? 'Loading…' : isSaving ? 'Saving…' : 'Save Configuration'}
-            </motion.button>
+            {activeTab !== 'menu' && (
+              <motion.button
+                type="button"
+                onClick={() => void handleSave()}
+                disabled={isLoading || isSaving}
+                whileHover={isLoading || isSaving || reduceMotion ? undefined : { y: -1 }}
+                whileTap={isLoading || isSaving || reduceMotion ? undefined : { scale: 0.99 }}
+                style={{
+                  border: 'none',
+                  borderRadius: 12,
+                  width: '100%',
+                  padding: '14px 18px',
+                  background: isLoading || isSaving ? t.bgSurfaceMuted : t.accent,
+                  color: isLoading || isSaving ? t.textSubtle : '#ffffff',
+                  fontWeight: 600,
+                  fontSize: 14,
+                  cursor: isLoading || isSaving ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {isLoading ? 'Loading…' : isSaving ? 'Saving…' : 'Save Configuration'}
+              </motion.button>
+            )}
           </main>
         )}
       </DashboardOceanNav>

@@ -1,0 +1,8 @@
+node_modules
+.next
+.claude
+public/videos
+public/ocean.mp4
+public/whale2
+public/models
+tsconfig.tsbuildinfo
