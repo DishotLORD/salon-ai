@@ -597,8 +597,17 @@ export default function Home() {
             </button>
           </div>
 
+          <p
+            className="mt-10 text-center text-[11px] font-semibold uppercase tracking-[0.2em] text-white/50"
+            style={{
+              animation: heroMounted ? "fadeUp 0.7s ease 0.45s forwards" : "none",
+              opacity: heroMounted ? undefined : 0,
+            }}
+          >
+            Example metrics
+          </p>
           <div
-            className="mt-12 flex flex-wrap items-center justify-center gap-6 md:gap-10"
+            className="mt-4 flex flex-wrap items-center justify-center gap-6 md:gap-10"
             style={{
               animation: heroMounted ? "fadeUp 0.7s ease 0.45s forwards" : "none",
               opacity: heroMounted ? undefined : 0,
@@ -1060,7 +1069,7 @@ export default function Home() {
               ctaVisible ? "visible" : ""
             }`}
           >
-            Join 340+ restaurants already using OceanCore.
+            Join restaurants using OceanCore during early access.
           </p>
           <div
             className={`reveal mt-10 flex flex-wrap justify-center gap-4 ${

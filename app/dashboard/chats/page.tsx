@@ -581,27 +581,16 @@ export default function ChatsInboxPage() {
       return
     }
 
-    let customerMessage: Message
-    const { data: insertedUser, error: userInsertError } = await supabase
-      .from('messages')
-      .insert({
-        conversation_id: conversationId,
-        role: 'user',
-        content: messageText,
-      })
-      .select('id, role, content, created_at')
-      .single()
+    if (!businessId) {
+      return
+    }
 
-    if (userInsertError || !insertedUser) {
-      const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      customerMessage = {
-        id: `m-${Date.now()}-guest`,
-        sender: 'guest',
-        text: messageText,
-        time: now,
-      }
-    } else {
-      customerMessage = mapDbMessageToMessage(insertedUser as DbMessageRow)
+    const nowLabel = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    const customerMessage: Message = {
+      id: `pending-guest-${Date.now()}`,
+      sender: 'guest',
+      text: messageText,
+      time: nowLabel,
     }
 
     const messagesForApi = [...selectedConversation.messages, customerMessage]
@@ -631,6 +620,9 @@ export default function ChatsInboxPage() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
+          business_id: businessId,
+          conversation_id: conversationId,
+          from_dashboard: true,
           messages: messagesForApi.map((message) => ({
             role: message.sender === 'ai' ? 'assistant' : 'user',
             content: message.text,
@@ -638,68 +630,53 @@ export default function ChatsInboxPage() {
         }),
       })
 
-      const data = await response.json()
+      const data = (await response.json()) as {
+        message?: string | null
+        skipped?: boolean
+        reason?: string
+      }
+
+      if (data.skipped) {
+        return
+      }
+
       const aiText =
         response.ok && typeof data.message === 'string'
           ? data.message
           : 'Sorry, I hit a temporary issue. Please try again in a moment.'
 
-      let aiMessage: Message
-      const { data: insertedAssistant, error: assistantInsertError } = await supabase
-        .from('messages')
-        .insert({
-          conversation_id: conversationId,
-          role: 'assistant',
-          content: aiText,
-        })
-        .select('id, role, content, created_at')
-        .single()
-
-      if (assistantInsertError || !insertedAssistant) {
-        aiMessage = {
-          id: `m-${Date.now()}-ai`,
-          sender: 'ai',
-          text: aiText,
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        }
-      } else {
-        aiMessage = mapDbMessageToMessage(insertedAssistant as DbMessageRow)
+      const aiMessage: Message = {
+        id: `pending-ai-${Date.now()}`,
+        sender: 'ai',
+        text: aiText,
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       }
 
       setConversationList((prev) =>
-        prev.map((conversation) =>
-          conversation.id === conversationId
-            ? {
-                ...conversation,
-                messages: [...conversation.messages, aiMessage],
-                preview: aiText,
-                time: 'now',
-              }
-            : conversation,
-        ),
+        prev.map((conversation) => {
+          if (conversation.id !== conversationId) return conversation
+          const withoutPendingAi = conversation.messages.filter(
+            (m) => !m.id.startsWith('pending-ai-'),
+          )
+          const last = withoutPendingAi[withoutPendingAi.length - 1]
+          if (last?.sender === 'ai' && last.text === aiText) {
+            return { ...conversation, preview: aiText, time: 'now' }
+          }
+          return {
+            ...conversation,
+            messages: [...withoutPendingAi, aiMessage],
+            preview: aiText,
+            time: 'now',
+          }
+        }),
       )
     } catch {
       const fallbackText = 'I could not reach the AI service right now. Please try again.'
-      let fallbackMessage: Message
-      const { data: insertedAssistant, error: assistantInsertError } = await supabase
-        .from('messages')
-        .insert({
-          conversation_id: conversationId,
-          role: 'assistant',
-          content: fallbackText,
-        })
-        .select('id, role, content, created_at')
-        .single()
-
-      if (assistantInsertError || !insertedAssistant) {
-        fallbackMessage = {
-          id: `m-${Date.now()}-ai-fallback`,
-          sender: 'ai',
-          text: fallbackText,
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        }
-      } else {
-        fallbackMessage = mapDbMessageToMessage(insertedAssistant as DbMessageRow)
+      const fallbackMessage: Message = {
+        id: `pending-ai-${Date.now()}`,
+        sender: 'ai',
+        text: fallbackText,
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       }
 
       setConversationList((prev) =>

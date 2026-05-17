@@ -269,8 +269,6 @@ function SettingsPageInner() {
   const [smsNotifs, setSmsNotifs] = useState(false)
   const [digest, setDigest] = useState('daily')
 
-  const [plan] = useState('Pro')
-  const [cardLast4] = useState('4242')
 
   const [widgetOrigin] = useState(() =>
     typeof window !== 'undefined' ? window.location.origin : '',
@@ -1319,7 +1317,7 @@ function SettingsPageInner() {
             >
               Plan
             </div>
-            <div style={{ marginTop: 10, color: t.text, fontSize: 28, fontWeight: 700 }}>{plan}</div>
+            <div style={{ marginTop: 10, color: t.text, fontSize: 28, fontWeight: 700 }}>Early access</div>
           </div>
           <div style={{ ...glassCard, padding: 16 }}>
             <div
@@ -1333,14 +1331,14 @@ function SettingsPageInner() {
             >
               Payment Method
             </div>
-            <div style={{ marginTop: 10, color: t.text, fontSize: 20, fontWeight: 700 }}>•••• {cardLast4}</div>
+            <div style={{ marginTop: 10, color: t.text, fontSize: 20, fontWeight: 700 }}>Not configured</div>
           </div>
         </div>
         <div style={{ ...glassCard, padding: 18 }}>
-          <div style={{ color: t.text, fontSize: 18, fontWeight: 700 }}>Billing Overview</div>
+          <div style={{ color: t.text, fontSize: 18, fontWeight: 700 }}>Billing</div>
           <p style={{ margin: '10px 0 0', color: t.textMuted, fontSize: 14, lineHeight: 1.65 }}>
-            Your subscription is active and your OceanCore environment is fully operational. Upgrade, invoices,
-            and usage details can plug into this panel next.
+            Subscription and invoices are not enabled yet.
+            Stripe billing will appear here when launched.
           </p>
         </div>
       </div>

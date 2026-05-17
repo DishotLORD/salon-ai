@@ -3,7 +3,9 @@ import type { ChatCompletionMessageParam } from 'openai/resources/chat/completio
 import { NextResponse } from 'next/server'
 import { Resend } from 'resend'
 
+import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { verifyBusinessOwner } from '@/lib/verify-business-owner'
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -38,11 +40,15 @@ function buildSystemPrompt(
   customPrompt: string | null | undefined,
   menuItems?: MenuEntry[] | null,
   menuPdfText?: string | null,
+  returningGuestContext?: string | null,
 ): string {
   const base = customPrompt?.trim()
     ? customPrompt.trim()
     : `You are ${conciergeName}, the AI Concierge for ${restaurantName}. Help guests with reservations, menu inquiries, dietary requirements, and general questions. Be warm, attentive, and concise.`
   let prompt = `${base}\n\n${BOOKING_FLOW_RULES}`
+  if (returningGuestContext?.trim()) {
+    prompt += `\n\n${returningGuestContext.trim()}`
+  }
   if (menuItems && menuItems.length > 0) {
     const lines = menuItems.map((item) => {
       const cat = item.category ?? 'Other'
@@ -177,6 +183,215 @@ function extractEmail(text: string): string | null {
   return m ? m[0] : null
 }
 
+function normalizePhone(raw: string): string {
+  const digits = raw.replace(/\D/g, '')
+  if (digits.length === 10) return `+1${digits}`
+  if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`
+  return `+${digits}`
+}
+
+function normalizeName(raw: string): string {
+  return raw
+    .trim()
+    .split(' ')
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(' ')
+}
+
+function normalizeEmail(raw: string): string {
+  return raw.trim().toLowerCase()
+}
+
+function phoneDigitCount(raw: string): number {
+  return raw.replace(/\D/g, '').length
+}
+
+/** Normalize extracted contact fields for customer INSERT/SELECT/UPDATE. */
+function normalizeGuestContact(fields: {
+  name?: string | null
+  phone?: string | null
+  email?: string | null
+}): { name?: string; phone?: string; email?: string } {
+  const out: { name?: string; phone?: string; email?: string } = {}
+  if (fields.name?.trim()) out.name = normalizeName(fields.name)
+  if (fields.phone?.trim() && phoneDigitCount(fields.phone) >= 7) {
+    out.phone = normalizePhone(fields.phone)
+  }
+  if (fields.email?.trim()) out.email = normalizeEmail(fields.email)
+  return out
+}
+
+function extractContactFromMessages(messages: ChatMessage[]) {
+  const allUserText = getUserMessagesCombined(messages)
+  return normalizeGuestContact({
+    phone: extractPhone(allUserText),
+    email: extractEmail(allUserText),
+  })
+}
+
+type CustomerRow = {
+  id: string
+  business_id: string
+  name: string
+  email: string | null
+  phone: string | null
+  total_bookings: number | null
+  last_visit: string | null
+}
+
+type GuestHistory = {
+  totalBookings: number
+  lastVisit: string | null
+  services: string[]
+  preferredPartySize: number | null
+}
+
+function parsePartySizeFromServiceName(serviceName: string | null): number | null {
+  if (!serviceName) return null
+  const parts = serviceName.split('·').map((p) => p.trim())
+  const partyPart = parts.find((p) => /^party of/i.test(p)) ?? parts[1]
+  if (!partyPart) return null
+  const n = parseInt(partyPart.replace(/\D/g, ''), 10)
+  return n >= 1 && n <= 30 ? n : null
+}
+
+function mostCommonPartySize(sizes: number[]): number | null {
+  if (sizes.length === 0) return null
+  const counts = new Map<number, number>()
+  for (const n of sizes) {
+    counts.set(n, (counts.get(n) ?? 0) + 1)
+  }
+  let best: number | null = null
+  let bestCount = 0
+  for (const [size, count] of counts) {
+    if (count > bestCount) {
+      best = size
+      bestCount = count
+    }
+  }
+  return best
+}
+
+function formatVisitDate(iso: string | null): string {
+  if (!iso) return 'unknown'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return 'unknown'
+  return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+}
+
+async function lookupReturningGuest(
+  business_id: string,
+  phone: string | null,
+  email: string | null,
+): Promise<CustomerRow | null> {
+  const { phone: normalizedPhone, email: normalizedEmail } = normalizeGuestContact({ phone, email })
+  if (!normalizedPhone && !normalizedEmail) return null
+
+  const select =
+    'id, business_id, name, email, phone, total_bookings, last_visit' as const
+
+  if (normalizedEmail) {
+    const { data } = await supabaseAdmin
+      .from('customers')
+      .select(select)
+      .eq('business_id', business_id)
+      .eq('email', normalizedEmail)
+      .maybeSingle()
+    if (data) return data as CustomerRow
+  }
+
+  if (normalizedPhone) {
+    const { data } = await supabaseAdmin
+      .from('customers')
+      .select(select)
+      .eq('business_id', business_id)
+      .eq('phone', normalizedPhone)
+      .maybeSingle()
+    if (data) return data as CustomerRow
+  }
+
+  return null
+}
+
+async function fetchGuestHistory(customer_id: string): Promise<GuestHistory> {
+  const { data: appointments } = await supabaseAdmin
+    .from('appointments')
+    .select('service_name, scheduled_at')
+    .eq('customer_id', customer_id)
+    .order('scheduled_at', { ascending: false })
+
+  const rows = appointments ?? []
+  const services = rows
+    .map((r) => r.service_name)
+    .filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
+
+  const partySizes = services
+    .map((s) => parsePartySizeFromServiceName(s))
+    .filter((n): n is number => n != null)
+
+  return {
+    totalBookings: rows.length,
+    lastVisit: rows[0]?.scheduled_at ?? null,
+    services,
+    preferredPartySize: mostCommonPartySize(partySizes),
+  }
+}
+
+function buildReturningGuestContext(customer: CustomerRow, history: GuestHistory): string {
+  const partyHint =
+    history.preferredPartySize != null
+      ? String(history.preferredPartySize)
+      : 'unknown'
+  const servicesHint =
+    history.services.length > 0
+      ? history.services.slice(0, 5).join('; ')
+      : 'none on record'
+
+  return `RETURNING GUEST CONTEXT:
+- Name: ${customer.name?.trim() || 'Guest'}
+- Phone: ${customer.phone?.trim() || 'not on file'}
+- Total visits: ${history.totalBookings}
+- Last visit: ${formatVisitDate(history.lastVisit)}
+- Preferred party size: ${partyHint}
+- Past reservations: ${servicesHint}
+Use this info to personalize the conversation. Greet them by name, suggest their usual booking if appropriate.`
+}
+
+async function linkConversationToCustomer(params: {
+  conversation_id: string
+  business_id: string
+  customer_id: string
+  customer_name: string
+}) {
+  const { conversation_id, business_id, customer_id, customer_name } = params
+  await supabaseAdmin
+    .from('conversations')
+    .update({
+      customer_id,
+      customer_name: normalizeName(customer_name),
+    })
+    .eq('id', conversation_id)
+    .eq('business_id', business_id)
+}
+
+async function bumpCustomerVisitStats(customer_id: string, business_id: string) {
+  const { data: cust } = await supabaseAdmin
+    .from('customers')
+    .select('total_bookings')
+    .eq('id', customer_id)
+    .eq('business_id', business_id)
+    .maybeSingle()
+
+  await supabaseAdmin
+    .from('customers')
+    .update({
+      last_visit: new Date().toISOString(),
+      total_bookings: (cust?.total_bookings ?? 0) + 1,
+    })
+    .eq('id', customer_id)
+    .eq('business_id', business_id)
+}
+
 // ─── Guest info persistence ───────────────────────────────────────────────────
 
 /**
@@ -190,36 +405,65 @@ async function syncGuestInfo(params: {
   business_id: string
   customer_id: string
   conversation_id: string
-}) {
+}): Promise<string> {
   const { allMessages, assistantText, business_id, customer_id, conversation_id } = params
 
-  const name = extractGuestNameFromConversation(allMessages, assistantText)
+  const rawName = extractGuestNameFromConversation(allMessages, assistantText)
   const allUserText = getUserMessagesCombined(allMessages)
-  const phone = extractPhone(allUserText)
-  const email = extractEmail(allUserText)
+  const { name, phone, email } = normalizeGuestContact({
+    name: rawName,
+    phone: extractPhone(allUserText),
+    email: extractEmail(allUserText),
+  })
 
-  if (!name && !phone && !email) return
+  if (!name && !phone && !email) return customer_id
+
+  let targetCustomerId = customer_id
+
+  const returningGuest = await lookupReturningGuest(business_id, phone ?? null, email ?? null)
+  if (returningGuest && returningGuest.id !== customer_id) {
+    targetCustomerId = returningGuest.id
+    await linkConversationToCustomer({
+      conversation_id,
+      business_id,
+      customer_id: returningGuest.id,
+      customer_name: name ?? returningGuest.name ?? 'Guest',
+    })
+  }
+
+  const { data: existing } = await supabaseAdmin
+    .from('customers')
+    .select('name, phone, email')
+    .eq('id', targetCustomerId)
+    .eq('business_id', business_id)
+    .maybeSingle()
 
   const customerUpdate: Record<string, string> = {}
-  if (name) customerUpdate.name = name
-  if (phone) customerUpdate.phone = phone
-  if (email) customerUpdate.email = email
+  const placeholderName = /^(guest|website visitor)$/i
+  if (name && (!existing?.name || placeholderName.test(existing.name.trim()))) {
+    customerUpdate.name = name
+  }
+  if (phone && !existing?.phone?.trim()) customerUpdate.phone = phone
+  if (email && !existing?.email?.trim()) customerUpdate.email = email
 
   if (Object.keys(customerUpdate).length > 0) {
     await supabaseAdmin
       .from('customers')
       .update(customerUpdate)
-      .eq('id', customer_id)
+      .eq('id', targetCustomerId)
       .eq('business_id', business_id)
   }
 
-  if (name) {
+  const displayName = name ?? existing?.name ?? returningGuest?.name
+  if (displayName && !placeholderName.test(displayName.trim())) {
     await supabaseAdmin
       .from('conversations')
-      .update({ customer_name: name })
+      .update({ customer_name: normalizeName(displayName) })
       .eq('id', conversation_id)
       .eq('business_id', business_id)
   }
+
+  return targetCustomerId
 }
 
 // ─── Reservation creation ─────────────────────────────────────────────────────
@@ -433,10 +677,14 @@ async function tryCreateReservationFromChat(params: {
     .select('id')
     .maybeSingle()
 
-  if (error) console.error('[booking] Insert failed:', error.message)
-  else console.log('[booking] Reservation created successfully')
+  if (error) {
+    console.error('[booking] Insert failed:', error.message)
+    return false
+  }
 
-  return !error
+  console.log('[booking] Reservation created successfully')
+  await bumpCustomerVisitStats(customer_id, business_id)
+  return true
 }
 
 // ─── Notification email ───────────────────────────────────────────────────────
@@ -469,35 +717,75 @@ function queueNewConversationOwnerEmail(
 
 // ─── Route handler ────────────────────────────────────────────────────────────
 
+const CHAT_RATE_LIMIT = 40
+const CHAT_RATE_WINDOW_MS = 60_000
+
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as {
       messages?: ChatMessage[]
       business_id?: string
       conversation_id?: string
+      from_dashboard?: boolean
     }
 
     const chatMessages = body.messages
     const business_id = body.business_id
     const conversation_id = body.conversation_id
+    const fromDashboard = body.from_dashboard === true
 
     if (!Array.isArray(chatMessages)) {
       return NextResponse.json({ error: 'messages array required' }, { status: 400 })
     }
 
-    // ── Anonymous / no business_id: preview mode ──────────────────────────────
+    const clientIp = getClientIp(request)
+
+    // ── Preview mode (gated) — landing demos only ─────────────────────────────
     if (!business_id) {
-      const systemPrompt = buildSystemPrompt(
-        'AI Concierge',
-        'this restaurant',
-        null,
-      )
+      const previewSecret = process.env.CHAT_PREVIEW_SECRET
+      const headerSecret = request.headers.get('x-chat-preview-secret')
+      if (!previewSecret || headerSecret !== previewSecret) {
+        return NextResponse.json({ error: 'business_id required' }, { status: 400 })
+      }
+
+      const ipLimit = checkRateLimit(`chat-preview:ip:${clientIp}`, 10, CHAT_RATE_WINDOW_MS)
+      if (!ipLimit.allowed) {
+        return NextResponse.json(
+          { error: 'Too many requests. Please try again shortly.' },
+          { status: 429, headers: { 'Retry-After': String(ipLimit.retryAfterSec ?? 60) } },
+        )
+      }
+
+      const systemPrompt = buildSystemPrompt('AI Concierge', 'this restaurant', null)
       const response = await openai.chat.completions.create({
         model: 'gpt-4o-mini',
         messages: [{ role: 'system', content: systemPrompt }, ...toOpenAiMessages(chatMessages)],
         max_tokens: 500,
       })
       return NextResponse.json({ message: response.choices[0].message.content })
+    }
+
+    if (fromDashboard) {
+      const owns = await verifyBusinessOwner(business_id)
+      if (!owns) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
+      }
+    }
+
+    const ipLimit = checkRateLimit(`chat:ip:${clientIp}`, CHAT_RATE_LIMIT, CHAT_RATE_WINDOW_MS)
+    if (!ipLimit.allowed) {
+      return NextResponse.json(
+        { error: 'Too many requests. Please try again shortly.' },
+        { status: 429, headers: { 'Retry-After': String(ipLimit.retryAfterSec ?? 60) } },
+      )
+    }
+
+    const bizLimit = checkRateLimit(`chat:biz:${business_id}`, CHAT_RATE_LIMIT * 2, CHAT_RATE_WINDOW_MS)
+    if (!bizLimit.allowed) {
+      return NextResponse.json(
+        { error: 'Too many requests for this business.' },
+        { status: 429, headers: { 'Retry-After': String(bizLimit.retryAfterSec ?? 60) } },
+      )
     }
 
     // ── Fetch business ────────────────────────────────────────────────────────
@@ -529,7 +817,6 @@ export async function POST(request: Request) {
 
     const restaurantName = business.name?.trim() || 'this restaurant'
     const conciergeName = business.agent_name?.trim() || 'AI Concierge'
-    const systemPrompt = buildSystemPrompt(conciergeName, restaurantName, business.system_prompt, menuItems, (business as Record<string, unknown>).menu_pdf_text as string | null)
 
     const lastUserContent = getLastUserMessageContent(chatMessages)
     if (!lastUserContent?.trim()) {
@@ -578,12 +865,36 @@ export async function POST(request: Request) {
       resolvedConversationId = newConv.id
     }
 
+    // ── Returning guest recognition (before creating a placeholder customer) ──
+    let returningGuestContext: string | null = null
+    const { phone: contactPhone, email: contactEmail } = extractContactFromMessages(chatMessages)
+
+    if (contactPhone || contactEmail) {
+      const returningGuest = await lookupReturningGuest(
+        business_id,
+        contactPhone ?? null,
+        contactEmail ?? null,
+      )
+      if (returningGuest) {
+        const history = await fetchGuestHistory(returningGuest.id)
+        returningGuestContext = buildReturningGuestContext(returningGuest, history)
+        resolvedCustomerId = returningGuest.id
+
+        await linkConversationToCustomer({
+          conversation_id: resolvedConversationId,
+          business_id,
+          customer_id: returningGuest.id,
+          customer_name: returningGuest.name?.trim() || 'Guest',
+        })
+      }
+    }
+
     if (!resolvedCustomerId) {
       const { data: newCustomer, error: custErr } = await supabaseAdmin
         .from('customers')
         .insert({
           business_id,
-          name: 'Website visitor',
+          name: normalizeName('Website visitor'),
           email: '',
           phone: '',
           tags: ['New'],
@@ -604,7 +915,7 @@ export async function POST(request: Request) {
         .from('conversations')
         .update({
           customer_id: resolvedCustomerId,
-          customer_name: newCustomer.name ?? 'Website visitor',
+          customer_name: newCustomer.name ?? normalizeName('Website visitor'),
         })
         .eq('id', resolvedConversationId)
         .eq('business_id', business_id)
@@ -614,7 +925,16 @@ export async function POST(request: Request) {
       }
     }
 
-    if (isNewConversation && resolvedCustomerId) {
+    const systemPrompt = buildSystemPrompt(
+      conciergeName,
+      restaurantName,
+      business.system_prompt,
+      menuItems,
+      (business as Record<string, unknown>).menu_pdf_text as string | null,
+      returningGuestContext,
+    )
+
+    if (isNewConversation && resolvedCustomerId && !returningGuestContext) {
       queueNewConversationOwnerEmail(business.email, business.name)
     }
 
@@ -670,7 +990,7 @@ export async function POST(request: Request) {
 
     // ── Extract & persist guest name / contact info ───────────────────────────
     if (resolvedCustomerId) {
-      await syncGuestInfo({
+      resolvedCustomerId = await syncGuestInfo({
         allMessages: chatMessages,
         assistantText,
         business_id,
@@ -699,6 +1019,7 @@ export async function POST(request: Request) {
     })
   } catch (e) {
     const message = e instanceof Error ? e.message : 'Unexpected error'
+    console.error(JSON.stringify({ event: 'chat_error', message }))
     return NextResponse.json({ error: message }, { status: 500 })
   }
 }

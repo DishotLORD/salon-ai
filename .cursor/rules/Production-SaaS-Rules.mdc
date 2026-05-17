@@ -1,0 +1,44 @@
+---
+alwaysApply: true
+---
+
+This is a production SaaS project.
+
+Core rules:
+- Stability is more important than adding features.
+- Never rewrite working systems unnecessarily.
+- Never duplicate business logic.
+- Always preserve Supabase auth and realtime logic.
+- Avoid large refactors unless explicitly requested.
+- Prefer improving existing components over replacing them.
+- Keep components modular and reusable.
+- Keep TypeScript strict and clean.
+- Avoid overengineering.
+- Avoid fake/demo implementations.
+- Every feature must work fully before moving on.
+- Always explain what files are being modified before coding.
+- Always identify possible side effects before changes.
+- Do not touch unrelated files.
+- Preserve responsiveness.
+- Preserve current database schema unless necessary.
+
+UI philosophy:
+- premium hospitality SaaS
+- simple
+- fresh
+- smooth
+- clean hierarchy
+- soft animations
+- elegant spacing
+- conversational UI
+- AI should feel integrated into the product
+
+Workflow:
+1. Analyze first
+2. Explain architecture
+3. Explain risks
+4. Implement small scoped changes
+5. Verify functionality
+6. Summarize changes
+
+Never generate massive uncontrolled rewrites.

@@ -684,7 +684,6 @@ export default function CrmPage() {
                     { label: 'Phone', value: selected.phone },
                     { label: 'Joined', value: selected.joined },
                     { label: 'Last visit', value: selected.lastVisit },
-                    { label: 'Preferred server', value: selected.preferredStaff },
                   ].map((item) => (
                     <div
                       key={item.label}
