@@ -3,3 +3,5 @@
 .env*.local
 node_modules/
 .next/
+public/videos/
+public/ocean.mp4
