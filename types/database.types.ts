@@ -145,6 +145,7 @@ export type Database = {
           service_name: string | null
           scheduled_at: string
           status: string
+          notes: string | null
           created_at: string
           updated_at: string
         }
@@ -156,6 +157,7 @@ export type Database = {
           service_name?: string | null
           scheduled_at: string
           status?: string
+          notes?: string | null
           created_at?: string
           updated_at?: string
         }

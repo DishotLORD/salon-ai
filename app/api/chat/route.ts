@@ -466,6 +466,27 @@ async function syncGuestInfo(params: {
   return targetCustomerId
 }
 
+// ─── Special request extraction ──────────────────────────────────────────────
+
+const SPECIAL_REQUEST_KEYWORDS =
+  /\b(near|close\s+to|next\s+to|by\s+the|window|outside|patio|terrace|garden|quiet|private|corner|booth|pool\s+table|birthday|anniversary|proposal|special\s+occasion|celebrat\w*|high\s+chair|wheelchair|accessible|prefer\w*|would\s+like|can\s+we|we'?d\s+like|seat\w*|settl\w*|spot|area)\b/i
+
+function extractSpecialRequests(messages: ChatMessage[]): string | null {
+  const sentences = messages
+    .filter((m) => m.role === 'user')
+    .flatMap((m) =>
+      m.content
+        .split(/(?<=[.!?])\s+|(?<=\band\b)\s+/i)
+        .map((s) => s.trim())
+        .filter((s) => s.length > 4),
+    )
+
+  const found = sentences.filter((s) => SPECIAL_REQUEST_KEYWORDS.test(s))
+  if (found.length === 0) return null
+  // deduplicate and join
+  return [...new Set(found)].join('; ')
+}
+
 // ─── Reservation creation ─────────────────────────────────────────────────────
 
 function extractPartySize(text: string): number | null {
@@ -664,6 +685,8 @@ async function tryCreateReservationFromChat(params: {
     scheduledAtLocal: scheduledAt.toString(),
   })
 
+  const notes = extractSpecialRequests(chatMessages)
+
   const { error } = await supabaseAdmin
     .from('appointments')
     .insert({
@@ -673,6 +696,7 @@ async function tryCreateReservationFromChat(params: {
       service_name: serviceName,
       scheduled_at: wallClock,
       status: 'pending' as const,
+      notes,
     })
     .select('id')
     .maybeSingle()
