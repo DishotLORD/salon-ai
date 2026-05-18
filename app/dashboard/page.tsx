@@ -39,6 +39,7 @@ export default async function Dashboard() {
     .from('conversations')
     .select('*', { count: 'exact', head: true })
     .eq('business_id', businessId)
+    .or('status.is.null,status.eq.active,status.eq.human')
 
   const activeChats = conversationsCountError ? 0 : (activeChatsCount ?? 0)
 
@@ -57,6 +58,10 @@ export default async function Dashboard() {
     }
   }
 
+  const todayStart = new Date()
+  todayStart.setHours(0, 0, 0, 0)
+  const todayStartISO = todayStart.toISOString()
+
   let messageCount = 0
   const recentMessages: { id: string; content: string; role: string; created_at: string; conversation_id: string }[] = []
   const idChunkSize = 200
@@ -66,6 +71,7 @@ export default async function Dashboard() {
       .from('messages')
       .select('*', { count: 'exact', head: true })
       .in('conversation_id', chunk)
+      .gte('created_at', todayStartISO)
     messageCount += count ?? 0
   }
 

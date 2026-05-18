@@ -112,7 +112,7 @@ export function DashboardClient({
         .from('conversations')
         .select('*', { count: 'exact', head: true })
         .eq('business_id', businessId)
-        .eq('status', 'active')
+        .or('status.is.null,status.eq.active,status.eq.human')
       if (count !== null) setUnreadCount(count)
     }
     void fetchCount()
@@ -298,13 +298,13 @@ export function DashboardClient({
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4, delay: 0.45 }}
             style={{
-              background: t.bgSurface,
-              backdropFilter: 'blur(20px)',
-              WebkitBackdropFilter: 'blur(20px)',
+              background: 'var(--t-glass-bg)',
+              backdropFilter: 'blur(24px)',
+              WebkitBackdropFilter: 'blur(24px)',
               border: `1px solid ${t.border}`,
               borderRadius: 20,
               overflow: 'hidden',
-              boxShadow: '0 4px 24px rgba(0,0,0,0.4)',
+              boxShadow: '0 4px 24px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.06)',
             }}
           >
             <div style={{
@@ -318,7 +318,7 @@ export function DashboardClient({
 
             {recentActivity.length === 0 ? (
               <div style={{ padding: '48px 24px', textAlign: 'center', color: t.textMuted, fontSize: 14 }}>
-                No activity yet. Guests will appear here once they start chatting.
+                Quiet so far — guests will show up here once they start chatting
               </div>
             ) : (
               recentActivity.map((item, i) => {

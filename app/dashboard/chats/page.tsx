@@ -809,8 +809,8 @@ export default function ChatsInboxPage() {
               {inboxLoaded && !inboxFetchError && filteredList.length === 0 && (
                 <div style={{ padding: '28px 12px', color: t.textMuted, fontSize: 13, textAlign: 'center', lineHeight: 1.6 }}>
                   {conversationList.length === 0
-                    ? 'No conversations yet.'
-                    : 'No matches.'}
+                    ? 'No conversations yet'
+                    : 'Nothing matches that search'}
                 </div>
               )}
 
@@ -1216,7 +1216,7 @@ export default function ChatsInboxPage() {
                   </div>
                   <div style={{ color: t.text, fontSize: 16, fontWeight: 700 }}>
                     {conversationList.length === 0
-                      ? 'No conversations yet'
+                      ? 'Nothing here yet'
                       : 'Select a conversation'}
                   </div>
                   <div

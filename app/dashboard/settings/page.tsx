@@ -860,7 +860,7 @@ function SettingsPageInner() {
                 whiteSpace: 'nowrap',
               }}
             >
-              {menuFormOpen ? '✕ Cancel' : '+ Add Item'}
+              {menuFormOpen ? 'Cancel' : 'Add item'}
             </button>
           </div>
 
@@ -868,7 +868,7 @@ function SettingsPageInner() {
           {menuFormOpen && (
             <div style={{ ...glassCard, padding: 20, display: 'grid', gap: 16, borderColor: t.accentSoftBorder }}>
               <div style={{ color: t.textMuted, fontSize: 11, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase' }}>
-                {menuEditId ? 'Edit item' : 'New item'}
+                {menuEditId ? 'Edit dish' : 'New dish'}
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 12 }}>
@@ -945,7 +945,7 @@ function SettingsPageInner() {
                       minWidth: 110,
                     }}
                   >
-                    {menuFormSaving ? 'Saving…' : menuEditId ? 'Save Changes' : 'Add Item'}
+                    {menuFormSaving ? 'Saving…' : menuEditId ? 'Save changes' : 'Add dish'}
                   </button>
                 </div>
               </div>
@@ -998,16 +998,16 @@ function SettingsPageInner() {
           ) : menuItems.length === 0 ? (
             <div style={{ display: 'grid', justifyItems: 'center', gap: 12, padding: '52px 20px', textAlign: 'center' }}>
               <div style={{ fontSize: 44, lineHeight: 1 }}>🍴</div>
-              <div style={{ color: t.text, fontSize: 16, fontWeight: 700 }}>No menu items yet</div>
+              <div style={{ color: t.text, fontSize: 16, fontWeight: 700 }}>Your menu is empty</div>
               <div style={{ color: t.textMuted, fontSize: 13, maxWidth: 300 }}>
-                Add your first dish so the AI can answer guest questions about your menu.
+                Add dishes and your AI will be able to answer menu questions for guests.
               </div>
               <button
                 type="button"
                 onClick={openMenuAdd}
                 style={{ marginTop: 6, borderRadius: 10, border: 'none', background: t.accent, color: '#fff', padding: '10px 24px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
               >
-                + Add First Item
+                Add your first dish
               </button>
             </div>
           ) : filteredMenuItems.length === 0 ? (

@@ -4,22 +4,10 @@ import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { DashboardOceanNav } from '@/components/dashboard-ocean-nav'
+import { ReservationCard, type Reservation, type ResStatus } from '@/components/reservation-card'
 import { oceanTransition } from '@/lib/ocean-motion'
 import { supabase } from '@/lib/supabase'
 import { card, t } from '@/lib/dashboard-theme'
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-type ResStatus = 'confirmed' | 'seated' | 'pending' | 'cancelled' | 'no-show'
-
-type Reservation = {
-  id: string
-  guestName: string
-  partySize: number
-  tableNumber: string
-  scheduledAt: Date
-  status: ResStatus
-  specialRequests: string
-}
 
 type DbRow = {
   id: string
@@ -336,7 +324,7 @@ function DayPanel({
             letterSpacing: '0.02em',
           }}
         >
-          + Add Reservation for {day.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+          Book a table for {day.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
         </button>
       </div>
 
@@ -360,149 +348,21 @@ function DayPanel({
               fontSize: 13,
             }}
           >
-            No reservations — open availability
+            All clear — nothing booked yet
           </div>
         ) : (
           <div style={{ display: 'grid', gap: 10 }}>
-            {reservations.map((r) => {
-              const c = statusColor(r.status)
-              return (
-                <div
-                  key={r.id}
-                  style={{
-                    borderRadius: 10,
-                    border: `1px solid ${t.border}`,
-                    background: t.bgSurface,
-                    padding: 14,
-                  }}
-                >
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'flex-start',
-                      gap: 8,
-                    }}
-                  >
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ color: t.text, fontSize: 13, fontWeight: 700 }}>
-                        {r.guestName}
-                      </div>
-                      <div
-                        style={{ marginTop: 4, color: t.textMuted, fontSize: 12 }}
-                      >
-                        {fmtTime(r.scheduledAt)} · Party of {r.partySize} · Table{' '}
-                        {r.tableNumber}
-                      </div>
-                      {r.specialRequests && (
-                        <div
-                          style={{
-                            marginTop: 6,
-                            color: t.textMuted,
-                            fontSize: 11,
-                            fontStyle: 'italic',
-                          }}
-                        >
-                          {r.specialRequests}
-                        </div>
-                      )}
-                    </div>
-                    <span
-                      style={{
-                        flexShrink: 0,
-                        padding: '3px 8px',
-                        borderRadius: 999,
-                        background: c.bg,
-                        border: `1px solid ${c.border}`,
-                        color: c.text,
-                        fontSize: 10,
-                        fontWeight: 700,
-                        textTransform: 'uppercase',
-                      }}
-                    >
-                      {r.status}
-                    </span>
-                  </div>
-                  <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
-                    {r.status === 'pending' && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => onConfirm(r.id)}
-                          style={{
-                            flex: 1,
-                            padding: '7px 10px',
-                            borderRadius: 8,
-                            border: `1px solid ${t.accent}`,
-                            background: t.accent,
-                            color: '#ffffff',
-                            fontSize: 12,
-                            fontWeight: 600,
-                            cursor: 'pointer',
-                          }}
-                        >
-                          Confirm
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onCancel(r.id)}
-                          style={{
-                            flex: 1,
-                            padding: '7px 10px',
-                            borderRadius: 8,
-                            border: `1px solid ${t.dangerBorder}`,
-                            background: t.dangerBg,
-                            color: t.danger,
-                            fontSize: 12,
-                            fontWeight: 600,
-                            cursor: 'pointer',
-                          }}
-                        >
-                          Cancel
-                        </button>
-                      </>
-                    )}
-                    {(r.status === 'cancelled' || r.status === 'no-show') ? (
-                      <button
-                        type="button"
-                        onClick={() => onDelete(r.id)}
-                        style={{
-                          flex: 1,
-                          padding: '7px 10px',
-                          borderRadius: 8,
-                          border: `1px solid ${t.dangerBorder}`,
-                          background: t.dangerBg,
-                          color: t.danger,
-                          fontSize: 12,
-                          fontWeight: 600,
-                          cursor: 'pointer',
-                        }}
-                      >
-                        Delete
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => onEdit(r)}
-                        style={{
-                          flex: r.status === 'pending' ? 'none' : 1,
-                          padding: '7px 10px',
-                          borderRadius: 8,
-                          border: `1px solid ${t.border}`,
-                          background: t.bgSurface,
-                          color: t.text,
-                          fontSize: 12,
-                          fontWeight: 600,
-                          cursor: 'pointer',
-                        }}
-                      >
-                        Edit
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )
-            })}
+            {reservations.map((r) => (
+              <ReservationCard
+                key={r.id}
+                reservation={r}
+                variant="panel"
+                onConfirm={onConfirm}
+                onCancel={onCancel}
+                onDelete={onDelete}
+                onEdit={onEdit}
+              />
+            ))}
           </div>
         )}
       </div>
@@ -595,122 +455,17 @@ function ReservationListView({
               {emptyMsg}
             </div>
           ) : (
-            reservations.map((r) => {
-              const c = statusColor(r.status)
-              return (
-                <div
-                  key={r.id}
-                  style={{
-                    borderRadius: 10,
-                    border: `1px solid ${t.border}`,
-                    background: t.bgSurface,
-                    padding: 14,
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                    <div>
-                      <div style={{ color: t.text, fontSize: 13, fontWeight: 700 }}>
-                        {r.guestName}
-                      </div>
-                      <div style={{ marginTop: 4, color: t.textMuted, fontSize: 12 }}>
-                        {fmtTime(r.scheduledAt)} · Party of {r.partySize} · Table {r.tableNumber}
-                      </div>
-                    </div>
-                    <span
-                      style={{
-                        flexShrink: 0,
-                        padding: '3px 8px',
-                        borderRadius: 999,
-                        background: c.bg,
-                        border: `1px solid ${c.border}`,
-                        color: c.text,
-                        fontSize: 10,
-                        fontWeight: 700,
-                        textTransform: 'uppercase',
-                      }}
-                    >
-                      {r.status}
-                    </span>
-                  </div>
-                  <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
-                    {r.status === 'pending' && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => onConfirm(r.id)}
-                          style={{
-                            flex: 1,
-                            padding: '7px',
-                            borderRadius: 8,
-                            border: `1px solid ${t.accent}`,
-                            background: t.accent,
-                            color: '#ffffff',
-                            fontSize: 12,
-                            fontWeight: 600,
-                            cursor: 'pointer',
-                          }}
-                        >
-                          Confirm
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onCancel(r.id)}
-                          style={{
-                            flex: 1,
-                            padding: '7px',
-                            borderRadius: 8,
-                            border: `1px solid ${t.dangerBorder}`,
-                            background: t.dangerBg,
-                            color: t.danger,
-                            fontSize: 12,
-                            fontWeight: 600,
-                            cursor: 'pointer',
-                          }}
-                        >
-                          Cancel
-                        </button>
-                      </>
-                    )}
-                    {(r.status === 'cancelled' || r.status === 'no-show') ? (
-                      <button
-                        type="button"
-                        onClick={() => onDelete(r.id)}
-                        style={{
-                          flex: 1,
-                          padding: '7px 14px',
-                          borderRadius: 8,
-                          border: `1px solid ${t.dangerBorder}`,
-                          background: t.dangerBg,
-                          color: t.danger,
-                          fontSize: 12,
-                          fontWeight: 600,
-                          cursor: 'pointer',
-                        }}
-                      >
-                        Delete
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => onEdit(r)}
-                        style={{
-                          padding: '7px 14px',
-                          borderRadius: 8,
-                          border: `1px solid ${t.border}`,
-                          background: t.bgSurface,
-                          color: t.text,
-                          fontSize: 12,
-                          fontWeight: 600,
-                          cursor: 'pointer',
-                        }}
-                      >
-                        Edit
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )
-            })
+            reservations.map((r) => (
+              <ReservationCard
+                key={r.id}
+                reservation={r}
+                variant="panel"
+                onConfirm={onConfirm}
+                onCancel={onCancel}
+                onDelete={onDelete}
+                onEdit={onEdit}
+              />
+            ))
           )}
         </div>
       ) : (
@@ -1183,10 +938,10 @@ function ReservationModal({
                 lineHeight: 1.2,
               }}
             >
-              {isEdit ? 'Edit Reservation' : 'Add Reservation'}
+              {isEdit ? 'Edit booking' : 'New booking'}
             </h2>
             <p style={{ margin: '6px 0 0', color: t.textMuted, fontSize: 13 }}>
-              {isEdit ? 'Update reservation details' : 'Book a table for your guests'}
+              {isEdit ? 'Make any changes below' : 'Fill in the details below'}
             </p>
           </div>
           <button
@@ -1500,7 +1255,7 @@ function ReservationModal({
             ) : isEdit ? (
               'Save Changes'
             ) : (
-              'Confirm Reservation'
+              'Confirm booking'
             )}
           </motion.button>
         </div>
@@ -1901,7 +1656,7 @@ export default function BookingsPage() {
                   whiteSpace: 'nowrap',
                 }}
               >
-                + Add Reservation
+                New booking
               </motion.button>
             </div>
           </motion.div>

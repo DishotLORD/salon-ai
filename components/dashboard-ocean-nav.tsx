@@ -180,12 +180,44 @@ function AnimatedWaveLogo() {
   )
 }
 
+function IconSun() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+      <circle cx="12" cy="12" r="4"/>
+      <path d="M12 2v2M12 20v2M5 5l1.4 1.4M17.6 17.6 19 19M2 12h2M20 12h2M5 19l1.4-1.4M17.6 6.4 19 5"/>
+    </svg>
+  )
+}
+
+function IconMoon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+      <path d="M21 13A9 9 0 1 1 11 3a7 7 0 0 0 10 10Z"/>
+    </svg>
+  )
+}
+
 export function DashboardOceanNav({ activeNav, fillViewport, children }: DashboardOceanNavProps) {
   const [isMobile, setIsMobile] = useState(false)
   const [isDrawerOpen, setDrawerOpen] = useState(false)
   const [userEmail, setUserEmail] = useState<string | null>(null)
   const [logoutOpen, setLogoutOpen] = useState(false)
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark')
   const reduceMotion = useReducedMotion()
+
+  useEffect(() => {
+    const stored = localStorage.getItem('theme')
+    const initial = stored === 'light' ? 'light' : 'dark'
+    setTheme(initial)
+    document.documentElement.dataset.theme = initial
+  }, [])
+
+  const toggleTheme = useCallback(() => {
+    const next = theme === 'dark' ? 'light' : 'dark'
+    setTheme(next)
+    localStorage.setItem('theme', next)
+    document.documentElement.dataset.theme = next
+  }, [theme])
 
   useEffect(() => {
     let mounted = true
@@ -341,77 +373,113 @@ export function DashboardOceanNav({ activeNav, fillViewport, children }: Dashboa
 
         {/* Usage card */}
         <div style={{
-          borderRadius: 16,
+          borderRadius: 12,
           border: `1px solid ${t.border}`,
-          background: 'rgba(255,255,255,0.03)',
-          padding: '16px',
+          background: 'rgba(255,255,255,0.02)',
+          padding: '12px 14px',
           display: 'flex',
           flexDirection: 'column',
-          gap: 14,
+          gap: 10,
         }}>
-          {/* Plan badge */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 12, fontWeight: 700, color: t.text }}>Free plan</span>
-            <span style={{
-              fontSize: 10, fontWeight: 700,
-              padding: '3px 8px', borderRadius: 99,
-              background: 'rgba(99,102,241,0.15)',
-              border: '1px solid rgba(99,102,241,0.3)',
-              color: '#818cf8',
-              letterSpacing: '0.1em',
-              textTransform: 'uppercase',
-            }}>
-              Free
-            </span>
-          </div>
-
-          {/* Progress */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-              <span style={{ fontSize: 11, color: t.textMuted }}>Messages used</span>
-              <span style={{ fontSize: 11, fontWeight: 600, color: t.text }}>61 / 500</span>
+          {/* Usage row */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: 11, color: t.textMuted }}>Free plan</span>
+              <span style={{ fontSize: 11, color: t.textSubtle }}>61 / 500</span>
             </div>
-
-            {/* Bar track */}
-            <div style={{ height: 6, borderRadius: 99, background: 'rgba(255,255,255,0.08)', overflow: 'hidden' }}>
+            <div style={{ height: 3, borderRadius: 99, background: 'rgba(255,255,255,0.08)', overflow: 'hidden' }}>
               <motion.div
                 initial={{ width: 0 }}
                 animate={{ width: '12.2%' }}
                 transition={{ duration: 1, delay: 0.8, ease: [0.22, 1, 0.36, 1] }}
-                style={{
-                  height: '100%',
-                  borderRadius: 99,
-                  background: `linear-gradient(90deg, ${t.accent}, #6366f1)`,
-                  boxShadow: `0 0 8px ${t.accent}60`,
-                }}
+                style={{ height: '100%', borderRadius: 99, background: t.accent }}
               />
             </div>
-
-            <span style={{ fontSize: 11, color: t.textSubtle }}>439 messages remaining</span>
           </div>
 
-          {/* Upgrade CTA */}
+          {/* Upgrade CTA — matches nav item style */}
           <motion.div
-            whileHover={{ scale: 1.02, background: 'rgba(99,102,241,0.2)' }}
+            whileHover={{ background: t.accentSoftBg, borderColor: t.accentSoftBorder }}
             whileTap={{ scale: 0.98 }}
             style={{
-              borderRadius: 10,
-              border: '1px solid rgba(99,102,241,0.35)',
-              background: 'rgba(99,102,241,0.1)',
-              padding: '9px 12px',
+              borderRadius: 8,
+              border: `1px solid ${t.border}`,
+              background: 'transparent',
+              padding: '7px 12px',
               textAlign: 'center',
               cursor: 'pointer',
-              color: '#a5b4fc',
+              color: t.textMuted,
               fontSize: 12,
-              fontWeight: 600,
-              transition: 'background 0.15s',
+              fontWeight: 500,
+              transition: 'background 0.15s, border-color 0.15s, color 0.15s',
             }}
           >
-            Upgrade to Pro →
+            Upgrade to Pro
           </motion.div>
         </div>
       </motion.div>
 
+
+      {/* Theme toggle */}
+      <div style={{ padding: '0 16px 8px' }}>
+        <button
+          type="button"
+          onClick={toggleTheme}
+          aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+          style={{
+            width: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '8px 12px',
+            borderRadius: 10,
+            border: `1px solid ${t.border}`,
+            background: 'transparent',
+            color: t.textMuted,
+            fontSize: 12,
+            fontWeight: 500,
+            cursor: 'pointer',
+            transition: 'border-color 0.15s ease, background 0.15s ease',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = t.accentSoftBg
+            e.currentTarget.style.borderColor = t.accentSoftBorder
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = 'transparent'
+            e.currentTarget.style.borderColor = t.border
+          }}
+        >
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {theme === 'dark' ? <IconMoon /> : <IconSun />}
+            <span>Dark mode</span>
+          </span>
+          {/* Toggle pill */}
+          <span style={{
+            display: 'inline-block',
+            width: 34,
+            height: 18,
+            borderRadius: 9,
+            background: theme === 'dark' ? t.accent : 'rgba(255,255,255,0.15)',
+            border: `1px solid ${theme === 'dark' ? 'transparent' : t.border}`,
+            position: 'relative',
+            flexShrink: 0,
+            transition: 'background 0.2s',
+          }}>
+            <span style={{
+              position: 'absolute',
+              top: 2,
+              left: theme === 'dark' ? 16 : 2,
+              width: 12,
+              height: 12,
+              borderRadius: '50%',
+              background: '#fff',
+              transition: 'left 0.2s',
+              boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+            }} />
+          </span>
+        </button>
+      </div>
 
       {/* Bottom — profile */}
       <div style={{ padding: '12px 16px 16px', borderTop: `1px solid ${t.border}` }}>
@@ -482,108 +550,8 @@ export function DashboardOceanNav({ activeNav, fillViewport, children }: Dashboa
 
   return (
     <div style={outerStyle}>
-      {/* Liquid Mesh background */}
-      <div style={{ position: 'fixed', inset: 0, zIndex: 0, pointerEvents: 'none', overflow: 'hidden' }}>
-
-        {/* Noise texture overlay for depth */}
-        <div style={{
-          position: 'absolute', inset: 0,
-          backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.035'/%3E%3C/svg%3E")`,
-          backgroundRepeat: 'repeat',
-          backgroundSize: '200px 200px',
-        }} />
-
-        {/* Blob 1 — deep blue, top-left, large */}
-        <motion.div
-          animate={{
-            x: [0, 120, 40, -30, 0],
-            y: [0, -60, 80, -20, 0],
-            scale: [1, 1.25, 0.9, 1.1, 1],
-          }}
-          transition={{ duration: 28, repeat: Infinity, ease: 'easeInOut' }}
-          style={{
-            position: 'absolute', top: '-20%', left: '-10%',
-            width: 800, height: 800,
-            borderRadius: '60% 40% 70% 30% / 50% 60% 40% 50%',
-            background: 'radial-gradient(circle at 40% 40%, rgba(37,99,235,0.55), rgba(29,78,216,0.2) 50%, transparent 70%)',
-            filter: 'blur(80px)',
-          }}
-        />
-
-        {/* Blob 2 — purple, bottom-right */}
-        <motion.div
-          animate={{
-            x: [0, -100, -40, 60, 0],
-            y: [0, 80, -50, 30, 0],
-            scale: [1, 1.1, 1.3, 0.95, 1],
-          }}
-          transition={{ duration: 32, repeat: Infinity, ease: 'easeInOut', delay: 6 }}
-          style={{
-            position: 'absolute', bottom: '-25%', right: '-10%',
-            width: 750, height: 750,
-            borderRadius: '40% 60% 30% 70% / 60% 40% 60% 40%',
-            background: 'radial-gradient(circle at 60% 60%, rgba(109,40,217,0.45), rgba(124,58,237,0.15) 50%, transparent 70%)',
-            filter: 'blur(90px)',
-          }}
-        />
-
-        {/* Blob 3 — cyan, center-right */}
-        <motion.div
-          animate={{
-            x: [0, -80, 60, -20, 0],
-            y: [0, 60, -80, 40, 0],
-            scale: [1, 1.2, 0.85, 1.15, 1],
-          }}
-          transition={{ duration: 24, repeat: Infinity, ease: 'easeInOut', delay: 3 }}
-          style={{
-            position: 'absolute', top: '15%', right: '5%',
-            width: 550, height: 550,
-            borderRadius: '70% 30% 50% 50% / 30% 70% 30% 70%',
-            background: 'radial-gradient(circle at 50% 40%, rgba(6,182,212,0.4), rgba(8,145,178,0.12) 55%, transparent 70%)',
-            filter: 'blur(70px)',
-          }}
-        />
-
-        {/* Blob 4 — indigo, center-left */}
-        <motion.div
-          animate={{
-            x: [0, 70, -50, 30, 0],
-            y: [0, -40, 70, -30, 0],
-            scale: [1, 0.9, 1.2, 1.05, 1],
-          }}
-          transition={{ duration: 20, repeat: Infinity, ease: 'easeInOut', delay: 10 }}
-          style={{
-            position: 'absolute', top: '40%', left: '15%',
-            width: 480, height: 480,
-            borderRadius: '50% 50% 30% 70% / 60% 40% 60% 40%',
-            background: 'radial-gradient(circle at 45% 55%, rgba(79,70,229,0.38), rgba(99,102,241,0.1) 55%, transparent 70%)',
-            filter: 'blur(75px)',
-          }}
-        />
-
-        {/* Blob 5 — sky white highlight, top-center */}
-        <motion.div
-          animate={{
-            x: [0, 50, -40, 20, 0],
-            y: [0, 30, -20, 40, 0],
-            scale: [1, 1.3, 0.95, 1.1, 1],
-          }}
-          transition={{ duration: 18, repeat: Infinity, ease: 'easeInOut', delay: 7 }}
-          style={{
-            position: 'absolute', top: '-5%', left: '35%',
-            width: 400, height: 400,
-            borderRadius: '50%',
-            background: 'radial-gradient(circle, rgba(186,230,255,0.18), rgba(147,197,253,0.06) 50%, transparent 70%)',
-            filter: 'blur(60px)',
-          }}
-        />
-
-        {/* Vignette — darken edges for depth */}
-        <div style={{
-          position: 'absolute', inset: 0,
-          background: 'radial-gradient(ellipse 90% 90% at 50% 50%, transparent 40%, rgba(8,14,30,0.65) 100%)',
-        }} />
-      </div>
+      {/* Aurora background — pure CSS, no JS */}
+      <div className="aurora-bg"><div className="blob3"/><div className="grain"/></div>
 
       {!isMobile && (
         <div style={{ position: 'fixed', left: 0, top: 0, width: SIDEBAR_WIDTH, height: '100vh', zIndex: 100 }}>
