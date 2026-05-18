@@ -188,11 +188,14 @@ export default function GuestsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [notes, setNotes] = useState('')
   const [filterTag, setFilterTag] = useState<'All' | CustomerTag>('All')
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
-  // Notes persistence
+  // Notes persistence + reset delete confirm on selection change
   useEffect(() => {
     if (!selectedId) { setNotes(''); return }
     setNotes(window.localStorage.getItem(`${NOTES_PREFIX}${selectedId}`) ?? '')
+    setConfirmDeleteId(null)
   }, [selectedId])
   useEffect(() => {
     if (!selectedId) return
@@ -222,6 +225,17 @@ export default function GuestsPage() {
     })
     return () => { cancelled = true; sub.subscription.unsubscribe() }
   }, [])
+
+  async function handleDeleteCustomer(customerId: string) {
+    setDeleting(true)
+    const { error } = await supabase.from('customers').delete().eq('id', customerId)
+    setDeleting(false)
+    if (!error) {
+      setCustomers(prev => prev.filter(c => c.id !== customerId))
+      setSelectedId(null)
+      setConfirmDeleteId(null)
+    }
+  }
 
   const stats = useMemo(() => {
     const total = customers.length
@@ -601,6 +615,58 @@ export default function GuestsPage() {
                     }}
                   />
                   <div style={{ marginTop: 5, fontSize: 10.5, color: t.textSubtle }}>Auto-saved on this device.</div>
+                </div>
+
+                {/* Delete guest */}
+                <div style={{ borderTop: `1px solid ${t.borderSoft}`, paddingTop: 14 }}>
+                  {confirmDeleteId === selected.id ? (
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteId(null)}
+                        style={{
+                          flex: 1, padding: '8px 0', borderRadius: 8, cursor: 'pointer',
+                          border: `1px solid ${t.border}`, background: t.bgSurfaceMuted,
+                          color: t.textMuted, fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
+                        }}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        disabled={deleting}
+                        onClick={() => void handleDeleteCustomer(selected.id)}
+                        style={{
+                          flex: 1, padding: '8px 0', borderRadius: 8, cursor: deleting ? 'not-allowed' : 'pointer',
+                          border: '1px solid rgba(239,68,68,0.4)', background: 'rgba(239,68,68,0.12)',
+                          color: '#ef4444', fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+                        }}
+                      >
+                        {deleting ? 'Deleting…' : 'Yes, delete'}
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeleteId(selected.id)}
+                      style={{
+                        width: '100%', padding: '8px 0', borderRadius: 8, cursor: 'pointer',
+                        border: `1px solid ${t.borderSoft}`, background: 'transparent',
+                        color: t.textSubtle, fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
+                        transition: 'color 0.15s, border-color 0.15s',
+                      }}
+                      onMouseEnter={e => {
+                        e.currentTarget.style.color = '#ef4444'
+                        e.currentTarget.style.borderColor = 'rgba(239,68,68,0.4)'
+                      }}
+                      onMouseLeave={e => {
+                        e.currentTarget.style.color = t.textSubtle
+                        e.currentTarget.style.borderColor = t.borderSoft
+                      }}
+                    >
+                      Delete guest
+                    </button>
+                  )}
                 </div>
               </aside>
             )}
