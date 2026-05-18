@@ -727,7 +727,7 @@ export default function ChatsInboxPage() {
                 <h1 style={{ margin: 0, color: t.text, fontSize: 15, fontWeight: 700 }}>Conversations</h1>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   {conversationList.filter((c) => c.status === 'Live' || c.status === 'Human').length > 0 && (
-                    <span style={{ borderRadius: 6, padding: '2px 8px', background: '#38bdf8', color: '#fff', fontSize: 12, fontWeight: 600 }}>
+                    <span style={{ borderRadius: 6, padding: '2px 8px', background: t.accent, color: '#ffffff', fontSize: 12, fontWeight: 600 }}>
                       {conversationList.filter((c) => c.status === 'Live' || c.status === 'Human').length} active
                     </span>
                   )}
@@ -776,8 +776,8 @@ export default function ChatsInboxPage() {
                       padding: '5px 0',
                       borderRadius: 999,
                       border: 'none',
-                      background: filterTab === tab ? '#38bdf8' : 'rgba(255,255,255,0.06)',
-                      color: filterTab === tab ? '#0d1f3c' : 'rgba(255,255,255,0.45)',
+                      background: filterTab === tab ? t.accent : t.bgSurfaceMuted,
+                      color: filterTab === tab ? '#ffffff' : t.textMuted,
                       fontSize: 11,
                       fontWeight: filterTab === tab ? 700 : 500,
                       cursor: 'pointer',
@@ -837,9 +837,9 @@ export default function ChatsInboxPage() {
                   >
                     {showDivider && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 4px 6px', marginBottom: 2 }}>
-                        <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.07)' }} />
-                        <span style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.25)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>Resolved</span>
-                        <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.07)' }} />
+                        <div style={{ flex: 1, height: 1, background: t.border }} />
+                        <span style={{ fontSize: 10, fontWeight: 600, color: t.textSubtle, letterSpacing: '0.1em', textTransform: 'uppercase' }}>Resolved</span>
+                        <div style={{ flex: 1, height: 1, background: t.border }} />
                       </div>
                     )}
                     <button
@@ -850,13 +850,13 @@ export default function ChatsInboxPage() {
                         height: 52,
                         padding: '0 10px',
                         borderRadius: 8,
-                        borderLeft: isSelected ? '2px solid #38bdf8' : '2px solid transparent',
+                        borderLeft: isSelected ? `2px solid ${t.accent}` : '2px solid transparent',
                         border: '1px solid transparent',
                         borderLeftWidth: 2,
                         background: isSelected
-                          ? 'rgba(56,189,248,0.1)'
+                          ? t.accentSoftBg
                           : isHovered
-                          ? 'rgba(255,255,255,0.04)'
+                          ? t.bgSurfaceMuted
                           : 'transparent',
                         color: 'inherit',
                         textAlign: 'left',
@@ -876,8 +876,8 @@ export default function ChatsInboxPage() {
                         borderRadius: '50%',
                         display: 'grid',
                         placeItems: 'center',
-                        background: isClosed ? 'rgba(255,255,255,0.06)' : '#38bdf8',
-                        color: isClosed ? 'rgba(255,255,255,0.3)' : '#0d1f3c',
+                        background: isClosed ? t.bgSurfaceMuted : t.accent,
+                        color: isClosed ? t.textSubtle : '#ffffff',
                         fontSize: 10,
                         fontWeight: 700,
                       }}>
@@ -890,19 +890,19 @@ export default function ChatsInboxPage() {
                           <span style={{
                             fontSize: 12.5,
                             fontWeight: 600,
-                            color: isClosed ? 'rgba(255,255,255,0.5)' : '#ffffff',
+                            color: isClosed ? t.textMuted : t.text,
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
                             whiteSpace: 'nowrap',
                           }}>
                             {conversation.customerName}
                           </span>
-                          <span style={{ flexShrink: 0, fontSize: 10, color: 'rgba(255,255,255,0.3)' }}>{conversation.time}</span>
+                          <span style={{ flexShrink: 0, fontSize: 10, color: t.textSubtle }}>{conversation.time}</span>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
                           <span style={{
                             fontSize: 11,
-                            color: isClosed ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.5)',
+                            color: isClosed ? t.textSubtle : t.textMuted,
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
                             whiteSpace: 'nowrap',
@@ -911,7 +911,7 @@ export default function ChatsInboxPage() {
                             {conversation.preview}
                           </span>
                           {isClosed ? (
-                            <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 600, color: 'rgba(255,255,255,0.2)', borderRadius: 4, padding: '1px 5px', background: 'rgba(255,255,255,0.04)' }}>
+                            <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 600, color: t.textSubtle, borderRadius: 4, padding: '1px 5px', background: t.bgSurfaceMuted }}>
                               Closed
                             </span>
                           ) : conversation.status === 'Human' ? (
@@ -941,9 +941,9 @@ export default function ChatsInboxPage() {
                           width: 22,
                           height: 22,
                           borderRadius: 5,
-                          border: '1px solid rgba(255,255,255,0.12)',
-                          background: 'rgba(255,255,255,0.07)',
-                          color: 'rgba(255,255,255,0.5)',
+                          border: `1px solid ${t.border}`,
+                          background: t.bgSurface,
+                          color: t.textMuted,
                           fontSize: 13,
                           lineHeight: 1,
                           cursor: 'pointer',
@@ -969,9 +969,9 @@ export default function ChatsInboxPage() {
                           width: 22,
                           height: 22,
                           borderRadius: 5,
-                          border: '1px solid rgba(56,189,248,0.25)',
-                          background: 'rgba(56,189,248,0.08)',
-                          color: 'rgba(56,189,248,0.7)',
+                          border: `1px solid ${t.accentSoftBorder}`,
+                          background: t.accentSoftBg,
+                          color: t.accent,
                           fontSize: 13,
                           lineHeight: 1,
                           cursor: 'pointer',
@@ -1267,8 +1267,8 @@ export default function ChatsInboxPage() {
                     <div style={{
                       width: 52, height: 52, borderRadius: '50%', margin: '0 auto 12px',
                       display: 'grid', placeItems: 'center',
-                      background: selectedConversation.status === 'Resolved' ? 'rgba(255,255,255,0.08)' : '#38bdf8',
-                      color: selectedConversation.status === 'Resolved' ? 'rgba(255,255,255,0.35)' : '#0d1f3c',
+                      background: selectedConversation.status === 'Resolved' ? t.bgSurfaceMuted : t.accent,
+                      color: selectedConversation.status === 'Resolved' ? t.textSubtle : '#ffffff',
                       fontSize: 17, fontWeight: 700,
                       position: 'relative',
                     }}>
@@ -1276,8 +1276,8 @@ export default function ChatsInboxPage() {
                       <span style={{
                         position: 'absolute', bottom: 1, right: 1,
                         width: 12, height: 12, borderRadius: '50%',
-                        border: '2px solid #0e1a2e',
-                        background: isGuestOnline(selectedConversation.id) ? '#4ade80' : 'rgba(255,255,255,0.2)',
+                        border: `2px solid ${t.bgApp}`,
+                        background: isGuestOnline(selectedConversation.id) ? '#4ade80' : t.borderStrong,
                       }} />
                     </div>
                     <div style={{ color: t.text, fontSize: 16, fontWeight: 700 }}>
@@ -1305,7 +1305,7 @@ export default function ChatsInboxPage() {
                         background: isTakenOver
                           ? 'linear-gradient(135deg, rgba(245,158,11,0.2) 0%, rgba(245,158,11,0.08) 100%)'
                           : 'linear-gradient(135deg, rgba(56,189,248,0.2) 0%, rgba(96,184,255,0.08) 100%)',
-                        color: isTakenOver ? t.warning : '#38bdf8',
+                        color: isTakenOver ? t.warning : t.accent,
                         fontSize: 13, fontWeight: 600, cursor: 'pointer',
                         display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
                         boxShadow: isTakenOver
@@ -1344,7 +1344,7 @@ export default function ChatsInboxPage() {
                           width: '100%', padding: '11px 14px', borderRadius: 10,
                           border: 'none',
                           background: 'linear-gradient(135deg, rgba(56,189,248,0.2) 0%, rgba(96,184,255,0.08) 100%)',
-                          color: '#38bdf8', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                          color: t.accent, fontSize: 13, fontWeight: 600, cursor: 'pointer',
                           display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
                           boxShadow: '0 2px 12px rgba(56,189,248,0.15), inset 0 1px 0 rgba(255,255,255,0.06)',
                         }}
@@ -1367,7 +1367,7 @@ export default function ChatsInboxPage() {
                       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
                         <span style={{ color: t.textMuted, fontSize: 12 }}>Phone</span>
                         {selectedConversation.phone ? (
-                          <a href={`tel:${selectedConversation.phone}`} style={{ color: '#38bdf8', fontSize: 12, fontWeight: 600, textDecoration: 'none' }}>
+                          <a href={`tel:${selectedConversation.phone}`} style={{ color: t.accent, fontSize: 12, fontWeight: 600, textDecoration: 'none' }}>
                             {selectedConversation.phone}
                           </a>
                         ) : (
@@ -1377,7 +1377,7 @@ export default function ChatsInboxPage() {
                       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
                         <span style={{ color: t.textMuted, fontSize: 12 }}>Email</span>
                         {selectedConversation.email ? (
-                          <a href={`mailto:${selectedConversation.email}`} style={{ color: '#38bdf8', fontSize: 12, fontWeight: 600, textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 180 }}>
+                          <a href={`mailto:${selectedConversation.email}`} style={{ color: t.accent, fontSize: 12, fontWeight: 600, textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 180 }}>
                             {selectedConversation.email}
                           </a>
                         ) : (
