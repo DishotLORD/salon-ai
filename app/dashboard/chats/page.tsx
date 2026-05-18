@@ -923,7 +923,7 @@ export default function ChatsInboxPage() {
                             {conversation.preview}
                           </span>
                           {conversation.customerId && returningCustomerIds.has(conversation.customerId) && (
-                            <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 600, color: t.accent, borderRadius: 4, padding: '1px 5px', background: `${t.accent}22` }}>
+                            <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 600, color: t.accentText, borderRadius: 4, padding: '1px 5px', background: t.accentSoftBg, border: `1px solid ${t.accentSoftBorder}` }}>
                               Returning
                             </span>
                           )}
