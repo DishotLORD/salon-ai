@@ -5,3 +5,4 @@ node_modules/
 .next/
 public/videos/
 public/ocean.mp4
+.DS_Store

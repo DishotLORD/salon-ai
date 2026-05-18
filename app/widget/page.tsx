@@ -52,6 +52,13 @@ function clearSession(businessId: string) {
   try { localStorage.removeItem(storageKey(businessId)) } catch { /* noop */ }
 }
 
+function formatPhone(raw: string): string {
+  const digits = raw.replace(/\D/g, '').slice(0, 10)
+  if (digits.length <= 3) return digits
+  if (digits.length <= 6) return `(${digits.slice(0, 3)}) ${digits.slice(3)}`
+  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`
+}
+
 function WidgetPageInner() {
   const searchParams = useSearchParams()
   const businessId = searchParams.get('business_id')
@@ -62,6 +69,8 @@ function WidgetPageInner() {
   const [isLoading, setIsLoading] = useState(false)
   const [historyLoading, setHistoryLoading] = useState(false)
   const [draft, setDraft] = useState('')
+  const [contactPhone, setContactPhone] = useState('')
+  const [contactEmail, setContactEmail] = useState('')
   const [messages, setMessages] = useState<WidgetMessage[]>([
     buildWelcome(null, DEFAULT_CONCIERGE_NAME),
   ])
@@ -243,6 +252,15 @@ function WidgetPageInner() {
     }
   }, [businessId])
 
+  const handleContactSubmit = async () => {
+    const phoneDigits = contactPhone.replace(/\D/g, '')
+    const value = phoneDigits.length >= 7 ? contactPhone : contactEmail.trim()
+    if (!value) return
+    setContactPhone('')
+    setContactEmail('')
+    await handleSend(value)
+  }
+
   const handleNewChat = useCallback(() => {
     if (businessId) clearSession(businessId)
     setConversationId(null)
@@ -251,8 +269,16 @@ function WidgetPageInner() {
 
   const headerTitle = businessName ?? conciergeName
 
-  const handleSend = async () => {
-    const text = draft.trim()
+  const lastBotPhoneEmailIdx = [...messages].reduce(
+    (found, m, i) => (m.sender === 'ai' && /phone|email/i.test(m.text) ? i : found),
+    -1,
+  )
+  const showContactStep =
+    lastBotPhoneEmailIdx !== -1 &&
+    !messages.slice(lastBotPhoneEmailIdx + 1).some((m) => m.sender === 'customer')
+
+  const handleSend = async (textOverride?: string) => {
+    const text = (textOverride ?? draft).trim()
     if (!text || isLoading) {
       return
     }
@@ -265,7 +291,7 @@ function WidgetPageInner() {
     const nextMessages = [...messages, customerMessage]
 
     setMessages(nextMessages)
-    setDraft('')
+    if (!textOverride) setDraft('')
     setIsLoading(true)
 
     try {
@@ -500,6 +526,80 @@ function WidgetPageInner() {
                   >
                     {conciergeName} is typing…
                   </div>
+                </div>
+              )}
+
+              {showContactStep && !isLoading && (
+                <div
+                  style={{
+                    margin: '4px 0 8px',
+                    background: 'var(--ocean-surface)',
+                    border: '1px solid var(--ocean-border)',
+                    borderRadius: 14,
+                    padding: '12px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 8,
+                  }}
+                >
+                  <p style={{ margin: 0, fontSize: 12, color: 'var(--ocean-text-muted)', fontWeight: 500 }}>
+                    Enter your contact to look up your profile
+                  </p>
+                  <input
+                    type="tel"
+                    value={contactPhone}
+                    onChange={(e) => setContactPhone(formatPhone(e.target.value))}
+                    onKeyDown={(e) => { if (e.key === 'Enter') void handleContactSubmit() }}
+                    placeholder="(403) ___-____"
+                    style={{
+                      border: '1px solid var(--ocean-border)',
+                      borderRadius: 8,
+                      padding: '8px 10px',
+                      fontSize: 14,
+                      outline: 'none',
+                      width: '100%',
+                      boxSizing: 'border-box',
+                    }}
+                  />
+                  <div style={{ textAlign: 'center', fontSize: 11, color: 'var(--ocean-text-subtle)' }}>or</div>
+                  <input
+                    type="email"
+                    value={contactEmail}
+                    onChange={(e) => setContactEmail(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') void handleContactSubmit() }}
+                    placeholder="name@email.com"
+                    style={{
+                      border: '1px solid var(--ocean-border)',
+                      borderRadius: 8,
+                      padding: '8px 10px',
+                      fontSize: 14,
+                      outline: 'none',
+                      width: '100%',
+                      boxSizing: 'border-box',
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleContactSubmit()}
+                    disabled={isLoading || (contactPhone.replace(/\D/g, '').length < 7 && !contactEmail.trim())}
+                    style={{
+                      border: 'none',
+                      borderRadius: 8,
+                      padding: '9px',
+                      cursor: isLoading || (contactPhone.replace(/\D/g, '').length < 7 && !contactEmail.trim()) ? 'not-allowed' : 'pointer',
+                      background: isLoading || (contactPhone.replace(/\D/g, '').length < 7 && !contactEmail.trim())
+                        ? 'var(--ocean-border)'
+                        : 'linear-gradient(135deg, var(--ocean-sky) 0%, #0ea5e9 100%)',
+                      color: isLoading || (contactPhone.replace(/\D/g, '').length < 7 && !contactEmail.trim())
+                        ? 'var(--ocean-text-subtle)'
+                        : 'var(--ocean-black)',
+                      fontWeight: 600,
+                      fontSize: 13,
+                      transition: 'background 0.15s',
+                    }}
+                  >
+                    Find me →
+                  </button>
                 </div>
               )}
             </div>
