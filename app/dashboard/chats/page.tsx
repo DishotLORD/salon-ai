@@ -291,6 +291,18 @@ export default function ChatsInboxPage() {
     return conversationList.find((conversation) => conversation.id === selectedId) ?? null
   }, [conversationList, selectedId])
 
+  const returningCustomerIds = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const c of conversationList) {
+      if (c.customerId) counts.set(c.customerId, (counts.get(c.customerId) ?? 0) + 1)
+    }
+    const result = new Set<string>()
+    for (const [id, count] of counts) {
+      if (count > 1) result.add(id)
+    }
+    return result
+  }, [conversationList])
+
   const filteredList = useMemo(() => {
     const statusOrder: Record<ConversationStatus, number> = { Live: 0, Human: 1, Waiting: 2, Resolved: 3 }
     let list = conversationList
@@ -910,6 +922,11 @@ export default function ChatsInboxPage() {
                           }}>
                             {conversation.preview}
                           </span>
+                          {conversation.customerId && returningCustomerIds.has(conversation.customerId) && (
+                            <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 600, color: t.accent, borderRadius: 4, padding: '1px 5px', background: `${t.accent}22` }}>
+                              Returning
+                            </span>
+                          )}
                           {isClosed ? (
                             <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 600, color: t.textSubtle, borderRadius: 4, padding: '1px 5px', background: t.bgSurfaceMuted }}>
                               Closed
