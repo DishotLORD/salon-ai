@@ -25,6 +25,10 @@ RESERVATION FLOW — follow this order strictly. Never skip a step.
 5. Only AFTER collecting name, date, time, and party size: confirm the reservation details
    back to the guest by name and say it's been placed.
 
+CANCELLATION FLOW:
+- If the guest asks to cancel their reservation, confirm you have cancelled it and say goodbye warmly.
+- Use the word "cancelled" explicitly in your confirmation (e.g. "Your reservation has been cancelled.").
+
 CRITICAL RULES:
 - NEVER create or confirm a reservation without first asking for the guest's name.
 - Once the guest provides their name, address them by first name for the rest of the conversation.
@@ -711,6 +715,72 @@ async function tryCreateReservationFromChat(params: {
   return true
 }
 
+// ─── Reservation cancellation ────────────────────────────────────────────────
+
+async function tryCancelReservationFromChat(params: {
+  lastUserContent: string
+  assistantText: string
+  business_id: string
+  customer_id: string
+  conversation_id: string
+}): Promise<boolean> {
+  const { lastUserContent, assistantText, business_id, customer_id, conversation_id } = params
+
+  const userWantsCancel = /\b(cancel|cancell?\w*|call\s+off|drop\s+(?:the\s+)?reservation|don'?t\s+(?:want|need)(?:\s+(?:the|my))?\s+reservation)\b/i.test(
+    lastUserContent,
+  )
+  if (!userWantsCancel) return false
+
+  const aiConfirmsCancel = /\bcancell?ed\b/i.test(assistantText)
+  if (!aiConfirmsCancel) return false
+
+  // Try to find the reservation by conversation first, then by customer
+  const { data: byConv } = await supabaseAdmin
+    .from('appointments')
+    .select('id')
+    .eq('conversation_id', conversation_id)
+    .in('status', ['pending', 'confirmed', 'seated'])
+    .order('scheduled_at', { ascending: true })
+    .limit(1)
+    .maybeSingle()
+
+  let appointmentId = byConv?.id ?? null
+
+  if (!appointmentId) {
+    const { data: byCustomer } = await supabaseAdmin
+      .from('appointments')
+      .select('id')
+      .eq('business_id', business_id)
+      .eq('customer_id', customer_id)
+      .in('status', ['pending', 'confirmed', 'seated'])
+      .gte('scheduled_at', new Date().toISOString())
+      .order('scheduled_at', { ascending: true })
+      .limit(1)
+      .maybeSingle()
+
+    appointmentId = byCustomer?.id ?? null
+  }
+
+  if (!appointmentId) {
+    console.log('[cancel] No active reservation found to cancel')
+    return false
+  }
+
+  const { error } = await supabaseAdmin
+    .from('appointments')
+    .update({ status: 'cancelled' })
+    .eq('id', appointmentId)
+    .eq('business_id', business_id)
+
+  if (error) {
+    console.error('[cancel] Update failed:', error.message)
+    return false
+  }
+
+  console.log('[cancel] Reservation cancelled:', appointmentId)
+  return true
+}
+
 // ─── Notification email ───────────────────────────────────────────────────────
 
 /** Fire-and-forget; never throws. Sends a notification when a new guest opens a chat. */
@@ -1023,9 +1093,21 @@ export async function POST(request: Request) {
       })
     }
 
-    // ── Conditionally create reservation ─────────────────────────────────────
-    const bookingCreated = resolvedCustomerId
-      ? await tryCreateReservationFromChat({
+    // ── Conditionally create or cancel reservation ────────────────────────────
+    let bookingCreated = false
+    let bookingCancelled = false
+
+    if (resolvedCustomerId) {
+      bookingCancelled = await tryCancelReservationFromChat({
+        lastUserContent: lastUserContent.trim(),
+        assistantText,
+        business_id,
+        customer_id: resolvedCustomerId,
+        conversation_id: resolvedConversationId,
+      })
+
+      if (!bookingCancelled) {
+        bookingCreated = await tryCreateReservationFromChat({
           lastUserContent: lastUserContent.trim(),
           chatMessages,
           assistantText,
@@ -1033,13 +1115,15 @@ export async function POST(request: Request) {
           customer_id: resolvedCustomerId,
           conversation_id: resolvedConversationId,
         })
-      : false
+      }
+    }
 
     return NextResponse.json({
       message: assistantText,
       conversation_id: resolvedConversationId,
       customer_id: resolvedCustomerId,
       booking_created: bookingCreated,
+      booking_cancelled: bookingCancelled,
     })
   } catch (e) {
     const message = e instanceof Error ? e.message : 'Unexpected error'
