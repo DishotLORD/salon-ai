@@ -232,6 +232,11 @@ export default function GuestsPage() {
   async function handleDeleteCustomer(customerId: string) {
     setDeleting(true)
     setDeleteError(null)
+
+    // Nullify FK references before delete to avoid constraint violations
+    await supabase.from('conversations').update({ customer_id: null }).eq('customer_id', customerId)
+    await supabase.from('appointments').update({ customer_id: null }).eq('customer_id', customerId)
+
     const { error: delErr } = await (
       businessId
         ? supabase.from('customers').delete().eq('id', customerId).eq('business_id', businessId)
