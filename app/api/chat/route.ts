@@ -530,21 +530,45 @@ function extractPartySize(text: string): number | null {
   return null
 }
 
+// Calgary is always the business timezone — dates/times are wall-clock local to Calgary
+const CALGARY_TZ = 'America/Edmonton'
+
+function getCalgaryNow(): { year: number; month: number; day: number; hour: number; minute: number } {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: CALGARY_TZ,
+    year: 'numeric', month: 'numeric', day: 'numeric',
+    hour: 'numeric', minute: 'numeric', hour12: false,
+  }).formatToParts(new Date())
+  const get = (t: string) => parseInt(parts.find((p) => p.type === t)?.value ?? '0', 10)
+  return { year: get('year'), month: get('month'), day: get('day'), hour: get('hour'), minute: get('minute') }
+}
+
+// Returns a Date whose getFullYear/Month/Date/Hours match the Calgary wall-clock intent.
+// We use the local-time constructor so wall-clock formatting (getHours etc.) stays correct.
+function calgaryDate(year: number, month: number, day: number, hour = 19, minute = 0): Date {
+  const d = new Date(year, month - 1, day)
+  d.setHours(hour, minute, 0, 0)
+  return d
+}
+
 function parseScheduledAt(text: string): Date | null {
   if (!text.trim()) return null
 
+  const { year: cy, month: cm, day: cd, hour: ch, minute: cmin } = getCalgaryNow()
+
+  // ISO: 2026-05-20 or 2026-05-20T19:00
   const iso = text.match(/(\d{4}-\d{2}-\d{2}(?:[T ]\d{1,2}:\d{2}(?::\d{2})?(?:\s*[AP]M)?)?)/i)
   if (iso) {
     const d = new Date(iso[1])
     if (!Number.isNaN(d.getTime())) return d
   }
+
+  // MM/DD/YYYY [H:MM AM/PM]
   const slash = text.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:\s+(\d{1,2}):(\d{2})\s*([AP]M)?)?/i)
   if (slash) {
     let year = parseInt(slash[3], 10)
     if (year < 100) year += 2000
-    const month = parseInt(slash[1], 10) - 1
-    const day = parseInt(slash[2], 10)
-    const d = new Date(year, month, day)
+    const d = new Date(year, parseInt(slash[1], 10) - 1, parseInt(slash[2], 10))
     if (!Number.isNaN(d.getTime())) {
       if (slash[4]) {
         let h = parseInt(slash[4], 10)
@@ -557,39 +581,77 @@ function parseScheduledAt(text: string): Date | null {
       return d
     }
   }
+
+  // Month name: May 20, Jun 5th
   const monthDay = text.match(
     /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(\d{4}))?\b/i,
   )
   if (monthDay) {
-    const tryParse = new Date(`${monthDay[1]} ${monthDay[2]}, ${monthDay[3] ?? new Date().getFullYear()}`)
-    if (!Number.isNaN(tryParse.getTime())) return tryParse
+    const tryParse = new Date(`${monthDay[1]} ${monthDay[2]}, ${monthDay[3] ?? cy}`)
+    if (!Number.isNaN(tryParse.getTime())) {
+      const tm = text.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i)
+      if (tm) {
+        let h = parseInt(tm[1], 10)
+        const mi = tm[2] ? parseInt(tm[2], 10) : 0
+        const ap = tm[3].toUpperCase()
+        if (ap === 'PM' && h < 12) h += 12
+        if (ap === 'AM' && h === 12) h = 0
+        tryParse.setHours(h, mi, 0, 0)
+      }
+      return tryParse
+    }
   }
-  if (/\btoday\b/i.test(text)) {
-    const d = new Date()
+
+  // Weekday: Friday / next Saturday / this Thursday
+  const WEEKDAYS = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday']
+  const wdMatch = text.match(/\b(?:(next|this)\s+)?(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/i)
+  if (wdMatch) {
+    const modifier = wdMatch[1]?.toLowerCase()
+    const targetWd = WEEKDAYS.indexOf(wdMatch[2].toLowerCase())
+    const todayWd = new Date(cy, cm - 1, cd).getDay()
+    let daysAhead = targetWd - todayWd
+    if (modifier === 'next' || daysAhead <= 0) daysAhead += 7
     const tm = text.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i)
+    let h = 19, mi = 0
     if (tm) {
-      let h = parseInt(tm[1], 10)
-      const mi = tm[2] ? parseInt(tm[2], 10) : 0
+      h = parseInt(tm[1], 10)
+      mi = tm[2] ? parseInt(tm[2], 10) : 0
       const ap = tm[3].toUpperCase()
       if (ap === 'PM' && h < 12) h += 12
       if (ap === 'AM' && h === 12) h = 0
-      d.setHours(h, mi, 0, 0)
-    } else {
-      d.setHours(19, 0, 0, 0)
     }
-    return d
+    return calgaryDate(cy, cm, cd + daysAhead, h, mi)
   }
-  if (/\btonight\b/i.test(text)) {
-    const d = new Date()
-    d.setHours(19, 0, 0, 0)
-    return d
+
+  // today / tonight
+  if (/\b(today|tonight)\b/i.test(text)) {
+    const tm = text.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i)
+    let h = 19, mi = 0
+    if (tm) {
+      h = parseInt(tm[1], 10)
+      mi = tm[2] ? parseInt(tm[2], 10) : 0
+      const ap = tm[3].toUpperCase()
+      if (ap === 'PM' && h < 12) h += 12
+      if (ap === 'AM' && h === 12) h = 0
+    }
+    return calgaryDate(cy, cm, cd, h, mi)
   }
+
+  // tomorrow
   if (/\btomorrow\b/i.test(text)) {
-    const d = new Date()
-    d.setDate(d.getDate() + 1)
-    d.setHours(19, 0, 0, 0)
-    return d
+    const tm = text.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i)
+    let h = 19, mi = 0
+    if (tm) {
+      h = parseInt(tm[1], 10)
+      mi = tm[2] ? parseInt(tm[2], 10) : 0
+      const ap = tm[3].toUpperCase()
+      if (ap === 'PM' && h < 12) h += 12
+      if (ap === 'AM' && h === 12) h = 0
+    }
+    return calgaryDate(cy, cm, cd + 1, h, mi)
   }
+
+  // time only: 7pm, 8:30pm — use today if not yet passed, else tomorrow (Calgary time)
   const timeOnly = text.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i)
   if (timeOnly) {
     let h = parseInt(timeOnly[1], 10)
@@ -597,21 +659,16 @@ function parseScheduledAt(text: string): Date | null {
     const ap = timeOnly[3].toUpperCase()
     if (ap === 'PM' && h < 12) h += 12
     if (ap === 'AM' && h === 12) h = 0
-    const d = new Date()
-    if (d.getHours() > h || (d.getHours() === h && d.getMinutes() > m)) {
-      d.setDate(d.getDate() + 1)
-    }
-    d.setHours(h, m, 0, 0)
-    return d
+    const pastToday = ch > h || (ch === h && cmin >= m)
+    return calgaryDate(cy, cm, pastToday ? cd + 1 : cd, h, m)
   }
+
   return null
 }
 
 function tonightAtSevenLocal(): Date {
-  const d = new Date()
-  if (d.getHours() >= 19) d.setDate(d.getDate() + 1)
-  d.setHours(19, 0, 0, 0)
-  return d
+  const { year, month, day, hour } = getCalgaryNow()
+  return calgaryDate(year, month, hour >= 19 ? day + 1 : day, 19)
 }
 
 /**
@@ -642,11 +699,12 @@ async function tryCreateReservationFromChat(params: {
 
   if (!business_id || !customer_id) return false
 
-  // Prevent duplicates: skip if a reservation already exists for this conversation
+  // Prevent duplicates: skip if an active (non-cancelled) reservation already exists for this conversation
   const { count } = await supabaseAdmin
     .from('appointments')
     .select('id', { count: 'exact', head: true })
     .eq('conversation_id', conversation_id)
+    .not('status', 'eq', 'cancelled')
   if (count && count > 0) {
     console.log('[booking] Reservation already exists for conversation, skipping')
     return false
@@ -747,13 +805,17 @@ async function tryCancelReservationFromChat(params: {
   let appointmentId = byConv?.id ?? null
 
   if (!appointmentId) {
+    const { year: ny, month: nm, day: nd, hour: nh, minute: nmin } = getCalgaryNow()
+    const pad2 = (n: number) => String(n).padStart(2, '0')
+    const nowWallClock = `${ny}-${pad2(nm)}-${pad2(nd)}T${pad2(nh)}:${pad2(nmin)}:00`
+
     const { data: byCustomer } = await supabaseAdmin
       .from('appointments')
       .select('id')
       .eq('business_id', business_id)
       .eq('customer_id', customer_id)
       .in('status', ['pending', 'confirmed', 'seated'])
-      .gte('scheduled_at', new Date().toISOString())
+      .gte('scheduled_at', nowWallClock)
       .order('scheduled_at', { ascending: true })
       .limit(1)
       .maybeSingle()
