@@ -651,17 +651,8 @@ export default function GuestsPage() {
                       onClick={() => setConfirmDeleteId(selected.id)}
                       style={{
                         width: '100%', padding: '8px 0', borderRadius: 8, cursor: 'pointer',
-                        border: `1px solid ${t.borderSoft}`, background: 'transparent',
-                        color: t.textSubtle, fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
-                        transition: 'color 0.15s, border-color 0.15s',
-                      }}
-                      onMouseEnter={e => {
-                        e.currentTarget.style.color = '#ef4444'
-                        e.currentTarget.style.borderColor = 'rgba(239,68,68,0.4)'
-                      }}
-                      onMouseLeave={e => {
-                        e.currentTarget.style.color = t.textSubtle
-                        e.currentTarget.style.borderColor = t.borderSoft
+                        border: '1px solid rgba(239,68,68,0.4)', background: 'rgba(239,68,68,0.08)',
+                        color: '#ef4444', fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
                       }}
                     >
                       Delete guest
