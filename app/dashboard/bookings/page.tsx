@@ -253,9 +253,9 @@ function DayPanel({
   const reduceMotion = useReducedMotion()
   return (
     <motion.div
-      initial={{ opacity: 0, x: 18 }}
-      animate={{ opacity: 1, x: 0 }}
-      exit={{ opacity: 0, x: 18 }}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
       transition={oceanTransition(reduceMotion, { duration: 0.2 })}
       style={{
         ...glass,
@@ -1748,44 +1748,83 @@ export default function BookingsPage() {
                 exit={{ opacity: 0 }}
                 transition={oceanTransition(reduceMotion, { duration: 0.18 })}
                 style={{
-                  display: 'grid',
-                  gridTemplateColumns:
-                    selectedDay && !isMobile ? 'minmax(0, 1fr) 340px' : '1fr',
-                  gap: 16,
+                  display: 'flex',
+                  flexDirection: isMobile ? 'column' : 'row',
+                  gap: selectedDay && !isMobile ? 16 : 0,
                   alignItems: 'start',
                 }}
               >
-                <MonthCalendar
-                  displayMonth={displayMonth}
-                  reservations={reservations}
-                  selectedDay={selectedDay}
-                  onSelectDay={(d) =>
-                    setSelectedDay((prev) =>
-                      prev && isSameDay(prev, d) ? null : d,
-                    )
-                  }
-                  today={today}
-                />
-                <AnimatePresence>
-                  {selectedDay && (
-                    <DayPanel
-                      key={selectedDay.toISOString()}
-                      day={selectedDay}
-                      reservations={selectedDayReservations}
-                      onClose={() => setSelectedDay(null)}
-                      onConfirm={(id) => void updateStatus(id, 'confirmed')}
-                      onCancel={(id) => void updateStatus(id, 'cancelled')}
-                      onDelete={(id) => void deleteReservation(id)}
-                      onEdit={(r) => setEditReservation(r)}
-                      onAddForDay={() => {
-                        const d = selectedDay
-                        const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-                        setPrefilledDate(iso)
-                        setShowAddModal(true)
-                      }}
-                    />
-                  )}
-                </AnimatePresence>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <MonthCalendar
+                    displayMonth={displayMonth}
+                    reservations={reservations}
+                    selectedDay={selectedDay}
+                    onSelectDay={(d) =>
+                      setSelectedDay((prev) =>
+                        prev && isSameDay(prev, d) ? null : d,
+                      )
+                    }
+                    today={today}
+                  />
+                </div>
+
+                {/* Desktop: panel slot always in flex flow, width animates 0→340 */}
+                {!isMobile && (
+                  <motion.div
+                    animate={{ width: selectedDay ? 340 : 0 }}
+                    transition={
+                      reduceMotion
+                        ? { duration: 0 }
+                        : { duration: 0.22, ease: [0.25, 0.1, 0.25, 1] }
+                    }
+                    style={{ overflow: 'hidden', flexShrink: 0 }}
+                  >
+                    <div style={{ width: 340 }}>
+                      {selectedDay && (
+                        <DayPanel
+                          key={selectedDay.toISOString()}
+                          day={selectedDay}
+                          reservations={selectedDayReservations}
+                          onClose={() => setSelectedDay(null)}
+                          onConfirm={(id) => void updateStatus(id, 'confirmed')}
+                          onCancel={(id) => void updateStatus(id, 'cancelled')}
+                          onDelete={(id) => void deleteReservation(id)}
+                          onEdit={(r) => setEditReservation(r)}
+                          onAddForDay={() => {
+                            const d = selectedDay
+                            const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+                            setPrefilledDate(iso)
+                            setShowAddModal(true)
+                          }}
+                        />
+                      )}
+                    </div>
+                  </motion.div>
+                )}
+
+                {/* Mobile: panel appears below calendar */}
+                {isMobile && (
+                  <AnimatePresence>
+                    {selectedDay && (
+                      <DayPanel
+                        key={selectedDay.toISOString()}
+                        day={selectedDay}
+                        reservations={selectedDayReservations}
+                        onClose={() => setSelectedDay(null)}
+                        onConfirm={(id) => void updateStatus(id, 'confirmed')}
+                        onCancel={(id) => void updateStatus(id, 'cancelled')}
+                        onDelete={(id) => void deleteReservation(id)}
+                        onEdit={(r) => setEditReservation(r)}
+                        onAddForDay={() => {
+                          const d = selectedDay
+                          const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+                          setPrefilledDate(iso)
+                          setShowAddModal(true)
+                        }}
+                      />
+                    )}
+                  </AnimatePresence>
+                )}
               </motion.div>
             ) : (
               <motion.div
