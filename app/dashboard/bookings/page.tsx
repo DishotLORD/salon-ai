@@ -713,6 +713,7 @@ function ReservationModal({
     isEdit ? editReservation!.guestName : '',
   )
   const [partySize, setPartySize] = useState(isEdit ? editReservation!.partySize : 2)
+  const [partySizeInput, setPartySizeInput] = useState(String(isEdit ? editReservation!.partySize : 2))
   const [date, setDate] = useState(() => {
     if (isEdit) {
       const d = editReservation!.scheduledAt
@@ -839,42 +840,53 @@ function ReservationModal({
 
   const guestFloating = focusedField === 'guest' || guestName.length > 0
 
+  // Luxury palette — these are intentional hardcoded brand values for this modal
+  const NAVY = '#050d1a'
+  const SURFACE = '#091525'
+  const SKY = '#38bdf8'
+  const SKY_GLOW = 'rgba(56,189,248,0.18)'
+  const BORDER_REST = 'rgba(56,189,248,0.14)'
+  const TXT = '#deeeff'
+  const TXT_MUTED = '#7096b8'
+  const TXT_SUBTLE = '#3a5a78'
+
   const inp: React.CSSProperties = {
     width: '100%',
-    borderRadius: 10,
-    background: t.bgSurface,
-    color: t.text,
+    borderRadius: 12,
+    background: SURFACE,
+    color: TXT,
     paddingLeft: 16,
     paddingRight: 16,
     fontSize: 15,
     outline: 'none',
     fontFamily: 'inherit',
     boxSizing: 'border-box',
+    transition: 'border-color 0.18s, box-shadow 0.18s',
   }
 
   const iField = (field: string): React.CSSProperties =>
     focusedField === field
-      ? { border: `1px solid ${t.accent}`, boxShadow: `0 0 0 3px ${t.accentSoftBg}` }
-      : { border: `1px solid ${t.border}` }
+      ? { border: `1px solid ${SKY}`, boxShadow: `0 0 0 3px ${SKY_GLOW}` }
+      : { border: `1px solid ${BORDER_REST}` }
 
   const secLabel: React.CSSProperties = {
     display: 'block',
-    color: t.textMuted,
-    fontSize: 11,
+    color: SKY,
+    fontSize: 10,
     fontWeight: 700,
-    letterSpacing: '0.12em',
+    letterSpacing: '0.18em',
     textTransform: 'uppercase',
-    marginBottom: 8,
+    marginBottom: 10,
   }
 
   const stepBtn: React.CSSProperties = {
-    width: 36,
-    height: 36,
+    width: 44,
+    height: 44,
     borderRadius: '50%',
-    border: `1px solid ${t.border}`,
-    background: t.bgSurface,
-    color: t.text,
-    fontSize: 20,
+    border: `1px solid ${BORDER_REST}`,
+    background: NAVY,
+    color: SKY,
+    fontSize: 22,
     cursor: 'pointer',
     display: 'grid',
     placeItems: 'center',
@@ -882,12 +894,11 @@ function ReservationModal({
   }
 
   return (
-    /* Overlay */
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      transition={{ duration: 0.18 }}
+      transition={{ duration: 0.22 }}
       onClick={onClose}
       style={{
         position: 'fixed',
@@ -896,18 +907,19 @@ function ReservationModal({
         alignItems: 'center',
         justifyContent: 'center',
         zIndex: 1000,
-        background: 'rgba(15, 23, 42, 0.45)',
+        background: 'rgba(2,8,20,0.88)',
+        backdropFilter: 'blur(4px)',
+        WebkitBackdropFilter: 'blur(4px)',
       }}
     >
-      {/* Card */}
       <motion.div
-        initial={{ opacity: 0, scale: 0.96, y: 20 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.96, y: 20 }}
+        initial={{ opacity: 0, y: 32 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: 24 }}
         transition={
           reduceMotion
             ? { duration: 0.15 }
-            : { type: 'spring', stiffness: 320, damping: 26 }
+            : { duration: 0.3, ease: [0.16, 1, 0.3, 1] }
         }
         onClick={(e) => e.stopPropagation()}
         style={{
@@ -916,346 +928,424 @@ function ReservationModal({
           maxWidth: '95vw',
           maxHeight: '92vh',
           overflowY: 'auto',
-          background: t.bgApp,
-          border: `1px solid ${t.borderStrong}`,
-          borderRadius: 16,
-          padding: 32,
-          boxShadow: '0 25px 50px rgba(0,0,0,0.6)',
+          background: NAVY,
+          borderRadius: 20,
+          border: '1px solid rgba(56,189,248,0.18)',
+          boxShadow: '0 32px 64px rgba(0,0,0,0.72), 0 0 0 1px rgba(56,189,248,0.06)',
         }}
       >
-        {/* ── Header ── */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
-          <div>
-            <h2
-              style={{
-                margin: 0,
-                color: t.text,
-                fontSize: 26,
-                fontWeight: 700,
-                fontFamily: 'var(--font-playfair)',
-                letterSpacing: '-0.02em',
-                lineHeight: 1.2,
-              }}
-            >
-              {isEdit ? 'Edit booking' : 'New booking'}
-            </h2>
-            <p style={{ margin: '6px 0 0', color: t.textMuted, fontSize: 13 }}>
-              {isEdit ? 'Make any changes below' : 'Fill in the details below'}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            style={{
-              flexShrink: 0,
-              marginLeft: 16,
-              width: 32,
-              height: 32,
-              borderRadius: 8,
-              border: `1px solid ${t.border}`,
-              background: t.bgSurface,
-              color: t.textMuted,
-              cursor: 'pointer',
-              fontSize: 18,
-              display: 'grid',
-              placeItems: 'center',
-            }}
-          >
-            ×
-          </button>
-        </div>
+        {/* Sky-blue top cap */}
+        <div style={{ height: 3, background: SKY, borderRadius: '20px 20px 0 0' }} />
 
-        {/* Divider */}
-        <div style={{ height: 1, background: t.border, marginBottom: 24 }} />
+        <div style={{ padding: '28px 32px 32px' }}>
 
-        {/* ── Form ── */}
-        <div style={{ display: 'grid', gap: 20 }}>
-
-          {/* Guest Name — floating label */}
-          <div style={{ position: 'relative' }}>
-            <input
-              type="text"
-              value={guestName}
-              onChange={(e) => setGuestName(e.target.value)}
-              onFocus={() => setFocusedField('guest')}
-              onBlur={() => setFocusedField(null)}
-              placeholder=""
-              style={{
-                ...inp,
-                ...iField('guest'),
-                paddingTop: guestFloating ? 22 : 16,
-                paddingBottom: guestFloating ? 10 : 16,
-                transition: 'border-color 0.15s, box-shadow 0.15s, padding 0.15s',
-              }}
-            />
-            <span
-              style={{
-                position: 'absolute',
-                left: 16,
-                top: guestFloating ? 8 : 15,
-                fontSize: guestFloating ? 11 : 15,
-                fontWeight: guestFloating ? 700 : 400,
-                letterSpacing: guestFloating ? '0.1em' : 0,
-                textTransform: guestFloating ? 'uppercase' : 'none',
-                color: focusedField === 'guest'
-                  ? t.accent
-                  : guestFloating
-                  ? t.textMuted
-                  : t.textSubtle,
-                pointerEvents: 'none',
-                transition: 'all 0.15s ease',
-                userSelect: 'none',
-              }}
-            >
-              Guest name
-            </span>
-          </div>
-
-          {/* Party Size — stepper */}
-          <div>
-            <span style={secLabel}>Party Size</span>
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 12,
-                background: t.bgSurface,
-                border: `1px solid ${t.border}`,
-                borderRadius: 10,
-                padding: '8px 14px',
-              }}
-            >
-              <button type="button" onClick={() => setPartySize((s) => Math.max(1, s - 1))} style={stepBtn}>
-                −
-              </button>
-              <div style={{ flex: 1, textAlign: 'center', color: t.text, fontSize: 16, fontWeight: 600 }}>
-                {partySize} {partySize === 1 ? 'guest' : 'guests'}
-              </div>
-              <button type="button" onClick={() => setPartySize((s) => Math.min(20, s + 1))} style={stepBtn}>
-                +
-              </button>
-            </div>
-          </div>
-
-          {/* Date + Time */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            {/* Date — click to open native picker */}
+          {/* Header */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
             <div>
-              <span style={secLabel}>Date</span>
-              <div
+              <h2
                 style={{
-                  position: 'relative',
-                  background: t.bgSurface,
-                  border: `1px solid ${t.border}`,
-                  borderRadius: 10,
-                  padding: '13px 14px',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 10,
-                  overflow: 'hidden',
+                  margin: 0,
+                  color: '#f0f8ff',
+                  fontSize: 28,
+                  fontWeight: 700,
+                  fontFamily: 'var(--font-playfair)',
+                  letterSpacing: '-0.02em',
+                  lineHeight: 1.15,
                 }}
               >
-                <span style={{ fontSize: 15, flexShrink: 0 }}>📅</span>
-                <span
-                  style={{
-                    color: date ? t.text : t.textSubtle,
-                    fontSize: 13,
-                    fontWeight: 500,
-                    lineHeight: 1.3,
-                    flex: 1,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}
+                {isEdit ? 'Edit booking' : 'New booking'}
+              </h2>
+              <p style={{ margin: '6px 0 0', color: TXT_MUTED, fontSize: 13 }}>
+                {isEdit ? 'Update reservation details' : date ? displayDate : 'Add reservation details'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                flexShrink: 0,
+                marginLeft: 16,
+                width: 34,
+                height: 34,
+                borderRadius: '50%',
+                border: `1px solid ${BORDER_REST}`,
+                background: 'transparent',
+                color: TXT_MUTED,
+                cursor: 'pointer',
+                fontSize: 20,
+                display: 'grid',
+                placeItems: 'center',
+              }}
+            >
+              ×
+            </button>
+          </div>
+
+          <div style={{ height: 1, background: 'rgba(56,189,248,0.1)', marginBottom: 28 }} />
+
+          <div style={{ display: 'grid', gap: 22 }}>
+
+            {/* Guest name — floating label */}
+            <div style={{ position: 'relative' }}>
+              <input
+                type="text"
+                value={guestName}
+                onChange={(e) => setGuestName(e.target.value)}
+                onFocus={() => setFocusedField('guest')}
+                onBlur={() => setFocusedField(null)}
+                placeholder=""
+                style={{
+                  ...inp,
+                  ...iField('guest'),
+                  paddingTop: guestFloating ? 24 : 18,
+                  paddingBottom: guestFloating ? 10 : 18,
+                  fontSize: 16,
+                  fontWeight: 500,
+                }}
+              />
+              <span
+                style={{
+                  position: 'absolute',
+                  left: 16,
+                  top: guestFloating ? 8 : 17,
+                  fontSize: guestFloating ? 10 : 16,
+                  fontWeight: guestFloating ? 700 : 400,
+                  letterSpacing: guestFloating ? '0.18em' : 0,
+                  textTransform: guestFloating ? 'uppercase' : 'none',
+                  color: focusedField === 'guest' ? SKY : guestFloating ? TXT_MUTED : TXT_SUBTLE,
+                  pointerEvents: 'none',
+                  transition: 'all 0.18s ease',
+                  userSelect: 'none',
+                }}
+              >
+                Guest name
+              </span>
+            </div>
+
+            {/* Party size — quick-select grid + stepper overflow */}
+            <div>
+              <span style={secLabel}>Party size</span>
+              {/* Quick-select 1–8 */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(8, 1fr)', gap: 6, marginBottom: 8 }}>
+                {[1,2,3,4,5,6,7,8].map((n) => (
+                  <motion.button
+                    key={n}
+                    type="button"
+                    onClick={() => { setPartySize(n); setPartySizeInput(String(n)) }}
+                    whileTap={reduceMotion ? undefined : { scale: 0.9 }}
+                    style={{
+                      height: 44,
+                      borderRadius: 10,
+                      border: partySize === n ? `1px solid ${SKY}` : `1px solid ${BORDER_REST}`,
+                      background: partySize === n ? `rgba(56,189,248,0.14)` : SURFACE,
+                      color: partySize === n ? SKY : TXT_MUTED,
+                      fontSize: 15,
+                      fontWeight: partySize === n ? 700 : 500,
+                      cursor: 'pointer',
+                      transition: 'all 0.15s',
+                      boxShadow: partySize === n ? `0 0 0 2px rgba(56,189,248,0.18)` : 'none',
+                    }}
+                  >
+                    {n}
+                  </motion.button>
+                ))}
+              </div>
+              {/* Stepper for 9+ */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <motion.button
+                  type="button"
+                  onClick={() => { const n = Math.max(1, partySize - 1); setPartySize(n); setPartySizeInput(String(n)) }}
+                  whileTap={reduceMotion ? undefined : { scale: 0.88 }}
+                  style={{ ...stepBtn, width: 38, height: 38, fontSize: 18, opacity: partySize <= 1 ? 0.35 : 1 }}
                 >
-                  {displayDate}
-                </span>
-                <input
-                  ref={dateInputRef}
-                  type="date"
-                  value={date}
-                  min={isEdit ? undefined : new Date().toISOString().split('T')[0]}
-                  onChange={(e) => setDate(e.target.value)}
-                  style={{
-                    position: 'absolute',
-                    inset: 0,
-                    opacity: 0,
-                    cursor: 'pointer',
-                    width: '100%',
-                  }}
-                />
+                  −
+                </motion.button>
+                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={partySizeInput}
+                    onChange={(e) => {
+                      const raw = e.target.value.replace(/\D/g, '')
+                      setPartySizeInput(raw)
+                      const v = parseInt(raw, 10)
+                      if (!isNaN(v) && v >= 1) setPartySize(Math.min(50, v))
+                    }}
+                    onFocus={() => setFocusedField('partySize')}
+                    onBlur={() => {
+                      setFocusedField(null)
+                      // restore valid value if field left empty
+                      const v = parseInt(partySizeInput, 10)
+                      const safe = isNaN(v) || v < 1 ? 1 : Math.min(50, v)
+                      setPartySize(safe)
+                      setPartySizeInput(String(safe))
+                    }}
+                    style={{
+                      width: 48,
+                      background: 'transparent',
+                      border: 'none',
+                      outline: 'none',
+                      color: TXT,
+                      fontSize: 20,
+                      fontWeight: 700,
+                      textAlign: 'center',
+                      fontFamily: 'inherit',
+                    }}
+                  />
+                  <span style={{ color: TXT_MUTED, fontSize: 13, userSelect: 'none' }}>
+                    {partySize === 1 ? 'guest' : 'guests'}
+                  </span>
+                </div>
+                <motion.button
+                  type="button"
+                  onClick={() => { const n = Math.min(50, partySize + 1); setPartySize(n); setPartySizeInput(String(n)) }}
+                  whileTap={reduceMotion ? undefined : { scale: 0.88 }}
+                  style={{ ...stepBtn, width: 38, height: 38, fontSize: 18, opacity: partySize >= 50 ? 0.35 : 1 }}
+                >
+                  +
+                </motion.button>
               </div>
             </div>
 
-            {/* Time — dropdown with restaurant hours */}
-            <div>
-              <span style={secLabel}>Time</span>
-              <div style={{ position: 'relative' }}>
-                <span
+            {/* Date + Time */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+              <div>
+                <span style={secLabel}>Date</span>
+                <div
                   style={{
-                    position: 'absolute',
-                    left: 14,
-                    top: '50%',
-                    transform: 'translateY(-50%)',
-                    fontSize: 15,
-                    pointerEvents: 'none',
-                    zIndex: 1,
+                    position: 'relative',
+                    background: SURFACE,
+                    border: `1px solid ${BORDER_REST}`,
+                    borderRadius: 12,
+                    height: 50,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    padding: '0 14px',
+                    gap: 10,
+                    overflow: 'hidden',
                   }}
                 >
-                  🕐
-                </span>
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
+                    <rect x="1.5" y="3" width="13" height="11" rx="2" stroke={SKY} strokeWidth="1.2"/>
+                    <path d="M1.5 6.5h13" stroke={SKY} strokeWidth="1.2"/>
+                    <path d="M5 1.5V4M11 1.5V4" stroke={SKY} strokeWidth="1.2" strokeLinecap="round"/>
+                  </svg>
+                  <span
+                    style={{
+                      color: date ? TXT : TXT_SUBTLE,
+                      fontSize: 13,
+                      fontWeight: 500,
+                      flex: 1,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {displayDate}
+                  </span>
+                  <input
+                    ref={dateInputRef}
+                    type="date"
+                    value={date}
+                    min={isEdit ? undefined : new Date().toISOString().split('T')[0]}
+                    onChange={(e) => setDate(e.target.value)}
+                    style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer', width: '100%' }}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <span style={secLabel}>Time</span>
+                <div style={{ position: 'relative' }}>
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', zIndex: 1 }}
+                  >
+                    <circle cx="8" cy="8" r="6.25" stroke={SKY} strokeWidth="1.2"/>
+                    <path d="M8 5v3l2 1.5" stroke={SKY} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                  <select
+                    value={time}
+                    onChange={(e) => setTime(e.target.value)}
+                    onFocus={() => setFocusedField('time')}
+                    onBlur={() => setFocusedField(null)}
+                    style={{
+                      ...inp,
+                      ...iField('time'),
+                      paddingLeft: 42,
+                      paddingTop: 0,
+                      paddingBottom: 0,
+                      height: 50,
+                      appearance: 'none',
+                      WebkitAppearance: 'none',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {TIME_SLOTS.map(({ value, label }) => (
+                      <option key={value} value={value} style={{ color: '#ffffff', background: '#091525' }}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Table */}
+            <div>
+              <span style={secLabel}>Table</span>
+              <input
+                type="text"
+                value={tableNumber}
+                onChange={(e) => setTableNumber(e.target.value)}
+                onFocus={() => setFocusedField('table')}
+                onBlur={() => setFocusedField(null)}
+                placeholder="Optional"
+                style={{
+                  ...inp,
+                  ...iField('table'),
+                  paddingTop: 16,
+                  paddingBottom: 16,
+                }}
+              />
+            </div>
+
+            {/* Status (edit only) */}
+            {isEdit && (
+              <div>
+                <span style={secLabel}>Status</span>
                 <select
-                  value={time}
-                  onChange={(e) => setTime(e.target.value)}
-                  onFocus={() => setFocusedField('time')}
+                  value={editStatus}
+                  onChange={(e) => setEditStatus(e.target.value as ResStatus)}
+                  onFocus={() => setFocusedField('status')}
                   onBlur={() => setFocusedField(null)}
                   style={{
                     ...inp,
-                    ...iField('time'),
-                    paddingTop: 13,
-                    paddingBottom: 13,
-                    paddingLeft: 40,
+                    ...iField('status'),
+                    paddingTop: 0,
+                    paddingBottom: 0,
+                    height: 50,
                     appearance: 'none',
                     WebkitAppearance: 'none',
                     cursor: 'pointer',
                   }}
                 >
-                  {TIME_SLOTS.map(({ value, label }) => (
-                    <option key={value} value={value} style={{ color: '#ffffff', background: '#1a2a4a' }}>
-                      {label}
+                  {STATUS_OPTIONS.map((s) => (
+                    <option key={s} value={s} style={{ color: '#ffffff', background: '#091525' }}>
+                      {s.charAt(0).toUpperCase() + s.slice(1)}
                     </option>
                   ))}
                 </select>
               </div>
-            </div>
-          </div>
+            )}
 
-          {/* Table Number */}
-          <input
-            type="text"
-            value={tableNumber}
-            onChange={(e) => setTableNumber(e.target.value)}
-            onFocus={() => setFocusedField('table')}
-            onBlur={() => setFocusedField(null)}
-            placeholder="Table number (optional)"
-            style={{
-              ...inp,
-              ...iField('table'),
-              paddingTop: 16,
-              paddingBottom: 16,
-            }}
-          />
-
-          {/* Edit-mode status */}
-          {isEdit && (
+            {/* Notes */}
             <div>
-              <span style={secLabel}>Status</span>
-              <select
-                value={editStatus}
-                onChange={(e) => setEditStatus(e.target.value as ResStatus)}
-                onFocus={() => setFocusedField('status')}
+              <span style={secLabel}>Notes</span>
+              <textarea
+                value={specialRequests}
+                onChange={(e) => setSpecialRequests(e.target.value)}
+                onFocus={() => setFocusedField('notes')}
                 onBlur={() => setFocusedField(null)}
+                placeholder="Dietary requirements, special occasion, seating preference..."
+                rows={3}
                 style={{
                   ...inp,
-                  ...iField('status'),
-                  paddingTop: 13,
-                  paddingBottom: 13,
-                  appearance: 'none',
-                  WebkitAppearance: 'none',
-                  cursor: 'pointer',
+                  ...iField('notes'),
+                  paddingTop: 14,
+                  paddingBottom: 14,
+                  resize: 'none',
+                  lineHeight: 1.6,
+                }}
+              />
+            </div>
+
+            {/* Error */}
+            {error && (
+              <div
+                style={{
+                  padding: '12px 16px',
+                  borderRadius: 10,
+                  background: 'rgba(239,68,68,0.1)',
+                  border: '1px solid rgba(239,68,68,0.25)',
+                  color: '#f87171',
+                  fontSize: 13,
                 }}
               >
-                {STATUS_OPTIONS.map((s) => (
-                  <option key={s} value={s} style={{ color: '#ffffff', background: '#1a2a4a' }}>
-                    {s.charAt(0).toUpperCase() + s.slice(1)}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
+                {error}
+              </div>
+            )}
 
-          {/* Special Requests */}
-          <textarea
-            value={specialRequests}
-            onChange={(e) => setSpecialRequests(e.target.value)}
-            onFocus={() => setFocusedField('notes')}
-            onBlur={() => setFocusedField(null)}
-            placeholder="Dietary requirements, special occasion, seating preference..."
-            rows={3}
-            style={{
-              ...inp,
-              ...iField('notes'),
-              paddingTop: 14,
-              paddingBottom: 14,
-              resize: 'none',
-              lineHeight: 1.6,
-            }}
-          />
-
-          {/* Error */}
-          {error && (
-            <div
+            {/* Submit */}
+            <motion.button
+              type="button"
+              onClick={() => void handleSubmit()}
+              disabled={saving}
+              whileHover={saving || reduceMotion ? undefined : { scale: 1.02 }}
+              whileTap={saving || reduceMotion ? undefined : { scale: 0.97 }}
               style={{
-                padding: '12px 16px',
-                borderRadius: 10,
-                background: t.dangerBg,
-                border: `1px solid ${t.dangerBorder}`,
-                color: t.danger,
-                fontSize: 13,
+                position: 'relative',
+                width: '100%',
+                height: 56,
+                border: 'none',
+                borderRadius: 12,
+                background: saving ? 'rgba(56,189,248,0.35)' : SKY,
+                color: saving ? 'rgba(5,13,26,0.5)' : NAVY,
+                fontWeight: 700,
+                fontSize: 15,
+                letterSpacing: '0.06em',
+                textTransform: 'uppercase',
+                cursor: saving ? 'not-allowed' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8,
+                marginTop: 4,
+                overflow: 'hidden',
               }}
             >
-              {error}
-            </div>
-          )}
-
-          {/* Submit */}
-          <motion.button
-            type="button"
-            onClick={() => void handleSubmit()}
-            disabled={saving}
-            whileHover={saving || reduceMotion ? undefined : { scale: 1.01 }}
-            whileTap={saving || reduceMotion ? undefined : { scale: 0.98 }}
-            style={{
-              width: '100%',
-              height: 50,
-              border: 'none',
-              borderRadius: 10,
-              background: saving ? t.bgSurfaceMuted : t.accent,
-              color: saving ? t.textSubtle : '#ffffff',
-              fontWeight: 600,
-              fontSize: 14,
-              letterSpacing: '0.04em',
-              cursor: saving ? 'not-allowed' : 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 8,
-              marginTop: 4,
-            }}
-          >
-            {saving ? (
-              <>
-                <motion.span
-                  animate={{ rotate: 360 }}
-                  transition={{ repeat: Infinity, duration: 0.7, ease: 'linear' }}
+              {!saving && !reduceMotion && (
+                <motion.div
+                  animate={{ x: ['-120%', '280%'] }}
+                  transition={{ repeat: Infinity, duration: 2.8, ease: 'linear', repeatDelay: 1.4 }}
                   style={{
-                    width: 16,
-                    height: 16,
-                    borderRadius: '50%',
-                    border: `2px solid ${t.border}`,
-                    borderTopColor: t.accent,
-                    display: 'inline-block',
+                    position: 'absolute',
+                    top: 0,
+                    bottom: 0,
+                    width: '35%',
+                    background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.22), transparent)',
+                    pointerEvents: 'none',
                   }}
                 />
-                {isEdit ? 'Saving…' : 'Confirming…'}
-              </>
-            ) : isEdit ? (
-              'Save Changes'
-            ) : (
-              'Confirm booking'
-            )}
-          </motion.button>
+              )}
+              {saving ? (
+                <>
+                  <motion.span
+                    animate={{ rotate: 360 }}
+                    transition={{ repeat: Infinity, duration: 0.7, ease: 'linear' }}
+                    style={{
+                      width: 16,
+                      height: 16,
+                      borderRadius: '50%',
+                      border: '2px solid rgba(5,13,26,0.25)',
+                      borderTopColor: NAVY,
+                      display: 'inline-block',
+                    }}
+                  />
+                  {isEdit ? 'Saving…' : 'Confirming…'}
+                </>
+              ) : isEdit ? (
+                'Save Changes'
+              ) : (
+                'Confirm booking'
+              )}
+            </motion.button>
+          </div>
         </div>
       </motion.div>
     </motion.div>
