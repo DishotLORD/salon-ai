@@ -433,6 +433,21 @@ async function syncGuestInfo(params: {
       customer_id: returningGuest.id,
       customer_name: name ?? returningGuest.name ?? 'Guest',
     })
+
+    // Delete the placeholder customer created for this session if it's now
+    // fully orphaned (no remaining conversations linked to it).
+    const { count: remainingConvs } = await supabaseAdmin
+      .from('conversations')
+      .select('id', { count: 'exact', head: true })
+      .eq('customer_id', customer_id)
+      .eq('business_id', business_id)
+    if (!remainingConvs || remainingConvs === 0) {
+      await supabaseAdmin
+        .from('customers')
+        .delete()
+        .eq('id', customer_id)
+        .eq('business_id', business_id)
+    }
   }
 
   const { data: existing } = await supabaseAdmin
