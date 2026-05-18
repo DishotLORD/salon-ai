@@ -42,6 +42,9 @@ export const t = {
   danger: 'var(--t-danger)',
   dangerBg: 'var(--t-danger-bg)',
   dangerBorder: 'var(--t-danger-border)',
+  green: 'var(--t-green)',
+  greenBg: 'var(--t-green-bg)',
+  greenBorder: 'var(--t-green-border)',
 
   // Shadows
   shadowSm: 'var(--t-shadow-sm)',

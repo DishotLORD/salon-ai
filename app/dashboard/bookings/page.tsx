@@ -842,7 +842,7 @@ function ReservationModal({
   const inp: React.CSSProperties = {
     width: '100%',
     borderRadius: 10,
-    background: 'rgba(255,255,255,0.06)',
+    background: t.bgSurface,
     color: t.text,
     paddingLeft: 16,
     paddingRight: 16,
@@ -850,7 +850,6 @@ function ReservationModal({
     outline: 'none',
     fontFamily: 'inherit',
     boxSizing: 'border-box',
-    colorScheme: 'dark',
   }
 
   const iField = (field: string): React.CSSProperties =>
@@ -1020,7 +1019,7 @@ function ReservationModal({
                 display: 'flex',
                 alignItems: 'center',
                 gap: 12,
-                background: 'rgba(255,255,255,0.06)',
+                background: t.bgSurface,
                 border: `1px solid ${t.border}`,
                 borderRadius: 10,
                 padding: '8px 14px',
@@ -1046,7 +1045,7 @@ function ReservationModal({
               <div
                 style={{
                   position: 'relative',
-                  background: 'rgba(255,255,255,0.06)',
+                  background: t.bgSurface,
                   border: `1px solid ${t.border}`,
                   borderRadius: 10,
                   padding: '13px 14px',
@@ -1084,7 +1083,6 @@ function ReservationModal({
                     opacity: 0,
                     cursor: 'pointer',
                     width: '100%',
-                    colorScheme: 'dark',
                   }}
                 />
               </div>
