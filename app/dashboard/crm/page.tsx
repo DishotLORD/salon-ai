@@ -190,6 +190,8 @@ export default function GuestsPage() {
   const [filterTag, setFilterTag] = useState<'All' | CustomerTag>('All')
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [businessId, setBusinessId] = useState<string | null>(null)
 
   // Notes persistence + reset delete confirm on selection change
   useEffect(() => {
@@ -212,6 +214,7 @@ export default function GuestsPage() {
       if (!user) { if (!cancelled) { setCustomers([]); setLoading(false) }; return }
       const { data: biz } = await supabase.from('businesses').select('id').eq('user_id', user.id).maybeSingle()
       if (!biz?.id) { if (!cancelled) { setCustomers([]); setLoading(false) }; return }
+      if (!cancelled) setBusinessId(biz.id)
       const { data: rows, error: err } = await supabase.from('customers').select('*').eq('business_id', biz.id).order('name', { ascending: true })
       if (!cancelled) {
         if (err) { setError("We couldn't load your guest list."); setCustomers([]) }
@@ -228,13 +231,21 @@ export default function GuestsPage() {
 
   async function handleDeleteCustomer(customerId: string) {
     setDeleting(true)
-    const { error } = await supabase.from('customers').delete().eq('id', customerId)
+    setDeleteError(null)
+    const { error: delErr } = await (
+      businessId
+        ? supabase.from('customers').delete().eq('id', customerId).eq('business_id', businessId)
+        : supabase.from('customers').delete().eq('id', customerId)
+    )
     setDeleting(false)
-    if (!error) {
-      setCustomers(prev => prev.filter(c => c.id !== customerId))
-      setSelectedId(null)
-      setConfirmDeleteId(null)
+    if (delErr) {
+      console.error('[crm] delete failed:', delErr.message, delErr)
+      setDeleteError(delErr.message)
+      return
     }
+    setCustomers(prev => prev.filter(c => c.id !== customerId))
+    setSelectedId(null)
+    setConfirmDeleteId(null)
   }
 
   const stats = useMemo(() => {
@@ -619,6 +630,11 @@ export default function GuestsPage() {
 
                 {/* Delete guest */}
                 <div style={{ borderTop: `1px solid ${t.borderSoft}`, paddingTop: 14 }}>
+                  {deleteError && (
+                    <div style={{ marginBottom: 8, padding: '6px 10px', borderRadius: 8, background: 'rgba(239,68,68,0.1)', color: '#ef4444', fontSize: 11 }}>
+                      {deleteError}
+                    </div>
+                  )}
                   {confirmDeleteId === selected.id ? (
                     <div style={{ display: 'flex', gap: 8 }}>
                       <button
