@@ -295,7 +295,7 @@ export default function GuestsPage() {
               <div style={{ fontSize: 10, letterSpacing: '0.09em', textTransform: 'uppercase', color: t.textMuted, fontWeight: 600, marginBottom: 4 }}>
                 Guest CRM
               </div>
-              <h1 style={{ margin: 0, fontSize: 26, fontWeight: 600, letterSpacing: '-0.025em', color: t.text }}>
+              <h1 style={{ margin: 0, fontSize: 28, fontWeight: 700, letterSpacing: '-0.03em', color: t.text, fontFamily: 'var(--font-playfair)' }}>
                 Guests
               </h1>
               <div style={{ marginTop: 4, fontSize: 13, color: t.textMuted }}>
@@ -328,11 +328,71 @@ export default function GuestsPage() {
           </div>
 
           {/* ── Stats ── */}
-          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2,1fr)' : 'repeat(4,1fr)', gap: 14 }}>
-            <MiniStat label="Total guests"  value={stats.total.toString()} />
-            <MiniStat label="New this month" value={stats.newThisMonth.toString()} />
-            <MiniStat label="Returning"     value={stats.returning.toString()} />
-            <MiniStat label="Avg spend"     value={formatMoney(stats.avgSpend)} />
+          <div className="glass" style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row' }}>
+            <div style={{
+              flex: isMobile ? undefined : '1.3',
+              padding: isMobile ? '14px 20px' : '16px 26px',
+              borderBottom: isMobile ? `1px solid ${t.borderSoft}` : 'none',
+              borderRight: !isMobile ? `1px solid ${t.borderSoft}` : 'none',
+              display: 'flex', flexDirection: 'column', gap: 2,
+            }}>
+              <span style={{ fontSize: 10, color: t.textMuted, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+                Total guests
+              </span>
+              <span style={{ fontSize: 30, fontWeight: 700, color: t.text, lineHeight: 1, letterSpacing: '-0.02em', marginTop: 4 }}>
+                {loading ? '—' : stats.total.toString()}
+              </span>
+            </div>
+            <div style={{
+              flex: '1',
+              padding: isMobile ? '14px 20px' : '16px 22px',
+              borderBottom: isMobile ? `1px solid ${t.borderSoft}` : 'none',
+              borderRight: !isMobile ? `1px solid ${t.borderSoft}` : 'none',
+              display: 'flex', flexDirection: 'column', gap: 2,
+            }}>
+              <span style={{ fontSize: 10, color: t.textMuted, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+                New this month
+              </span>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 4 }}>
+                <span style={{ fontSize: 24, fontWeight: 700, color: t.text, lineHeight: 1, letterSpacing: '-0.02em' }}>
+                  {loading ? '—' : stats.newThisMonth.toString()}
+                </span>
+                {!loading && <span style={{ fontSize: 11, color: t.textMuted, fontWeight: 500 }}>guests</span>}
+              </div>
+            </div>
+            <div style={{
+              flex: '1',
+              padding: isMobile ? '14px 20px' : '16px 22px',
+              borderBottom: isMobile ? `1px solid ${t.borderSoft}` : 'none',
+              borderRight: !isMobile ? `1px solid ${t.borderSoft}` : 'none',
+              display: 'flex', flexDirection: 'column', gap: 2,
+            }}>
+              <span style={{ fontSize: 10, color: t.textMuted, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+                Returning
+              </span>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 4 }}>
+                <span style={{ fontSize: 24, fontWeight: 700, color: t.text, lineHeight: 1, letterSpacing: '-0.02em' }}>
+                  {loading ? '—' : stats.returning.toString()}
+                </span>
+                {!loading && stats.total > 0 && (
+                  <span style={{ fontSize: 11, color: t.textMuted, fontWeight: 500 }}>
+                    {Math.round(stats.returning / stats.total * 100)}%
+                  </span>
+                )}
+              </div>
+            </div>
+            <div style={{
+              flex: '1',
+              padding: isMobile ? '14px 20px' : '16px 22px',
+              display: 'flex', flexDirection: 'column', gap: 2,
+            }}>
+              <span style={{ fontSize: 10, color: t.textMuted, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+                Avg spend
+              </span>
+              <span style={{ fontSize: 24, fontWeight: 700, color: t.text, lineHeight: 1, letterSpacing: '-0.02em', marginTop: 4 }}>
+                {loading ? '—' : formatMoney(stats.avgSpend)}
+              </span>
+            </div>
           </div>
 
           {/* ── Tier filter ── */}
@@ -561,11 +621,22 @@ export default function GuestsPage() {
                 </div>
 
                 {/* KV stats */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                  <KvCell label="Visits"    value={String(selected.totalBookings)}/>
-                  <KvCell label="Spent"     value={formatMoney(selected.totalSpent)}/>
-                  <KvCell label="Joined"    value={selected.joined}/>
-                  <KvCell label="Last seen" value={selected.lastVisit}/>
+                <div style={{ background: t.bgSurfaceMuted, borderRadius: 10, border: `1px solid ${t.borderSoft}`, overflow: 'hidden' }}>
+                  {[
+                    { label: 'Visits',    value: String(selected.totalBookings), mono: true },
+                    { label: 'Spent',     value: formatMoney(selected.totalSpent), mono: true },
+                    { label: 'Joined',    value: selected.joined, mono: false },
+                    { label: 'Last seen', value: selected.lastVisit, mono: false },
+                  ].map(({ label, value, mono }, i, arr) => (
+                    <div key={label} style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      padding: '9px 12px',
+                      borderBottom: i < arr.length - 1 ? `1px solid ${t.borderSoft}` : 'none',
+                    }}>
+                      <span style={{ fontSize: 11, color: t.textMuted, fontWeight: 500 }}>{label}</span>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: t.text, fontFamily: mono ? 'var(--font-geist-mono)' : 'inherit' }}>{value}</span>
+                    </div>
+                  ))}
                 </div>
 
                 {/* Signals */}
