@@ -15,6 +15,7 @@ type DbRow = {
   scheduled_at: string
   status: string | null
   customer_id: string | null
+  notes: string | null
 }
 
 type ListFilter = 'today' | 'week' | 'all'
@@ -42,7 +43,8 @@ function parseReservation(row: DbRow, customerName?: string): Reservation {
   const tableNumber = tablePart ? tablePart.replace(/^Table /i, '').trim() : '—'
 
   const notesPart = parts.find((p) => /^Notes:/i.test(p.trim()))
-  const specialRequests = notesPart ? notesPart.replace(/^Notes:\s*/i, '').trim() : ''
+  const notesFromServiceName = notesPart ? notesPart.replace(/^Notes:\s*/i, '').trim() : ''
+  const specialRequests = row.notes?.trim() || notesFromServiceName
 
   return {
     id: row.id,
@@ -52,6 +54,7 @@ function parseReservation(row: DbRow, customerName?: string): Reservation {
     scheduledAt: new Date(row.scheduled_at),
     status: normalizeStatus(row.status),
     specialRequests,
+    customerId: row.customer_id ?? null,
   }
 }
 
@@ -118,6 +121,17 @@ function MonthCalendar({
       cells.push({ date: new Date(year, month + 1, d), inMonth: false })
   }
 
+  // Precompute per-day booking stats for the heatmap bar
+  const dayStats = new Map<string, { count: number; covers: number }>()
+  for (const r of reservations) {
+    if (r.status === 'cancelled' || r.status === 'no-show') continue
+    const rd = r.scheduledAt
+    const k = `${rd.getFullYear()}-${rd.getMonth()}-${rd.getDate()}`
+    const curr = dayStats.get(k) ?? { count: 0, covers: 0 }
+    dayStats.set(k, { count: curr.count + 1, covers: curr.covers + r.partySize })
+  }
+  const maxCount = Math.max(1, ...Array.from(dayStats.values()).map((s) => s.count))
+
   const DOW = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
   return (
@@ -152,10 +166,9 @@ function MonthCalendar({
       {/* Day grid */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)' }}>
         {cells.map(({ date, inMonth }, idx) => {
-          const dayRes = reservations.filter(
-            (r) => isSameDay(r.scheduledAt, date) && r.status !== 'cancelled' && r.status !== 'no-show',
-          )
-          const covers = dayRes.reduce((s, r) => s + r.partySize, 0)
+          const k = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`
+          const { count, covers } = dayStats.get(k) ?? { count: 0, covers: 0 }
+          const fillPct = count / maxCount
           const isToday = isSameDay(date, today)
           const isSelected = selectedDay ? isSameDay(date, selectedDay) : false
 
@@ -165,8 +178,8 @@ function MonthCalendar({
               type="button"
               onClick={() => onSelectDay(date)}
               style={{
-                minHeight: 80,
-                padding: '10px 8px 8px',
+                minHeight: 76,
+                padding: 0,
                 background: isSelected ? t.accentSoftBg : t.bgSurface,
                 border: 'none',
                 borderTop: idx >= 7 ? `1px solid ${t.borderSoft}` : 'none',
@@ -181,45 +194,59 @@ function MonthCalendar({
                 textAlign: 'left',
                 display: 'flex',
                 flexDirection: 'column',
-                gap: 4,
                 transition: 'background 0.12s',
               }}
             >
-              <span
-                style={{
-                  fontSize: 13,
-                  fontWeight: 700,
-                  color: !inMonth
-                    ? t.textSubtle
-                    : isToday
-                    ? t.accent
-                    : t.text,
-                  alignSelf: 'flex-end',
-                  paddingRight: 2,
-                }}
-              >
-                {date.getDate()}
-              </span>
-              {dayRes.length > 0 && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 3, alignSelf: 'flex-start' }}>
-                  <span
-                    style={{
-                      fontSize: 10,
-                      fontWeight: 700,
-                      color: t.accentText,
-                      background: t.accentSoftBg,
-                      border: `1px solid ${t.accentSoftBorder}`,
-                      borderRadius: 6,
-                      padding: '2px 6px',
-                      whiteSpace: 'nowrap',
-                      lineHeight: 1.4,
-                    }}
-                  >
-                    {dayRes.length} {dayRes.length === 1 ? 'booking' : 'bookings'}
+              {/* Count badge (left) + day number (right) */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 7px 0' }}>
+                {count > 0 ? (
+                  <span style={{
+                    minWidth: 18,
+                    height: 18,
+                    padding: '0 4px',
+                    borderRadius: 5,
+                    background: t.accentSoftBg,
+                    border: `1px solid ${t.accentSoftBorder}`,
+                    color: t.accentText,
+                    fontSize: 9,
+                    fontWeight: 700,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    lineHeight: 1,
+                  }}>
+                    {count}
                   </span>
-                  <span style={{ fontSize: 9, color: t.textMuted, paddingLeft: 2, lineHeight: 1.2 }}>
-                    {covers} {covers === 1 ? 'guest' : 'guests'}
-                  </span>
+                ) : (
+                  <span style={{ width: 18 }} />
+                )}
+                <span style={{
+                  fontSize: 12,
+                  fontWeight: isToday ? 700 : inMonth ? 500 : 400,
+                  color: !inMonth ? t.textSubtle : isToday ? t.accent : t.text,
+                }}>
+                  {date.getDate()}
+                </span>
+              </div>
+
+              {/* Guest count */}
+              {covers > 0 && (
+                <span style={{ fontSize: 9, color: t.textMuted, padding: '2px 8px 0', letterSpacing: '0.01em' }}>
+                  {covers} {covers === 1 ? 'guest' : 'guests'}
+                </span>
+              )}
+
+              <div style={{ flex: 1 }} />
+
+              {/* Heat bar — proportional to busiest day this month */}
+              {count > 0 && (
+                <div style={{ height: 3, margin: '0 6px 5px', borderRadius: 2, background: t.bgSurfaceMuted, overflow: 'hidden' }}>
+                  <div style={{
+                    height: '100%',
+                    width: `${Math.max(12, fillPct * 100)}%`,
+                    background: t.accent,
+                    borderRadius: 2,
+                  }} />
                 </div>
               )}
             </button>
@@ -240,6 +267,7 @@ function DayPanel({
   onDelete,
   onEdit,
   onAddForDay,
+  onGuestClick,
 }: {
   day: Date
   reservations: Reservation[]
@@ -249,6 +277,7 @@ function DayPanel({
   onDelete: (id: string) => void
   onEdit: (r: Reservation) => void
   onAddForDay: () => void
+  onGuestClick?: (customerId: string, guestName: string) => void
 }) {
   const reduceMotion = useReducedMotion()
   return (
@@ -361,6 +390,7 @@ function DayPanel({
                 onCancel={onCancel}
                 onDelete={onDelete}
                 onEdit={onEdit}
+                onGuestClick={onGuestClick}
               />
             ))}
           </div>
@@ -381,6 +411,7 @@ function ReservationListView({
   onDelete,
   onEdit,
   isMobile,
+  onGuestClick,
 }: {
   reservations: Reservation[]
   filter: ListFilter
@@ -391,6 +422,7 @@ function ReservationListView({
   onDelete: (id: string) => void
   onEdit: (r: Reservation) => void
   isMobile: boolean
+  onGuestClick?: (customerId: string, guestName: string) => void
 }) {
   const FILTERS: { key: ListFilter; label: string }[] = [
     { key: 'today', label: 'Today' },
@@ -405,34 +437,40 @@ function ReservationListView({
       {/* Filter tabs */}
       <div
         style={{
-          padding: '14px 18px 0',
-          display: 'flex',
-          gap: 4,
+          padding: '12px 16px',
           borderBottom: `1px solid ${t.border}`,
-          paddingBottom: 0,
         }}
       >
-        {FILTERS.map(({ key, label }) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => onFilterChange(key)}
-            style={{
-              padding: '9px 16px',
-              borderRadius: '8px 8px 0 0',
-              border: 'none',
-              background: filter === key ? t.accentSoftBg : 'transparent',
-              color: filter === key ? t.accent : t.textMuted,
-              fontSize: 12,
-              fontWeight: 600,
-              cursor: 'pointer',
-              borderBottom: filter === key ? `2px solid ${t.accent}` : '2px solid transparent',
-              marginBottom: -1,
-            }}
-          >
-            {label}
-          </button>
-        ))}
+        <div style={{
+          display: 'inline-flex',
+          padding: 3,
+          borderRadius: 9,
+          background: t.bgSurfaceMuted,
+          border: `1px solid ${t.borderSoft}`,
+          gap: 2,
+        }}>
+          {FILTERS.map(({ key, label }) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => onFilterChange(key)}
+              style={{
+                padding: '6px 16px',
+                borderRadius: 7,
+                border: 'none',
+                background: filter === key ? t.bgSurface : 'transparent',
+                color: filter === key ? t.text : t.textMuted,
+                fontSize: 12,
+                fontWeight: filter === key ? 600 : 500,
+                cursor: 'pointer',
+                boxShadow: filter === key ? t.shadowSm : 'none',
+                transition: 'background 0.12s, color 0.12s, box-shadow 0.12s',
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {isMobile ? (
@@ -464,6 +502,7 @@ function ReservationListView({
                 onCancel={onCancel}
                 onDelete={onDelete}
                 onEdit={onEdit}
+                onGuestClick={onGuestClick}
               />
             ))
           )}
@@ -807,7 +846,7 @@ function ReservationModal({
         scheduled_at: wallClock,
         status: 'confirmed',
       })
-      .select('id, service_name, scheduled_at, status, customer_id')
+      .select('id, service_name, scheduled_at, status, customer_id, notes')
       .single()
 
     setSaving(false)
@@ -1352,6 +1391,162 @@ function ReservationModal({
   )
 }
 
+// ─── Guest Profile Drawer ─────────────────────────────────────────────────────
+
+type GuestProfile = {
+  id: string
+  name: string
+  email: string | null
+  phone: string | null
+  tags: string[] | null
+  total_bookings: number | null
+  last_visit: string | null
+}
+
+function nameHue(name: string): number {
+  let h = 0
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360
+  return h
+}
+
+function GuestProfileDrawer({
+  customerId,
+  guestName,
+  onClose,
+}: {
+  customerId: string
+  guestName: string
+  onClose: () => void
+}) {
+  const [profile, setProfile] = useState<GuestProfile | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    void (async () => {
+      setLoading(true)
+      const { data } = await supabase
+        .from('customers')
+        .select('id, name, email, phone, tags, total_bookings, last_visit')
+        .eq('id', customerId)
+        .maybeSingle()
+      setProfile(data as GuestProfile | null)
+      setLoading(false)
+    })()
+  }, [customerId])
+
+  const hue = nameHue(guestName)
+  const initials = guestName.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase()
+
+  const TAG_COLORS: Record<string, { bg: string; color: string }> = {
+    VIP:      { bg: 'rgba(250,204,21,0.12)',  color: '#fbbf24' },
+    Regular:  { bg: 'rgba(56,189,248,0.12)',  color: '#38bdf8' },
+    New:      { bg: 'rgba(74,222,128,0.12)',  color: '#4ade80' },
+    'At Risk':{ bg: 'rgba(248,113,113,0.12)', color: '#f87171' },
+  }
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div
+        style={{ position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(2px)' }}
+        onClick={onClose}
+      />
+      {/* Drawer */}
+      <motion.div
+        initial={{ x: '100%' }}
+        animate={{ x: 0 }}
+        exit={{ x: '100%' }}
+        transition={{ type: 'spring', stiffness: 340, damping: 32 }}
+        style={{
+          position: 'fixed', top: 0, right: 0, bottom: 0, zIndex: 301,
+          width: 340,
+          background: 'var(--t-glass-bg)',
+          backdropFilter: 'blur(28px)',
+          WebkitBackdropFilter: 'blur(28px)',
+          borderLeft: `1px solid ${t.border}`,
+          boxShadow: '-20px 0 60px rgba(0,0,0,0.5)',
+          display: 'flex', flexDirection: 'column',
+          overflowY: 'auto',
+        }}
+      >
+        {/* Header */}
+        <div style={{ padding: '20px 20px 16px', borderBottom: `1px solid ${t.borderSoft}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: t.textMuted, letterSpacing: '0.1em', textTransform: 'uppercase' }}>Guest Profile</span>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${t.border}`, background: 'transparent', color: t.textMuted, cursor: 'pointer', display: 'grid', placeItems: 'center', fontSize: 16 }}
+          >
+            ×
+          </button>
+        </div>
+
+        {loading ? (
+          <div style={{ flex: 1, display: 'grid', placeItems: 'center', color: t.textMuted, fontSize: 13 }}>
+            Loading…
+          </div>
+        ) : (
+          <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 20 }}>
+            {/* Avatar + name */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+              <div style={{
+                width: 56, height: 56, borderRadius: '50%', flexShrink: 0,
+                background: `linear-gradient(135deg, hsl(${hue} 60% 65%), hsl(${(hue + 35) % 360} 50% 42%))`,
+                display: 'grid', placeItems: 'center',
+                fontSize: 18, fontWeight: 700, color: '#fff',
+                boxShadow: `0 0 0 3px rgba(${hue},${hue},255,0.15)`,
+              }}>
+                {initials}
+              </div>
+              <div>
+                <div style={{ fontSize: 17, fontWeight: 700, color: t.text }}>{profile?.name ?? guestName}</div>
+                {profile?.tags && profile.tags.length > 0 && (
+                  <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+                    {profile.tags.map((tag) => {
+                      const tc = TAG_COLORS[tag] ?? { bg: t.bgSurfaceMuted, color: t.textMuted }
+                      return (
+                        <span key={tag} style={{ padding: '2px 8px', borderRadius: 999, fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', background: tc.bg, color: tc.color }}>
+                          {tag}
+                        </span>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Contact */}
+            <div style={{ background: t.bgSurfaceMuted, borderRadius: 12, border: `1px solid ${t.borderSoft}`, overflow: 'hidden' }}>
+              {[
+                { label: 'Phone', value: profile?.phone || '—' },
+                { label: 'Email', value: profile?.email || '—' },
+              ].map(({ label, value }, i, arr) => (
+                <div key={label} style={{ padding: '12px 16px', borderBottom: i < arr.length - 1 ? `1px solid ${t.borderSoft}` : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                  <span style={{ fontSize: 12, color: t.textMuted, fontWeight: 500, flexShrink: 0 }}>{label}</span>
+                  <span style={{ fontSize: 13, color: t.text, fontWeight: 600, textAlign: 'right', wordBreak: 'break-all' }}>{value}</span>
+                </div>
+              ))}
+            </div>
+
+            {/* Stats */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              {[
+                { label: 'Total visits', value: String(profile?.total_bookings ?? 0) },
+                { label: 'Last visit', value: profile?.last_visit ? new Date(profile.last_visit).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—' },
+              ].map(({ label, value }) => (
+                <div key={label} style={{ background: t.bgSurfaceMuted, borderRadius: 10, border: `1px solid ${t.borderSoft}`, padding: '12px 14px' }}>
+                  <div style={{ fontSize: 11, color: t.textMuted, marginBottom: 4 }}>{label}</div>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: t.text }}>{value}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </motion.div>
+    </>
+  )
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 export default function BookingsPage() {
   const [view, setView] = useState<'calendar' | 'list'>('calendar')
@@ -1364,6 +1559,7 @@ export default function BookingsPage() {
   const [showAddModal, setShowAddModal] = useState(false)
   const [editReservation, setEditReservation] = useState<Reservation | null>(null)
   const [prefilledDate, setPrefilledDate] = useState<string | undefined>(undefined)
+  const [guestDrawer, setGuestDrawer] = useState<{ customerId: string; guestName: string } | null>(null)
   const reduceMotion = useReducedMotion()
 
   const now = new Date()
@@ -1425,7 +1621,7 @@ export default function BookingsPage() {
 
       const { data: rows, error } = await supabase
         .from('appointments')
-        .select('id, service_name, scheduled_at, status, customer_id')
+        .select('id, service_name, scheduled_at, status, customer_id, notes')
         .eq('business_id', business.id)
         .gte('scheduled_at', startStr)
         .lt('scheduled_at', endStr)
@@ -1554,6 +1750,7 @@ export default function BookingsPage() {
   const showModal = showAddModal || editReservation !== null
 
   return (
+    <>
     <DashboardOceanNav activeNav="Bookings">
       {({ isMobile, openNav }) => (
         <main style={{ display: 'grid', gap: 20, paddingBottom: 48 }}>
@@ -1794,36 +1991,62 @@ export default function BookingsPage() {
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={oceanTransition(reduceMotion, { delay: 0.05, duration: 0.22 })}
-            style={{
-              display: 'grid',
-              gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, minmax(0, 1fr))',
-              gap: 14,
-            }}
           >
-            {[
-              { label: 'Guests Today', value: loading ? '—' : String(stats.todayCovers) },
-              { label: 'This Week', value: loading ? '—' : String(stats.weekCount) },
-              { label: 'Pending', value: loading ? '—' : String(stats.pending) },
-            ].map(({ label, value }) => (
-              <div key={label} style={{ ...glass, padding: 16 }}>
-                <div
-                  style={{
-                    color: t.textMuted,
-                    fontSize: 11,
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.16em',
-                    fontWeight: 600,
-                  }}
-                >
-                  {label}
-                </div>
-                <div
-                  style={{ marginTop: 10, color: t.text, fontSize: 28, fontWeight: 700 }}
-                >
-                  {value}
+            <div style={{ ...glass, display: 'flex', flexDirection: isMobile ? 'column' : 'row' }}>
+              {/* Guests today — primary metric, larger number */}
+              <div style={{
+                flex: isMobile ? undefined : '1.3',
+                padding: isMobile ? '16px 20px' : '18px 26px',
+                borderBottom: isMobile ? `1px solid ${t.borderSoft}` : 'none',
+                borderRight: !isMobile ? `1px solid ${t.borderSoft}` : 'none',
+                display: 'flex', flexDirection: 'column', gap: 2,
+              }}>
+                <span style={{ fontSize: 10, color: t.textMuted, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+                  Guests today
+                </span>
+                <span style={{ fontSize: 34, fontWeight: 700, color: t.text, lineHeight: 1, letterSpacing: '-0.02em', marginTop: 4 }}>
+                  {loading ? '—' : String(stats.todayCovers)}
+                </span>
+              </div>
+
+              {/* This week */}
+              <div style={{
+                flex: '1',
+                padding: isMobile ? '16px 20px' : '18px 24px',
+                borderBottom: isMobile ? `1px solid ${t.borderSoft}` : 'none',
+                borderRight: !isMobile ? `1px solid ${t.borderSoft}` : 'none',
+                display: 'flex', flexDirection: 'column', gap: 2,
+              }}>
+                <span style={{ fontSize: 10, color: t.textMuted, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+                  This week
+                </span>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 4 }}>
+                  <span style={{ fontSize: 26, fontWeight: 700, color: t.text, lineHeight: 1, letterSpacing: '-0.02em' }}>
+                    {loading ? '—' : String(stats.weekCount)}
+                  </span>
+                  <span style={{ fontSize: 11, color: t.textMuted, fontWeight: 500 }}>reservations</span>
                 </div>
               </div>
-            ))}
+
+              {/* Pending confirmation */}
+              <div style={{
+                flex: '1',
+                padding: isMobile ? '16px 20px' : '18px 24px',
+                display: 'flex', flexDirection: 'column', gap: 2,
+              }}>
+                <span style={{ fontSize: 10, color: t.textMuted, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+                  Awaiting confirmation
+                </span>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 4 }}>
+                  <span style={{ fontSize: 26, fontWeight: 700, color: !loading && stats.pending > 0 ? t.warning : t.text, lineHeight: 1, letterSpacing: '-0.02em' }}>
+                    {loading ? '—' : String(stats.pending)}
+                  </span>
+                  {!loading && stats.pending > 0 && (
+                    <span style={{ fontSize: 11, color: t.warning, fontWeight: 500 }}>need review</span>
+                  )}
+                </div>
+              </div>
+            </div>
           </motion.div>
 
           {/* ── MAIN VIEW ── */}
@@ -1878,6 +2101,7 @@ export default function BookingsPage() {
                           onCancel={(id) => void updateStatus(id, 'cancelled')}
                           onDelete={(id) => void deleteReservation(id)}
                           onEdit={(r) => setEditReservation(r)}
+                          onGuestClick={(cid, name) => setGuestDrawer({ customerId: cid, guestName: name })}
                           onAddForDay={() => {
                             const d = selectedDay
                             const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -1903,6 +2127,7 @@ export default function BookingsPage() {
                         onCancel={(id) => void updateStatus(id, 'cancelled')}
                         onDelete={(id) => void deleteReservation(id)}
                         onEdit={(r) => setEditReservation(r)}
+                        onGuestClick={(cid, name) => setGuestDrawer({ customerId: cid, guestName: name })}
                         onAddForDay={() => {
                           const d = selectedDay
                           const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -1931,6 +2156,7 @@ export default function BookingsPage() {
                   onCancel={(id) => void updateStatus(id, 'cancelled')}
                   onDelete={(id) => void deleteReservation(id)}
                   onEdit={(r) => setEditReservation(r)}
+                  onGuestClick={(cid, name) => setGuestDrawer({ customerId: cid, guestName: name })}
                   isMobile={isMobile}
                 />
               </motion.div>
@@ -1977,6 +2203,20 @@ export default function BookingsPage() {
           </AnimatePresence>
         </main>
       )}
+
     </DashboardOceanNav>
+
+      {/* ── Guest Profile Drawer ── */}
+      <AnimatePresence>
+        {guestDrawer && (
+          <GuestProfileDrawer
+            key={guestDrawer.customerId}
+            customerId={guestDrawer.customerId}
+            guestName={guestDrawer.guestName}
+            onClose={() => setGuestDrawer(null)}
+          />
+        )}
+      </AnimatePresence>
+    </>
   )
 }
