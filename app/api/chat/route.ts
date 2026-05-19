@@ -188,10 +188,11 @@ function extractEmail(text: string): string | null {
 }
 
 function normalizePhone(raw: string): string {
-  const digits = raw.replace(/\D/g, '')
-  if (digits.length === 10) return `+1${digits}`
-  if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`
-  return `+${digits}`
+  const trimmed = raw.trim()
+  const hasPlus = trimmed.startsWith('+')
+  const digits = trimmed.replace(/\D/g, '')
+  if (!hasPlus && digits.length === 10) return `+1${digits}` // bare 10-digit → North America
+  return `+${digits}` // already had +, or 11+ digits without + → just prepend +
 }
 
 function normalizeName(raw: string): string {
@@ -414,9 +415,10 @@ async function syncGuestInfo(params: {
 
   const rawName = extractGuestNameFromConversation(allMessages, assistantText)
   const allUserText = getUserMessagesCombined(allMessages)
+  const rawPhone = extractPhone(allUserText)
   const { name, phone, email } = normalizeGuestContact({
     name: rawName,
-    phone: extractPhone(allUserText),
+    phone: rawPhone,
     email: extractEmail(allUserText),
   })
 
@@ -462,7 +464,10 @@ async function syncGuestInfo(params: {
   if (name && (!existing?.name || placeholderName.test(existing.name.trim()))) {
     customerUpdate.name = name
   }
-  if (phone && !existing?.phone?.trim()) customerUpdate.phone = phone
+  if (phone && !existing?.phone?.trim()) {
+    customerUpdate.phone = phone
+    if (rawPhone) customerUpdate.phone_raw = rawPhone.trim()
+  }
   if (email && !existing?.email?.trim()) customerUpdate.email = email
 
   if (Object.keys(customerUpdate).length > 0) {

@@ -73,6 +73,7 @@ export type Database = {
           email: string | null
           phone: string | null
           tags: Json | null
+          phone_raw: string | null
           preferred_staff: string | null
           total_bookings: number | null
           total_spent: number | null
@@ -87,6 +88,7 @@ export type Database = {
           name?: string
           email?: string | null
           phone?: string | null
+          phone_raw?: string | null
           tags?: Json | null
           preferred_staff?: string | null
           total_bookings?: number | null
