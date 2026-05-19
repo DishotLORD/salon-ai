@@ -97,12 +97,14 @@ function MonthCalendar({
   selectedDay,
   onSelectDay,
   today,
+  bare,
 }: {
   displayMonth: Date
   reservations: Reservation[]
   selectedDay: Date | null
   onSelectDay: (d: Date) => void
   today: Date
+  bare?: boolean
 }) {
   const year = displayMonth.getFullYear()
   const month = displayMonth.getMonth()
@@ -135,7 +137,7 @@ function MonthCalendar({
   const DOW = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
   return (
-    <div style={{ ...glass, overflow: 'hidden' }}>
+    <div style={bare ? { overflow: 'hidden' } : { ...glass, overflow: 'hidden' }}>
       {/* DOW headers */}
       <div
         style={{
@@ -178,7 +180,7 @@ function MonthCalendar({
               type="button"
               onClick={() => onSelectDay(date)}
               style={{
-                minHeight: 76,
+                minHeight: 52,
                 padding: 0,
                 background: isSelected ? t.accentSoftBg : t.bgSurface,
                 border: 'none',
@@ -403,8 +405,6 @@ function DayPanel({
 // ─── List View ────────────────────────────────────────────────────────────────
 function ReservationListView({
   reservations,
-  filter,
-  onFilterChange,
   loading,
   onConfirm,
   onCancel,
@@ -414,8 +414,6 @@ function ReservationListView({
   onGuestClick,
 }: {
   reservations: Reservation[]
-  filter: ListFilter
-  onFilterChange: (f: ListFilter) => void
   loading: boolean
   onConfirm: (id: string) => void
   onCancel: (id: string) => void
@@ -424,56 +422,9 @@ function ReservationListView({
   isMobile: boolean
   onGuestClick?: (customerId: string, guestName: string) => void
 }) {
-  const FILTERS: { key: ListFilter; label: string }[] = [
-    { key: 'today', label: 'Today' },
-    { key: 'week', label: 'This Week' },
-    { key: 'all', label: 'All' },
-  ]
+  const emptyMsg = 'No reservations for this period'
 
-  const emptyMsg = 'No reservations — open availability'
-
-  return (
-    <div style={{ ...glass, overflow: 'hidden' }}>
-      {/* Filter tabs */}
-      <div
-        style={{
-          padding: '12px 16px',
-          borderBottom: `1px solid ${t.border}`,
-        }}
-      >
-        <div style={{
-          display: 'inline-flex',
-          padding: 3,
-          borderRadius: 9,
-          background: t.bgSurfaceMuted,
-          border: `1px solid ${t.borderSoft}`,
-          gap: 2,
-        }}>
-          {FILTERS.map(({ key, label }) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => onFilterChange(key)}
-              style={{
-                padding: '6px 16px',
-                borderRadius: 7,
-                border: 'none',
-                background: filter === key ? t.bgSurface : 'transparent',
-                color: filter === key ? t.text : t.textMuted,
-                fontSize: 12,
-                fontWeight: filter === key ? 600 : 500,
-                cursor: 'pointer',
-                boxShadow: filter === key ? t.shadowSm : 'none',
-                transition: 'background 0.12s, color 0.12s, box-shadow 0.12s',
-              }}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {isMobile ? (
+  return isMobile ? (
         /* ── Mobile card list ── */
         <div style={{ padding: 12, display: 'grid', gap: 10 }}>
           {loading ? (
@@ -716,9 +667,7 @@ function ReservationListView({
             </tbody>
           </table>
         </div>
-      )}
-    </div>
-  )
+      )
 }
 
 // ─── Reservation Modal (Add + Edit) ───────────────────────────────────────────
@@ -1549,10 +1498,9 @@ function GuestProfileDrawer({
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 export default function BookingsPage() {
-  const [view, setView] = useState<'calendar' | 'list'>('calendar')
   const [monthOffset, setMonthOffset] = useState(0)
   const [selectedDay, setSelectedDay] = useState<Date | null>(null)
-  const [listFilter, setListFilter] = useState<ListFilter>('today')
+  const [rightTab, setRightTab] = useState<'day' | 'week' | 'all'>('day')
   const [reservations, setReservations] = useState<Reservation[]>([])
   const [loading, setLoading] = useState(true)
   const [businessId, setBusinessId] = useState<string | null>(null)
@@ -1566,6 +1514,7 @@ export default function BookingsPage() {
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   const displayMonth = new Date(today.getFullYear(), today.getMonth() + monthOffset, 1)
   const monthLabel = displayMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
+  const effectiveDay = selectedDay ?? today
 
   // ─── Load data ─────────────────────────────────────────────────────────────
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -1727,484 +1676,335 @@ export default function BookingsPage() {
     return { todayCovers, weekCount, pending }
   }, [reservations]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ─── Filtered list ─────────────────────────────────────────────────────────
-  const listReservations = useMemo(() => {
-    if (listFilter === 'today') return reservations.filter((r) => isSameDay(r.scheduledAt, today))
-    if (listFilter === 'week') {
+  // ─── Right panel reservations ───────────────────────────────────────────────
+  const rightReservations = useMemo(() => {
+    if (rightTab === 'day') return reservations.filter((r) => isSameDay(r.scheduledAt, effectiveDay))
+    if (rightTab === 'week') {
       const ws = startOfWeekMon(today)
       const we = new Date(ws)
       we.setDate(we.getDate() + 7)
       return reservations.filter((r) => r.scheduledAt >= ws && r.scheduledAt < we)
     }
     return reservations
-  }, [reservations, listFilter]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const selectedDayReservations = useMemo(
-    () =>
-      selectedDay
-        ? reservations.filter((r) => isSameDay(r.scheduledAt, selectedDay))
-        : [],
-    [reservations, selectedDay],
-  )
+  }, [reservations, rightTab, effectiveDay]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const showModal = showAddModal || editReservation !== null
 
+  function handleDaySelect(d: Date) {
+    setSelectedDay((prev) => (prev && isSameDay(prev, d) ? null : d))
+    setRightTab('day')
+  }
+
+  function handleAddForDay() {
+    const d = effectiveDay
+    const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    setPrefilledDate(iso)
+    setShowAddModal(true)
+  }
+
+  const RIGHT_TABS = [
+    { key: 'day' as const, label: effectiveDay.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) },
+    { key: 'week' as const, label: 'This week' },
+    { key: 'all' as const, label: 'All' },
+  ]
+
+  const segTab = (active: boolean) => ({
+    padding: '6px 12px', borderRadius: 7, border: 'none',
+    background: active ? t.bgSurface : 'transparent',
+    color: active ? t.text : t.textMuted,
+    fontSize: 12, fontWeight: active ? 600 : 500,
+    cursor: 'pointer',
+    boxShadow: active ? t.shadowSm : 'none',
+    transition: 'all 0.15s',
+    whiteSpace: 'nowrap' as const,
+  })
+
+  const navPill = {
+    width: 28, height: 28, borderRadius: 7,
+    border: `1px solid ${t.borderSoft}`,
+    background: t.bgSurface,
+    color: t.text, fontSize: 14, cursor: 'pointer',
+    display: 'grid', placeItems: 'center',
+  }
+
+  const statRows = [
+    { label: 'Guests today', value: loading ? '—' : String(stats.todayCovers), hi: false },
+    { label: 'This week', value: loading ? '—' : String(stats.weekCount), hi: false },
+    { label: 'Awaiting', value: loading ? '—' : String(stats.pending), hi: !loading && stats.pending > 0 },
+  ]
+
   return (
     <>
-    <DashboardOceanNav activeNav="Bookings">
-      {({ isMobile, openNav }) => (
-        <main style={{ display: 'grid', gap: 20, paddingBottom: 48 }}>
-          {/* Mobile hamburger */}
-          {isMobile ? (
-            <motion.button
-              type="button"
-              onClick={openNav}
-              whileTap={reduceMotion ? undefined : { scale: 0.98 }}
-              style={{
-                width: 44,
-                height: 44,
-                borderRadius: 12,
-                border: `1px solid ${t.border}`,
-                background: t.bgSurface,
-                color: t.text,
-                fontSize: 22,
-                cursor: 'pointer',
-                boxShadow: t.shadowSm,
-              }}
-            >
-              ☰
-            </motion.button>
-          ) : null}
+      <DashboardOceanNav activeNav="Bookings">
+        {({ isMobile, openNav }) => (
+          <main style={{ paddingBottom: 48 }}>
 
-          {/* ── HEADER ── */}
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={oceanTransition(reduceMotion, { duration: 0.22 })}
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: isMobile ? 'flex-start' : 'center',
-              flexDirection: isMobile ? 'column' : 'row',
-              gap: 16,
-              flexWrap: 'wrap',
-            }}
-          >
-            <div>
-              <h1
-                style={{
-                  margin: 0,
-                  color: t.text,
-                  fontSize: 30,
-                  fontWeight: 700,
-                  fontFamily: 'var(--font-playfair)',
-                  letterSpacing: '-0.03em',
-                }}
-              >
-                Reservations
-              </h1>
-              <p style={{ margin: '6px 0 0', color: t.textMuted, fontSize: 13 }}>
-                Manage your restaurant reservations
-              </p>
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              {/* Today button — jumps back to current month */}
-              <button
-                type="button"
-                onClick={() => setMonthOffset(0)}
-                style={{
-                  padding: '0 14px',
-                  height: 34,
-                  borderRadius: 8,
-                  border: `1px solid ${monthOffset === 0 ? t.accent : t.border}`,
-                  background: monthOffset === 0 ? t.accentSoftBg : t.bgSurface,
-                  color: monthOffset === 0 ? t.accent : t.text,
-                  fontSize: 12,
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  letterSpacing: '0.04em',
-                }}
-              >
-                Today
-              </button>
-
-              {/* Month navigation — ← Month Year → */}
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 2,
-                  padding: 4,
-                  borderRadius: 8,
-                  border: `1px solid ${t.border}`,
-                  background: t.bgSurface,
-                }}
-              >
-                <button
-                  type="button"
-                  onClick={() => setMonthOffset((o) => o - 1)}
-                  title="Previous month"
-                  style={{
-                    width: 32,
-                    height: 32,
-                    borderRadius: 6,
-                    border: 'none',
-                    background: 'transparent',
-                    color: t.text,
-                    fontSize: 16,
-                    cursor: 'pointer',
-                  }}
-                >
-                  ←
-                </button>
-                <span
-                  style={{
-                    padding: '0 10px',
-                    fontSize: 12,
-                    fontWeight: 600,
-                    color: t.text,
-                    whiteSpace: 'nowrap',
-                    minWidth: 110,
-                    textAlign: 'center',
-                    letterSpacing: '0.02em',
-                  }}
-                >
-                  {monthLabel}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setMonthOffset((o) => o + 1)}
-                  title="Next month"
-                  style={{
-                    width: 32,
-                    height: 32,
-                    borderRadius: 6,
-                    border: 'none',
-                    background: 'transparent',
-                    color: t.text,
-                    fontSize: 16,
-                    cursor: 'pointer',
-                  }}
-                >
-                  →
-                </button>
-              </div>
-
-              {/* Calendar | List toggle */}
-              <div
-                style={{
-                  display: 'flex',
-                  padding: 3,
-                  borderRadius: 8,
-                  border: `1px solid ${t.border}`,
-                  background: t.bgSurface,
-                }}
-              >
-                {(['calendar', 'list'] as const).map((v) => (
-                  <button
-                    key={v}
-                    type="button"
-                    onClick={() => setView(v)}
-                    style={{
-                      padding: '6px 14px',
-                      borderRadius: 6,
-                      border: 'none',
-                      background: view === v ? t.accentSoftBg : 'transparent',
-                      color: view === v ? t.accent : t.textMuted,
-                      fontSize: 12,
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      transition: 'background 0.15s, color 0.15s',
-                    }}
-                  >
-                    {v === 'calendar' ? 'Calendar' : 'List'}
-                  </button>
-                ))}
-              </div>
-
-              {/* Add Reservation */}
+            {/* Mobile hamburger */}
+            {isMobile && (
               <motion.button
                 type="button"
-                whileHover={reduceMotion ? undefined : { y: -1 }}
+                onClick={openNav}
                 whileTap={reduceMotion ? undefined : { scale: 0.98 }}
-                onClick={() => setShowAddModal(true)}
-                style={{
-                  border: 'none',
-                  borderRadius: 8,
-                  padding: '9px 18px',
-                  background: t.accent,
-                  color: '#ffffff',
-                  fontSize: 13,
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  whiteSpace: 'nowrap',
-                }}
+                style={{ marginBottom: 16, width: 44, height: 44, borderRadius: 12, border: `1px solid ${t.border}`, background: t.bgSurface, color: t.text, fontSize: 22, cursor: 'pointer', boxShadow: t.shadowSm }}
               >
-                New booking
+                ☰
               </motion.button>
-            </div>
-          </motion.div>
+            )}
 
-          {/* ── ERRORS ── */}
-          {loadError || updateError ? (
+            {/* ── HEADER ── */}
             <motion.div
-              role="alert"
-              initial={{ opacity: 0, y: -4 }}
+              initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              style={{
-                borderRadius: 10,
-                border: `1px solid ${t.dangerBorder}`,
-                background: t.dangerBg,
-                color: t.danger,
-                padding: '12px 16px',
-                fontSize: 13,
-                display: 'flex',
-                gap: 12,
-                alignItems: 'center',
-                justifyContent: 'space-between',
-              }}
+              transition={oceanTransition(reduceMotion, { duration: 0.22 })}
+              style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}
             >
-              <span>{loadError ?? updateError}</span>
-              <button
-                type="button"
-                onClick={() => {
-                  setLoadError(null)
-                  setUpdateError(null)
-                }}
-                style={{
-                  border: 'none',
-                  background: 'transparent',
-                  color: t.danger,
-                  cursor: 'pointer',
-                  fontSize: 13,
-                  fontWeight: 700,
-                }}
-              >
-                Dismiss
-              </button>
+              <div>
+                <h1 style={{ margin: 0, color: t.text, fontSize: 30, fontWeight: 700, fontFamily: 'var(--font-playfair)', letterSpacing: '-0.03em' }}>
+                  Reservations
+                </h1>
+                <p style={{ margin: '4px 0 0', color: t.textMuted, fontSize: 13 }}>
+                  {monthLabel}
+                </p>
+              </div>
+              {isMobile && (
+                <motion.button
+                  type="button"
+                  whileHover={reduceMotion ? undefined : { y: -1 }}
+                  whileTap={reduceMotion ? undefined : { scale: 0.98 }}
+                  onClick={() => setShowAddModal(true)}
+                  style={{ border: 'none', borderRadius: 8, padding: '9px 16px', background: t.accent, color: '#ffffff', fontSize: 13, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                >
+                  + New
+                </motion.button>
+              )}
             </motion.div>
-          ) : null}
 
-          {/* ── STATS ── */}
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={oceanTransition(reduceMotion, { delay: 0.05, duration: 0.22 })}
-          >
-            <div style={{ ...glass, display: 'flex', flexDirection: isMobile ? 'column' : 'row' }}>
-              {/* Guests today — primary metric, larger number */}
-              <div style={{
-                flex: isMobile ? undefined : '1.3',
-                padding: isMobile ? '16px 20px' : '18px 26px',
-                borderBottom: isMobile ? `1px solid ${t.borderSoft}` : 'none',
-                borderRight: !isMobile ? `1px solid ${t.borderSoft}` : 'none',
-                display: 'flex', flexDirection: 'column', gap: 2,
-              }}>
-                <span style={{ fontSize: 10, color: t.textMuted, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
-                  Guests today
-                </span>
-                <span style={{ fontSize: 34, fontWeight: 700, color: t.text, lineHeight: 1, letterSpacing: '-0.02em', marginTop: 4 }}>
-                  {loading ? '—' : String(stats.todayCovers)}
-                </span>
-              </div>
-
-              {/* This week */}
-              <div style={{
-                flex: '1',
-                padding: isMobile ? '16px 20px' : '18px 24px',
-                borderBottom: isMobile ? `1px solid ${t.borderSoft}` : 'none',
-                borderRight: !isMobile ? `1px solid ${t.borderSoft}` : 'none',
-                display: 'flex', flexDirection: 'column', gap: 2,
-              }}>
-                <span style={{ fontSize: 10, color: t.textMuted, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
-                  This week
-                </span>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 4 }}>
-                  <span style={{ fontSize: 26, fontWeight: 700, color: t.text, lineHeight: 1, letterSpacing: '-0.02em' }}>
-                    {loading ? '—' : String(stats.weekCount)}
-                  </span>
-                  <span style={{ fontSize: 11, color: t.textMuted, fontWeight: 500 }}>reservations</span>
-                </div>
-              </div>
-
-              {/* Pending confirmation */}
-              <div style={{
-                flex: '1',
-                padding: isMobile ? '16px 20px' : '18px 24px',
-                display: 'flex', flexDirection: 'column', gap: 2,
-              }}>
-                <span style={{ fontSize: 10, color: t.textMuted, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
-                  Awaiting confirmation
-                </span>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 4 }}>
-                  <span style={{ fontSize: 26, fontWeight: 700, color: !loading && stats.pending > 0 ? t.warning : t.text, lineHeight: 1, letterSpacing: '-0.02em' }}>
-                    {loading ? '—' : String(stats.pending)}
-                  </span>
-                  {!loading && stats.pending > 0 && (
-                    <span style={{ fontSize: 11, color: t.warning, fontWeight: 500 }}>need review</span>
-                  )}
-                </div>
-              </div>
-            </div>
-          </motion.div>
-
-          {/* ── MAIN VIEW ── */}
-          <AnimatePresence mode="wait">
-            {view === 'calendar' ? (
+            {/* ── ERRORS ── */}
+            {(loadError || updateError) && (
               <motion.div
-                key="calendar"
-                initial={{ opacity: 0, y: 8 }}
+                role="alert"
+                initial={{ opacity: 0, y: -4 }}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-                transition={oceanTransition(reduceMotion, { duration: 0.18 })}
-                style={{
-                  display: 'flex',
-                  flexDirection: isMobile ? 'column' : 'row',
-                  gap: selectedDay && !isMobile ? 16 : 0,
-                  alignItems: 'start',
-                }}
+                style={{ borderRadius: 10, border: `1px solid ${t.dangerBorder}`, background: t.dangerBg, color: t.danger, padding: '12px 16px', fontSize: 13, display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}
               >
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <MonthCalendar
-                    displayMonth={displayMonth}
-                    reservations={reservations}
-                    selectedDay={selectedDay}
-                    onSelectDay={(d) =>
-                      setSelectedDay((prev) =>
-                        prev && isSameDay(prev, d) ? null : d,
-                      )
-                    }
-                    today={today}
-                  />
-                </div>
-
-                {/* Desktop: panel slot always in flex flow, width animates 0→340 */}
-                {!isMobile && (
-                  <motion.div
-                    animate={{ width: selectedDay ? 340 : 0 }}
-                    transition={
-                      reduceMotion
-                        ? { duration: 0 }
-                        : { duration: 0.22, ease: [0.25, 0.1, 0.25, 1] }
-                    }
-                    style={{ overflow: 'hidden', flexShrink: 0 }}
-                  >
-                    <div style={{ width: 340 }}>
-                      {selectedDay && (
-                        <DayPanel
-                          key={selectedDay.toISOString()}
-                          day={selectedDay}
-                          reservations={selectedDayReservations}
-                          onClose={() => setSelectedDay(null)}
-                          onConfirm={(id) => void updateStatus(id, 'confirmed')}
-                          onCancel={(id) => void updateStatus(id, 'cancelled')}
-                          onDelete={(id) => void deleteReservation(id)}
-                          onEdit={(r) => setEditReservation(r)}
-                          onGuestClick={(cid, name) => setGuestDrawer({ customerId: cid, guestName: name })}
-                          onAddForDay={() => {
-                            const d = selectedDay
-                            const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-                            setPrefilledDate(iso)
-                            setShowAddModal(true)
-                          }}
-                        />
-                      )}
-                    </div>
-                  </motion.div>
-                )}
-
-                {/* Mobile: panel appears below calendar */}
-                {isMobile && (
-                  <AnimatePresence>
-                    {selectedDay && (
-                      <DayPanel
-                        key={selectedDay.toISOString()}
-                        day={selectedDay}
-                        reservations={selectedDayReservations}
-                        onClose={() => setSelectedDay(null)}
-                        onConfirm={(id) => void updateStatus(id, 'confirmed')}
-                        onCancel={(id) => void updateStatus(id, 'cancelled')}
-                        onDelete={(id) => void deleteReservation(id)}
-                        onEdit={(r) => setEditReservation(r)}
-                        onGuestClick={(cid, name) => setGuestDrawer({ customerId: cid, guestName: name })}
-                        onAddForDay={() => {
-                          const d = selectedDay
-                          const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-                          setPrefilledDate(iso)
-                          setShowAddModal(true)
-                        }}
-                      />
-                    )}
-                  </AnimatePresence>
-                )}
+                <span>{loadError ?? updateError}</span>
+                <button type="button" onClick={() => { setLoadError(null); setUpdateError(null) }} style={{ border: 'none', background: 'transparent', color: t.danger, cursor: 'pointer', fontSize: 13, fontWeight: 700 }}>
+                  Dismiss
+                </button>
               </motion.div>
-            ) : (
-              <motion.div
-                key="list"
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-                transition={oceanTransition(reduceMotion, { duration: 0.18 })}
-              >
+            )}
+
+            {isMobile ? (
+              /* ── MOBILE ────────────────────────────────────────────────── */
+              <div style={{ display: 'grid', gap: 14 }}>
+                {/* Stats */}
+                <div style={{ ...glass, overflow: 'hidden' }}>
+                  {statRows.map(({ label, value, hi }, i, arr) => (
+                    <div key={label} style={{ padding: '14px 18px', borderBottom: i < arr.length - 1 ? `1px solid ${t.borderSoft}` : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: 12, color: t.textMuted, fontWeight: 500 }}>{label}</span>
+                      <span style={{ fontSize: 22, fontWeight: 700, color: hi ? t.warning : t.text, letterSpacing: '-0.02em' }}>{value}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Month nav */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 2px' }}>
+                  <button type="button" onClick={() => setMonthOffset((o) => o - 1)} style={{ ...navPill, width: 32, height: 32, fontSize: 16, borderRadius: 8 }}>←</button>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: t.text }}>{monthLabel}</span>
+                  <button type="button" onClick={() => setMonthOffset((o) => o + 1)} style={{ ...navPill, width: 32, height: 32, fontSize: 16, borderRadius: 8 }}>→</button>
+                </div>
+
+                {/* Calendar */}
+                <MonthCalendar
+                  displayMonth={displayMonth}
+                  reservations={reservations}
+                  selectedDay={selectedDay}
+                  onSelectDay={handleDaySelect}
+                  today={today}
+                />
+
+                {/* Tabs */}
+                <div style={{ display: 'flex', padding: 3, borderRadius: 9, background: t.bgSurfaceMuted, border: `1px solid ${t.borderSoft}`, gap: 2 }}>
+                  {RIGHT_TABS.map(({ key, label }) => (
+                    <button key={key} type="button" onClick={() => setRightTab(key)} style={segTab(rightTab === key)}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* List */}
                 <ReservationListView
-                  reservations={listReservations}
-                  filter={listFilter}
-                  onFilterChange={setListFilter}
+                  reservations={rightReservations}
                   loading={loading}
                   onConfirm={(id) => void updateStatus(id, 'confirmed')}
                   onCancel={(id) => void updateStatus(id, 'cancelled')}
                   onDelete={(id) => void deleteReservation(id)}
                   onEdit={(r) => setEditReservation(r)}
+                  isMobile={true}
                   onGuestClick={(cid, name) => setGuestDrawer({ customerId: cid, guestName: name })}
-                  isMobile={isMobile}
                 />
+              </div>
+            ) : (
+              /* ── DESKTOP ───────────────────────────────────────────────── */
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={oceanTransition(reduceMotion, { duration: 0.2 })}
+                style={{ display: 'grid', gridTemplateColumns: '292px 1fr', gap: 16, alignItems: 'start' }}
+              >
+                {/* LEFT SIDEBAR */}
+                <div style={{ display: 'grid', gap: 10 }}>
+
+                  {/* Stats list */}
+                  <div style={{ ...glass, overflow: 'hidden' }}>
+                    {statRows.map(({ label, value, hi }, i, arr) => (
+                      <div key={label} style={{ padding: '11px 14px', borderBottom: i < arr.length - 1 ? `1px solid ${t.borderSoft}` : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: 11, color: t.textMuted, fontWeight: 500 }}>{label}</span>
+                        <span style={{ fontSize: 18, fontWeight: 700, color: hi ? t.warning : t.text, fontFamily: 'var(--font-geist-mono)', letterSpacing: '-0.03em' }}>{value}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Month nav */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '2px 2px' }}>
+                    <button type="button" onClick={() => setMonthOffset((o) => o - 1)} style={navPill}>←</button>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: t.text, letterSpacing: '0.02em' }}>{monthLabel}</span>
+                    <button type="button" onClick={() => setMonthOffset((o) => o + 1)} style={navPill}>→</button>
+                  </div>
+
+                  {/* Calendar */}
+                  <div style={{ ...glass, overflow: 'hidden' }}>
+                    <MonthCalendar
+                      displayMonth={displayMonth}
+                      reservations={reservations}
+                      selectedDay={selectedDay}
+                      onSelectDay={handleDaySelect}
+                      today={today}
+                      bare
+                    />
+                  </div>
+
+                  {/* Today shortcut */}
+                  <button
+                    type="button"
+                    onClick={() => { setMonthOffset(0); setSelectedDay(today); setRightTab('day') }}
+                    style={{
+                      padding: '8px 0', borderRadius: 8, width: '100%',
+                      border: `1px solid ${monthOffset === 0 && selectedDay && isSameDay(selectedDay, today) ? t.accent : t.borderSoft}`,
+                      background: monthOffset === 0 && selectedDay && isSameDay(selectedDay, today) ? t.accentSoftBg : t.bgSurface,
+                      color: monthOffset === 0 && selectedDay && isSameDay(selectedDay, today) ? t.accent : t.textMuted,
+                      fontSize: 12, fontWeight: 600, cursor: 'pointer', letterSpacing: '0.04em',
+                    }}
+                  >
+                    Jump to today
+                  </button>
+                </div>
+
+                {/* RIGHT MAIN PANEL */}
+                <div style={{ ...glass, overflow: 'hidden' }}>
+                  {/* Panel header */}
+                  <div style={{ padding: '14px 20px', borderBottom: `1px solid ${t.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                    <div>
+                      <div style={{ fontSize: 15, fontWeight: 700, color: t.text }}>
+                        {rightTab === 'day'
+                          ? effectiveDay.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })
+                          : rightTab === 'week' ? 'This week' : 'All reservations'
+                        }
+                      </div>
+                      <div style={{ fontSize: 12, color: t.textMuted, marginTop: 2 }}>
+                        {loading ? '—' : `${rightReservations.length} reservation${rightReservations.length !== 1 ? 's' : ''}`}
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                      {/* Segment tabs */}
+                      <div style={{ display: 'inline-flex', padding: 3, borderRadius: 9, background: t.bgSurfaceMuted, border: `1px solid ${t.borderSoft}`, gap: 2 }}>
+                        {RIGHT_TABS.map(({ key, label }) => (
+                          <button key={key} type="button" onClick={() => setRightTab(key)} style={segTab(rightTab === key)}>
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Book for selected day */}
+                      {rightTab === 'day' && (
+                        <button
+                          type="button"
+                          onClick={handleAddForDay}
+                          style={{ padding: '7px 14px', borderRadius: 8, border: `1px solid ${t.borderSoft}`, background: t.bgSurface, color: t.text, fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                        >
+                          + Book
+                        </button>
+                      )}
+
+                      {/* New booking */}
+                      <motion.button
+                        type="button"
+                        whileHover={reduceMotion ? undefined : { y: -1 }}
+                        whileTap={reduceMotion ? undefined : { scale: 0.98 }}
+                        onClick={() => setShowAddModal(true)}
+                        style={{ border: 'none', borderRadius: 8, padding: '8px 16px', background: t.accent, color: '#ffffff', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                      >
+                        New booking
+                      </motion.button>
+                    </div>
+                  </div>
+
+                  <ReservationListView
+                    reservations={rightReservations}
+                    loading={loading}
+                    onConfirm={(id) => void updateStatus(id, 'confirmed')}
+                    onCancel={(id) => void updateStatus(id, 'cancelled')}
+                    onDelete={(id) => void deleteReservation(id)}
+                    onEdit={(r) => setEditReservation(r)}
+                    isMobile={false}
+                    onGuestClick={(cid, name) => setGuestDrawer({ customerId: cid, guestName: name })}
+                  />
+                </div>
               </motion.div>
             )}
-          </AnimatePresence>
 
-          {/* ── MODAL ── */}
-          <AnimatePresence>
-            {showModal && (
-              <ReservationModal
-                mode={editReservation ? 'edit' : 'add'}
-                editReservation={editReservation}
-                initialDate={editReservation ? undefined : prefilledDate}
-                onClose={() => {
-                  setShowAddModal(false)
-                  setEditReservation(null)
-                  setPrefilledDate(undefined)
-                }}
-                businessId={businessId}
-                onAdded={(newRes) => {
-                  if (
-                    newRes.scheduledAt.getFullYear() === displayMonth.getFullYear() &&
-                    newRes.scheduledAt.getMonth() === displayMonth.getMonth()
-                  ) {
+            {/* ── MODAL ── */}
+            <AnimatePresence>
+              {showModal && (
+                <ReservationModal
+                  mode={editReservation ? 'edit' : 'add'}
+                  editReservation={editReservation}
+                  initialDate={editReservation ? undefined : prefilledDate}
+                  onClose={() => {
+                    setShowAddModal(false)
+                    setEditReservation(null)
+                    setPrefilledDate(undefined)
+                  }}
+                  businessId={businessId}
+                  onAdded={(newRes) => {
+                    if (
+                      newRes.scheduledAt.getFullYear() === displayMonth.getFullYear() &&
+                      newRes.scheduledAt.getMonth() === displayMonth.getMonth()
+                    ) {
+                      setReservations((prev) =>
+                        [...prev, newRes].sort(
+                          (a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime(),
+                        ),
+                      )
+                    }
+                    setShowAddModal(false)
+                    setPrefilledDate(undefined)
+                  }}
+                  onUpdated={(updated) => {
                     setReservations((prev) =>
-                      [...prev, newRes].sort(
-                        (a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime(),
-                      ),
+                      prev
+                        .map((r) => (r.id === updated.id ? updated : r))
+                        .sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime()),
                     )
-                  }
-                  setShowAddModal(false)
-                  setPrefilledDate(undefined)
-                }}
-                onUpdated={(updated) => {
-                  setReservations((prev) =>
-                    prev
-                      .map((r) => (r.id === updated.id ? updated : r))
-                      .sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime()),
-                  )
-                  setEditReservation(null)
-                }}
-              />
-            )}
-          </AnimatePresence>
-        </main>
-      )}
-
-    </DashboardOceanNav>
+                    setEditReservation(null)
+                  }}
+                />
+              )}
+            </AnimatePresence>
+          </main>
+        )}
+      </DashboardOceanNav>
 
       {/* ── Guest Profile Drawer ── */}
       <AnimatePresence>
