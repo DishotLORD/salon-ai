@@ -11,6 +11,7 @@ import { supabase } from '@/lib/supabase'
 import { card, t } from '@/lib/dashboard-theme'
 
 type TabId = 'general' | 'ai' | 'menu' | 'notifications' | 'widget' | 'billing'
+type CategoryId = 'restaurant' | 'ai' | 'menu' | 'integrations' | 'team' | 'billing' | 'security'
 type BusinessType = 'restaurant' | 'cafe' | 'bar' | 'bakery' | 'other'
 type DayKey = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun'
 type DayHours = { open: string; close: string; closed: boolean }
@@ -74,6 +75,132 @@ function catStyle(category: string | null) {
 }
 
 const glassCard = card
+
+const settingsFont = 'var(--font-plus-jakarta, system-ui, sans-serif)'
+
+const s = {
+  bg: '#f8fafc',
+  panel: '#ffffff',
+  text: '#0f172a',
+  textMuted: '#64748b',
+  border: 'rgba(0,0,0,0.08)',
+  hover: '#f1f5f9',
+  iconBg: '#f1f5f9',
+  activeBg: 'rgba(56,189,248,0.08)',
+  activeBorder: '#38bdf8',
+  accent: '#38bdf8',
+  shadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)',
+} as const
+
+type SettingsCategory = {
+  id: CategoryId
+  icon: string
+  title: string
+  description: string
+  placeholder?: boolean
+}
+
+const SETTINGS_CATEGORIES: SettingsCategory[] = [
+  { id: 'restaurant', icon: '🌐', title: 'Restaurant', description: 'Name, hours, location' },
+  { id: 'ai', icon: '✨', title: 'AI Personality', description: 'Voice, tone, guardrails' },
+  { id: 'menu', icon: '🍽️', title: 'Menu', description: 'Dishes and pricing' },
+  { id: 'integrations', icon: '🔗', title: 'Integrations', description: 'Channels & POS' },
+  { id: 'team', icon: '👥', title: 'Team', description: 'Members & access', placeholder: true },
+  { id: 'billing', icon: '💳', title: 'Billing', description: 'Plan & invoices' },
+  { id: 'security', icon: '🔒', title: 'Security', description: 'Password & 2FA', placeholder: true },
+]
+
+function tabToCategory(tab: TabId): CategoryId {
+  if (tab === 'general') return 'restaurant'
+  if (tab === 'ai') return 'ai'
+  if (tab === 'menu') return 'menu'
+  if (tab === 'billing') return 'billing'
+  if (tab === 'notifications' || tab === 'widget') return 'integrations'
+  return 'restaurant'
+}
+
+function CategoryRow({
+  icon,
+  title,
+  description,
+  active,
+  onClick,
+}: {
+  icon: string
+  title: string
+  description: string
+  active: boolean
+  onClick: () => void
+}) {
+  const [hovered, setHovered] = useState(false)
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: 14,
+        width: '100%',
+        textAlign: 'left',
+        padding: '12px 14px',
+        borderRadius: 12,
+        border: `1px solid ${active ? s.activeBorder : 'transparent'}`,
+        background: active ? s.activeBg : hovered ? s.hover : 'transparent',
+        cursor: 'pointer',
+        transition: 'background 0.15s ease, border-color 0.15s ease',
+        fontFamily: settingsFont,
+      }}
+    >
+      <span
+        style={{
+          width: 40,
+          height: 40,
+          borderRadius: 8,
+          background: s.iconBg,
+          display: 'grid',
+          placeItems: 'center',
+          fontSize: 20,
+          flexShrink: 0,
+          lineHeight: 1,
+        }}
+      >
+        {icon}
+      </span>
+      <span style={{ minWidth: 0 }}>
+        <span style={{ display: 'block', fontSize: 15, fontWeight: 700, color: s.text, lineHeight: 1.3 }}>
+          {title}
+        </span>
+        <span style={{ display: 'block', marginTop: 2, fontSize: 13, color: s.textMuted, lineHeight: 1.4 }}>
+          {description}
+        </span>
+      </span>
+    </button>
+  )
+}
+
+function SettingsPlaceholder({ title, description }: { title: string; description: string }) {
+  return (
+    <div
+      style={{
+        display: 'grid',
+        justifyItems: 'center',
+        gap: 12,
+        padding: '64px 24px',
+        textAlign: 'center',
+      }}
+    >
+      <div style={{ fontSize: 40, lineHeight: 1 }}>🚧</div>
+      <div style={{ fontSize: 18, fontWeight: 700, color: s.text }}>{title}</div>
+      <p style={{ margin: 0, maxWidth: 360, fontSize: 14, color: s.textMuted, lineHeight: 1.6 }}>
+        {description}
+      </p>
+    </div>
+  )
+}
 
 function FieldShell({
   children,
@@ -226,7 +353,8 @@ function SettingsPageInner() {
     tabParam === 'general'
       ? tabParam
       : 'general'
-  const [activeTab, setActiveTab] = useState<TabId>(initialTab)
+  const [activeCategory, setActiveCategory] = useState<CategoryId>(() => tabToCategory(initialTab))
+  const [mobileShowDetail, setMobileShowDetail] = useState(false)
 
   useEffect(() => {
     if (
@@ -237,8 +365,8 @@ function SettingsPageInner() {
       tabParam === 'billing' ||
       tabParam === 'general'
     ) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- sync active tab with URL changes
-      setActiveTab(tabParam)
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- sync active category with URL changes
+      setActiveCategory(tabToCategory(tabParam))
     }
   }, [tabParam])
   const [saveError, setSaveError] = useState('')
@@ -294,20 +422,14 @@ function SettingsPageInner() {
 
   const reduceMotion = useReducedMotion()
 
-  const tabs = useMemo(
-    () =>
-      [
-        { id: 'general' as const, label: 'General' },
-        { id: 'ai' as const, label: 'AI Concierge' },
-        { id: 'menu' as const, label: 'Menu' },
-        { id: 'notifications' as const, label: 'Notifications' },
-        { id: 'widget' as const, label: 'Widget' },
-        { id: 'billing' as const, label: 'Billing' },
-      ] satisfies { id: TabId; label: string }[],
-    [],
+  const activeCategoryMeta = useMemo(
+    () => SETTINGS_CATEGORIES.find((category) => category.id === activeCategory) ?? SETTINGS_CATEGORIES[0],
+    [activeCategory],
   )
 
-  const tabIndex = tabs.findIndex((tab) => tab.id === activeTab)
+  const categoryIndex = SETTINGS_CATEGORIES.findIndex((category) => category.id === activeCategory)
+
+  const showSaveActions = activeCategory === 'restaurant' || activeCategory === 'ai' || activeCategory === 'integrations'
 
   const widgetEmbedSnippet = useMemo(() => {
     if (!businessRowId || !widgetOrigin) {
@@ -458,8 +580,8 @@ function SettingsPageInner() {
   }
 
   useEffect(() => {
-    if (activeTab !== 'menu' || !businessRowId) return
-    const key = `${activeTab}:${businessRowId}`
+    if (activeCategory !== 'menu' || !businessRowId) return
+    const key = `${activeCategory}:${businessRowId}`
     if (menuLoadKeyRef.current === key) return
     menuLoadKeyRef.current = key
     let cancelled = false
@@ -473,7 +595,7 @@ function SettingsPageInner() {
       }
     })()
     return () => { cancelled = true }
-  }, [activeTab, businessRowId])
+  }, [activeCategory, businessRowId])
 
   const openMenuAdd = () => {
     setMenuEditId(null)
@@ -624,7 +746,25 @@ function SettingsPageInner() {
       )
     }
 
-    if (activeTab === 'general') {
+    if (activeCategory === 'team') {
+      return (
+        <SettingsPlaceholder
+          title="Team management"
+          description="Invite staff, assign roles, and control who can access your dashboard. Coming soon."
+        />
+      )
+    }
+
+    if (activeCategory === 'security') {
+      return (
+        <SettingsPlaceholder
+          title="Security"
+          description="Password changes and two-factor authentication will live here. Coming soon."
+        />
+      )
+    }
+
+    if (activeCategory === 'restaurant') {
       return (
         <div style={{ display: 'grid', gap: 16 }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 14 }}>
@@ -740,7 +880,7 @@ function SettingsPageInner() {
       )
     }
 
-    if (activeTab === 'ai') {
+    if (activeCategory === 'ai') {
       return (
         <div style={{ display: 'grid', gap: 16 }}>
           <FloatingField
@@ -805,7 +945,7 @@ function SettingsPageInner() {
       )
     }
 
-    if (activeTab === 'menu') {
+    if (activeCategory === 'menu') {
       const filteredMenuItems =
         menuCategoryFilter === 'All'
           ? menuItems
@@ -1178,172 +1318,168 @@ function SettingsPageInner() {
       )
     }
 
-    if (activeTab === 'notifications') {
+    if (activeCategory === 'integrations') {
       return (
-        <div style={{ display: 'grid', gap: 16, maxWidth: 720 }}>
-          {[
-            {
-              label: 'Email me when a new reservation comes in',
-              checked: emailNotifs,
-              onChange: setEmailNotifs,
-            },
-            {
-              label: 'SMS alerts for urgent escalations',
-              checked: smsNotifs,
-              onChange: setSmsNotifs,
-            },
-          ].map((item) => (
-            <label
-              key={item.label}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: 12,
-                borderRadius: 12,
-                border: `1px solid ${t.border}`,
-                background: t.bgSurface,
-                padding: '16px 18px',
-                color: t.text,
-                fontSize: 14,
-                boxShadow: t.shadowSm,
-              }}
-            >
-              {item.label}
-              <input type="checkbox" checked={item.checked} onChange={(event) => item.onChange(event.target.checked)} />
-            </label>
-          ))}
-          <FloatingSelect
-            label="Digest Frequency"
-            value={digest}
-            onChange={setDigest}
-            options={[
-              { value: 'daily', label: 'Daily summary' },
-              { value: 'weekly', label: 'Weekly summary' },
-              { value: 'off', label: 'Off' },
-            ]}
-          />
-        </div>
-      )
-    }
-
-    if (activeTab === 'widget') {
-      return (
-        <div style={{ display: 'grid', gap: 18 }}>
-          <div>
-            <div style={{ color: t.text, fontSize: 22, fontWeight: 700 }}>Embed your AI Concierge</div>
-            <p style={{ margin: '8px 0 0', color: t.textMuted, fontSize: 14, lineHeight: 1.65 }}>
-              Drop this snippet into your website to launch the OceanCore concierge for guests.
-            </p>
-          </div>
-          {widgetEmbedSnippet ? (
-            <div style={{ display: 'grid', gap: 10 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-                <div
-                  style={{
-                    color: t.textMuted,
-                    fontSize: 11,
-                    fontWeight: 700,
-                    letterSpacing: '0.16em',
-                    textTransform: 'uppercase',
-                  }}
-                >
-                  Embed Code
-                </div>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    try {
-                      await navigator.clipboard.writeText(widgetEmbedSnippet)
-                      setWidgetCopied(true)
-                      window.setTimeout(() => setWidgetCopied(false), 2000)
-                    } catch {
-                      setWidgetCopied(false)
-                    }
-                  }}
-                  style={{
-                    borderRadius: 8,
-                    border: `1px solid ${widgetCopied ? t.successBorder : t.border}`,
-                    background: widgetCopied ? t.successBg : t.bgSurface,
-                    color: widgetCopied ? t.success : t.text,
-                    padding: '8px 14px',
-                    fontSize: 13,
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                  }}
-                >
-                  {widgetCopied ? 'Copied!' : 'Copy snippet'}
-                </button>
-              </div>
-              <pre
+        <div style={{ display: 'grid', gap: 32 }}>
+          <section style={{ display: 'grid', gap: 16 }}>
+            <div>
+              <div style={{ color: s.text, fontSize: 18, fontWeight: 700 }}>Notifications</div>
+              <p style={{ margin: '6px 0 0', color: s.textMuted, fontSize: 14, lineHeight: 1.6 }}>
+                Choose how OceanCore alerts you about reservations and escalations.
+              </p>
+            </div>
+            {[
+              {
+                label: 'Email me when a new reservation comes in',
+                checked: emailNotifs,
+                onChange: setEmailNotifs,
+              },
+              {
+                label: 'SMS alerts for urgent escalations',
+                checked: smsNotifs,
+                onChange: setSmsNotifs,
+              },
+            ].map((item) => (
+              <label
+                key={item.label}
                 style={{
-                  margin: 0,
-                  padding: '16px 18px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 12,
                   borderRadius: 12,
-                  background: t.bgSurfaceMuted,
-                  border: `1px solid ${t.border}`,
-                  color: t.text,
-                  overflowX: 'auto',
-                  fontSize: 13,
-                  lineHeight: 1.6,
+                  border: `1px solid ${s.border}`,
+                  background: s.panel,
+                  padding: '16px 18px',
+                  color: s.text,
+                  fontSize: 14,
                 }}
               >
-                <code>{widgetEmbedSnippet}</code>
-              </pre>
+                {item.label}
+                <input type="checkbox" checked={item.checked} onChange={(event) => item.onChange(event.target.checked)} />
+              </label>
+            ))}
+            <FloatingSelect
+              label="Digest Frequency"
+              value={digest}
+              onChange={setDigest}
+              options={[
+                { value: 'daily', label: 'Daily summary' },
+                { value: 'weekly', label: 'Weekly summary' },
+                { value: 'off', label: 'Off' },
+              ]}
+            />
+          </section>
+
+          <section style={{ display: 'grid', gap: 18, paddingTop: 8, borderTop: `1px solid ${s.border}` }}>
+            <div>
+              <div style={{ color: s.text, fontSize: 18, fontWeight: 700 }}>Website widget</div>
+              <p style={{ margin: '6px 0 0', color: s.textMuted, fontSize: 14, lineHeight: 1.65 }}>
+                Drop this snippet into your website to launch the OceanCore concierge for guests.
+              </p>
             </div>
-          ) : (
-            <div style={{ color: t.textMuted, fontSize: 14 }}>
-              {!businessRowId
-                ? 'Save your restaurant profile first so we can generate your widget snippet.'
-                : 'Loading embed URL...'}
-            </div>
-          )}
+            {widgetEmbedSnippet ? (
+              <div style={{ display: 'grid', gap: 10 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                  <div style={{ color: s.textMuted, fontSize: 11, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase' }}>
+                    Embed Code
+                  </div>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(widgetEmbedSnippet)
+                        setWidgetCopied(true)
+                        window.setTimeout(() => setWidgetCopied(false), 2000)
+                      } catch {
+                        setWidgetCopied(false)
+                      }
+                    }}
+                    style={{
+                      borderRadius: 8,
+                      border: `1px solid ${widgetCopied ? 'rgba(56,189,248,0.35)' : s.border}`,
+                      background: widgetCopied ? 'rgba(56,189,248,0.08)' : s.panel,
+                      color: widgetCopied ? s.accent : s.text,
+                      padding: '8px 14px',
+                      fontSize: 13,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {widgetCopied ? 'Copied!' : 'Copy snippet'}
+                  </button>
+                </div>
+                <pre
+                  style={{
+                    margin: 0,
+                    padding: '16px 18px',
+                    borderRadius: 12,
+                    background: s.bg,
+                    border: `1px solid ${s.border}`,
+                    color: s.text,
+                    overflowX: 'auto',
+                    fontSize: 13,
+                    lineHeight: 1.6,
+                  }}
+                >
+                  <code>{widgetEmbedSnippet}</code>
+                </pre>
+              </div>
+            ) : (
+              <div style={{ color: s.textMuted, fontSize: 14 }}>
+                {!businessRowId
+                  ? 'Save your restaurant profile first so we can generate your widget snippet.'
+                  : 'Loading embed URL...'}
+              </div>
+            )}
+          </section>
+
+          <section style={{ display: 'grid', gap: 12, paddingTop: 8, borderTop: `1px solid ${s.border}` }}>
+            <div style={{ color: s.text, fontSize: 18, fontWeight: 700 }}>POS & channels</div>
+            <SettingsPlaceholder
+              title="More integrations coming soon"
+              description="Connect your POS, reservation platforms, and messaging channels in one place."
+            />
+          </section>
         </div>
       )
     }
 
-    return (
-      <div style={{ display: 'grid', gap: 16, maxWidth: 760 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14 }}>
-          <div style={{ ...glassCard, padding: 16 }}>
-            <div
-              style={{
-                color: t.textMuted,
-                fontSize: 11,
-                fontWeight: 700,
-                letterSpacing: '0.16em',
-                textTransform: 'uppercase',
-              }}
-            >
-              Plan
+    if (activeCategory === 'billing') {
+      return (
+        <div style={{ display: 'grid', gap: 16, maxWidth: 760 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14 }}>
+            <div style={{ borderRadius: 12, border: `1px solid ${s.border}`, background: s.panel, padding: 16, boxShadow: s.shadow }}>
+              <div style={{ color: s.textMuted, fontSize: 11, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase' }}>
+                Plan
+              </div>
+              <div style={{ marginTop: 10, color: s.text, fontSize: 28, fontWeight: 700 }}>Early access</div>
             </div>
-            <div style={{ marginTop: 10, color: t.text, fontSize: 28, fontWeight: 700 }}>Early access</div>
+            <div style={{ borderRadius: 12, border: `1px solid ${s.border}`, background: s.panel, padding: 16, boxShadow: s.shadow }}>
+              <div style={{ color: s.textMuted, fontSize: 11, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase' }}>
+                Payment Method
+              </div>
+              <div style={{ marginTop: 10, color: s.text, fontSize: 20, fontWeight: 700 }}>Not configured</div>
+            </div>
           </div>
-          <div style={{ ...glassCard, padding: 16 }}>
-            <div
-              style={{
-                color: t.textMuted,
-                fontSize: 11,
-                fontWeight: 700,
-                letterSpacing: '0.16em',
-                textTransform: 'uppercase',
-              }}
-            >
-              Payment Method
-            </div>
-            <div style={{ marginTop: 10, color: t.text, fontSize: 20, fontWeight: 700 }}>Not configured</div>
+          <div style={{ borderRadius: 12, border: `1px solid ${s.border}`, background: s.panel, padding: 18, boxShadow: s.shadow }}>
+            <div style={{ color: s.text, fontSize: 18, fontWeight: 700 }}>Billing</div>
+            <p style={{ margin: '10px 0 0', color: s.textMuted, fontSize: 14, lineHeight: 1.65 }}>
+              Subscription and invoices are not enabled yet.
+              Stripe billing will appear here when launched.
+            </p>
           </div>
         </div>
-        <div style={{ ...glassCard, padding: 18 }}>
-          <div style={{ color: t.text, fontSize: 18, fontWeight: 700 }}>Billing</div>
-          <p style={{ margin: '10px 0 0', color: t.textMuted, fontSize: 14, lineHeight: 1.65 }}>
-            Subscription and invoices are not enabled yet.
-            Stripe billing will appear here when launched.
-          </p>
-        </div>
-      </div>
-    )
+      )
+    }
+
+    return null
   })()
+
+  const selectCategory = (categoryId: CategoryId, mobile: boolean) => {
+    setActiveCategory(categoryId)
+    if (mobile) setMobileShowDetail(true)
+  }
 
   return (
     <>
@@ -1357,12 +1493,13 @@ function SettingsPageInner() {
             zIndex: 9999,
             padding: '12px 18px',
             borderRadius: 12,
-            background: t.successBg,
-            border: `1px solid ${t.successBorder}`,
-            color: t.success,
+            background: 'rgba(56,189,248,0.10)',
+            border: '1px solid rgba(56,189,248,0.25)',
+            color: '#0ea5e9',
             fontSize: 14,
             fontWeight: 600,
-            boxShadow: t.shadowLg,
+            boxShadow: s.shadow,
+            fontFamily: settingsFont,
           }}
         >
           Saved!
@@ -1371,162 +1508,194 @@ function SettingsPageInner() {
 
       <DashboardOceanNav activeNav="Settings">
         {({ isMobile, openNav }) => (
-          <main style={{ display: 'grid', gap: 20 }}>
+          <div
+            data-theme="light"
+            style={{
+              fontFamily: settingsFont,
+              margin: isMobile ? '-20px -16px' : '-36px',
+              minHeight: isMobile ? 'calc(100vh - 64px)' : 'calc(100vh - 72px)',
+              background: s.bg,
+            }}
+          >
             {isMobile ? (
               <motion.button
                 type="button"
                 onClick={openNav}
                 whileTap={reduceMotion ? undefined : { scale: 0.98 }}
                 style={{
+                  position: 'absolute',
+                  top: 20,
+                  left: 16,
+                  zIndex: 20,
                   width: 44,
                   height: 44,
                   borderRadius: 12,
-                  border: `1px solid ${t.border}`,
-                  background: t.bgSurface,
-                  color: t.text,
+                  border: `1px solid ${s.border}`,
+                  background: s.panel,
+                  color: s.text,
                   fontSize: 22,
                   cursor: 'pointer',
-                  boxShadow: t.shadowSm,
+                  boxShadow: s.shadow,
                 }}
               >
                 ☰
               </motion.button>
             ) : null}
 
-            <motion.section
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={oceanTransition(reduceMotion, { duration: 0.24 })}
+            <main
               style={{
                 display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: isMobile ? 'flex-start' : 'center',
                 flexDirection: isMobile ? 'column' : 'row',
-                gap: 16,
+                gap: isMobile ? 0 : 24,
+                padding: isMobile ? '20px 16px 24px' : '28px 32px 32px',
+                minHeight: 'inherit',
               }}
             >
-              <div>
-                <h1
+              {/* Left panel — category navigation */}
+              {(!isMobile || !mobileShowDetail) && (
+                <aside
                   style={{
-                    margin: 0,
-                    color: t.text,
-                    fontSize: 30,
-                    fontWeight: 700,
-                    fontFamily: 'var(--font-playfair)',
-                    letterSpacing: '-0.03em',
+                    width: isMobile ? '100%' : 280,
+                    flexShrink: 0,
+                    paddingTop: isMobile ? 52 : 0,
                   }}
                 >
-                  Settings
-                </h1>
-                <p style={{ margin: '8px 0 0', color: t.textMuted, fontSize: 14 }}>
-                  Configure your restaurant profile, AI Concierge behavior, widget, and notifications.
-                </p>
-              </div>
-
-              <div style={{ display: 'grid', gap: 8, justifyItems: isMobile ? 'stretch' : 'end', width: isMobile ? '100%' : 'auto' }}>
-                {saveError ? (
-                  <div style={{ color: t.danger, fontSize: 13, fontWeight: 600 }}>{saveError}</div>
-                ) : null}
-                <motion.button
-                  type="button"
-                  onClick={() => void handleSave()}
-                  disabled={isLoading || isSaving}
-                  whileHover={isLoading || isSaving || reduceMotion ? undefined : { y: -1 }}
-                  whileTap={isLoading || isSaving || reduceMotion ? undefined : { scale: 0.98 }}
-                  style={{
-                    border: 'none',
-                    borderRadius: 10,
-                    padding: '11px 18px',
-                    background: isLoading || isSaving ? t.bgSurfaceMuted : t.accent,
-                    color: isLoading || isSaving ? t.textSubtle : '#ffffff',
-                    fontWeight: 600,
-                    fontSize: 13,
-                    cursor: isLoading || isSaving ? 'not-allowed' : 'pointer',
-                    width: isMobile ? '100%' : 'auto',
-                  }}
-                >
-                  {isLoading ? 'Loading…' : isSaving ? 'Saving…' : 'Save Changes'}
-                </motion.button>
-              </div>
-            </motion.section>
-
-            <motion.div
-              initial={{ opacity: 0, scale: 0.98, y: 10 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              transition={oceanTransition(reduceMotion, { delay: 0.05, duration: 0.24 })}
-              style={{ ...glassCard, padding: 6 }}
-            >
-              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                {tabs.map((tab) => {
-                  const active = tab.id === activeTab
-                  return (
-                    <motion.button
-                      key={tab.id}
-                      type="button"
-                      onClick={() => setActiveTab(tab.id)}
-                      whileTap={reduceMotion ? undefined : { scale: 0.98 }}
+                  <div style={{ marginBottom: 24 }}>
+                    <h1
                       style={{
-                        border: 'none',
-                        borderRadius: 8,
-                        padding: '9px 16px',
-                        background: active ? t.accentSoftBg : 'transparent',
-                        color: active ? t.accent : t.textMuted,
-                        fontSize: 13,
-                        fontWeight: 600,
-                        cursor: 'pointer',
+                        margin: 0,
+                        fontSize: isMobile ? 28 : 32,
+                        fontWeight: 800,
+                        color: s.text,
+                        letterSpacing: '-0.03em',
+                        lineHeight: 1.15,
                       }}
                     >
-                      {tab.label}
-                    </motion.button>
-                  )
-                })}
-              </div>
-            </motion.div>
+                      Settings
+                    </h1>
+                    <p style={{ margin: '8px 0 0', fontSize: 14, color: s.textMuted, lineHeight: 1.5 }}>
+                      Tune how OceanCore represents {businessName.trim() || 'your restaurant'}
+                    </p>
+                  </div>
 
-            <motion.section
-              initial={{ opacity: 0, scale: 0.98, y: 12 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              transition={oceanTransition(reduceMotion, { delay: 0.08, duration: 0.26 })}
-              style={{ ...glassCard, padding: 20, overflow: 'hidden' }}
-            >
-              <AnimatePresence mode="wait" custom={tabIndex}>
-                <motion.div
-                  key={activeTab}
-                  custom={tabIndex}
-                  variants={tabContent}
-                  initial="initial"
-                  animate="animate"
-                  exit="exit"
-                  transition={oceanTransition(reduceMotion)}
+                  <nav style={{ display: 'grid', gap: 4 }}>
+                    {SETTINGS_CATEGORIES.map((category) => (
+                      <CategoryRow
+                        key={category.id}
+                        icon={category.icon}
+                        title={category.title}
+                        description={category.description}
+                        active={activeCategory === category.id}
+                        onClick={() => selectCategory(category.id, isMobile)}
+                      />
+                    ))}
+                  </nav>
+                </aside>
+              )}
+
+              {/* Right panel — category content */}
+              {(!isMobile || mobileShowDetail) && (
+                <section
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    background: s.panel,
+                    border: `1px solid ${s.border}`,
+                    borderRadius: 16,
+                    boxShadow: s.shadow,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    overflow: 'hidden',
+                  }}
                 >
-                  {tabPanel}
-                </motion.div>
-              </AnimatePresence>
-            </motion.section>
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: isMobile ? 'flex-start' : 'center',
+                      justifyContent: 'space-between',
+                      gap: 16,
+                      padding: '20px 24px',
+                      borderBottom: `1px solid ${s.border}`,
+                      flexDirection: isMobile ? 'column' : 'row',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+                      {isMobile ? (
+                        <button
+                          type="button"
+                          onClick={() => setMobileShowDetail(false)}
+                          style={{
+                            border: 'none',
+                            background: 'transparent',
+                            color: s.accent,
+                            fontSize: 14,
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                            padding: 0,
+                            flexShrink: 0,
+                          }}
+                        >
+                          ← Back
+                        </button>
+                      ) : null}
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 20, fontWeight: 700, color: s.text, lineHeight: 1.2 }}>
+                          {activeCategoryMeta.title}
+                        </div>
+                        <div style={{ marginTop: 4, fontSize: 13, color: s.textMuted }}>
+                          {activeCategoryMeta.description}
+                        </div>
+                      </div>
+                    </div>
 
-            {activeTab !== 'menu' && (
-              <motion.button
-                type="button"
-                onClick={() => void handleSave()}
-                disabled={isLoading || isSaving}
-                whileHover={isLoading || isSaving || reduceMotion ? undefined : { y: -1 }}
-                whileTap={isLoading || isSaving || reduceMotion ? undefined : { scale: 0.99 }}
-                style={{
-                  border: 'none',
-                  borderRadius: 12,
-                  width: '100%',
-                  padding: '14px 18px',
-                  background: isLoading || isSaving ? t.bgSurfaceMuted : t.accent,
-                  color: isLoading || isSaving ? t.textSubtle : '#ffffff',
-                  fontWeight: 600,
-                  fontSize: 14,
-                  cursor: isLoading || isSaving ? 'not-allowed' : 'pointer',
-                }}
-              >
-                {isLoading ? 'Loading…' : isSaving ? 'Saving…' : 'Save Configuration'}
-              </motion.button>
-            )}
-          </main>
+                    {showSaveActions ? (
+                      <div style={{ display: 'grid', gap: 8, justifyItems: isMobile ? 'stretch' : 'end', width: isMobile ? '100%' : 'auto' }}>
+                        {saveError ? (
+                          <div style={{ color: '#dc2626', fontSize: 13, fontWeight: 600 }}>{saveError}</div>
+                        ) : null}
+                        <motion.button
+                          type="button"
+                          onClick={() => void handleSave()}
+                          disabled={isLoading || isSaving}
+                          whileHover={isLoading || isSaving || reduceMotion ? undefined : { y: -1 }}
+                          whileTap={isLoading || isSaving || reduceMotion ? undefined : { scale: 0.98 }}
+                          style={{
+                            border: 'none',
+                            borderRadius: 10,
+                            padding: '11px 18px',
+                            background: isLoading || isSaving ? s.hover : s.accent,
+                            color: isLoading || isSaving ? s.textMuted : '#0f172a',
+                            fontWeight: 600,
+                            fontSize: 13,
+                            cursor: isLoading || isSaving ? 'not-allowed' : 'pointer',
+                            width: isMobile ? '100%' : 'auto',
+                          }}
+                        >
+                          {isLoading ? 'Loading…' : isSaving ? 'Saving…' : 'Save Changes'}
+                        </motion.button>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div style={{ flex: 1, padding: '24px', overflowY: 'auto' }}>
+                    <AnimatePresence mode="wait" custom={categoryIndex}>
+                      <motion.div
+                        key={activeCategory}
+                        custom={categoryIndex}
+                        variants={tabContent}
+                        initial="initial"
+                        animate="animate"
+                        exit="exit"
+                        transition={oceanTransition(reduceMotion)}
+                      >
+                        {tabPanel}
+                      </motion.div>
+                    </AnimatePresence>
+                  </div>
+                </section>
+              )}
+            </main>
+          </div>
         )}
       </DashboardOceanNav>
     </>

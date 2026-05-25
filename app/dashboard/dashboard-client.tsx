@@ -1,12 +1,11 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useRef, useState } from 'react'
-import { motion, useReducedMotion } from 'framer-motion'
+import { useEffect, useState } from 'react'
 
 import { DashboardOceanNav } from '@/components/dashboard-ocean-nav'
-import { supabase } from '@/lib/supabase'
 import { t } from '@/lib/dashboard-theme'
+import { supabase } from '@/lib/supabase'
 
 export type RecentActivity = {
   id: string
@@ -41,60 +40,137 @@ function formatRelativeTime(timestamp: string): string {
   return `${Math.floor(hours / 24)}d ago`
 }
 
-function AnimatedCounter({ value }: { value: number }) {
-  const [display, setDisplay] = useState(0)
-  const ref = useRef(0)
-  useEffect(() => {
-    const end = value
-    const startTime = performance.now()
-    const tick = (now: number) => {
-      const p = Math.min(1, (now - startTime) / 1000)
-      const eased = 1 - Math.pow(1 - p, 3)
-      setDisplay(Math.round(ref.current + (end - ref.current) * eased))
-      if (p < 1) requestAnimationFrame(tick)
-      else ref.current = end
-    }
-    requestAnimationFrame(tick)
-  }, [value])
-  return <>{display}</>
-}
-
-function AnimatedHeading({ text, isMobile }: { text: string; isMobile: boolean }) {
+// ─── Icons ────────────────────────────────────────────────────
+function IcBolt() {
   return (
-    <h1 style={{
-      margin: 0,
-      fontSize: isMobile ? 30 : 40,
-      fontWeight: 700,
-      fontFamily: 'var(--font-playfair, Georgia, serif)',
-      letterSpacing: '-0.03em',
-      lineHeight: 1.15,
-      display: 'flex',
-      flexWrap: 'wrap',
-      gap: '0 0.25em',
-    }}>
-      {text.split(' ').map((word, i, arr) => (
-        <motion.span
-          key={i}
-          initial={{ y: 30, opacity: 0, filter: 'blur(6px)' }}
-          animate={{ y: 0, opacity: 1, filter: 'blur(0px)' }}
-          transition={{ duration: 0.5, delay: 0.05 + i * 0.07, ease: [0.22, 1, 0.36, 1] }}
-          style={{
-            display: 'inline-block',
-            background: i >= arr.length - 2
-              ? `linear-gradient(135deg, #ffffff 0%, ${t.accent} 100%)`
-              : 'rgba(255,255,255,0.92)',
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-            backgroundClip: 'text',
-          }}
-        >
-          {word}
-        </motion.span>
-      ))}
-    </h1>
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z" />
+    </svg>
+  )
+}
+function IcChat() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 12a8 8 0 1 1-3-6.2L21 4l-1.2 3.5A7.95 7.95 0 0 1 21 12Z" />
+    </svg>
+  )
+}
+function IcCal() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="5" width="18" height="16" rx="2" /><path d="M3 9h18M8 3v4M16 3v4" />
+    </svg>
+  )
+}
+function IcWave() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 12c2 0 2-2 4-2s2 2 4 2 2-2 4-2 2 2 4 2 2-2 4-2" />
+    </svg>
+  )
+}
+function IcUp() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 19V5M5 12l7-7 7 7" />
+    </svg>
+  )
+}
+function IcArrow() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M5 12h14M13 6l6 6-6 6" />
+    </svg>
+  )
+}
+function IcCheck() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M5 13l4 4L19 7" />
+    </svg>
   )
 }
 
+// ─── Stat card ────────────────────────────────────────────────
+type StatCardProps = {
+  label: string
+  value: string | number
+  delta?: string
+  hint?: string
+  icon: React.ReactNode
+}
+function StatCard({ label, value, delta, hint, icon }: StatCardProps) {
+  return (
+    <div
+      style={{
+        background: t.bgSurface,
+        border: `1px solid ${t.border}`,
+        borderRadius: 16,
+        padding: '24px',
+        boxShadow: t.shadowCard,
+        transition: 'box-shadow 0.15s',
+        fontFamily: 'var(--font-plus-jakarta, system-ui, sans-serif)',
+      }}
+      onMouseEnter={e => (e.currentTarget.style.boxShadow = t.shadowMd)}
+      onMouseLeave={e => (e.currentTarget.style.boxShadow = t.shadowCard)}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: t.textMuted }}>
+          {label}
+        </span>
+        <span style={{ width: 32, height: 32, borderRadius: 8, background: t.accentSoftBg, display: 'grid', placeItems: 'center', color: t.accent }}>
+          {icon}
+        </span>
+      </div>
+      <div style={{
+        fontSize: 32, fontWeight: 700, color: t.text, marginTop: 12,
+        lineHeight: 1.1, letterSpacing: '-0.02em',
+        fontVariantNumeric: 'tabular-nums', fontFeatureSettings: '"tnum"',
+      }}>
+        {value}
+      </div>
+      {(delta || hint) && (
+        <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5 }}>
+          {delta && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontWeight: 600, color: t.green }}>
+              <IcUp />{delta}
+            </span>
+          )}
+          {hint && <span style={{ color: t.textMuted }}>{hint}</span>}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Avatar bubble ────────────────────────────────────────────
+function AvatarBubble({ role, name }: { role: 'assistant' | 'guest'; name?: string }) {
+  if (role === 'assistant') {
+    return (
+      <div style={{
+        width: 40, height: 40, borderRadius: '50%', flexShrink: 0,
+        background: 'linear-gradient(135deg, #38bdf8, #0284c7)',
+        display: 'grid', placeItems: 'center', color: '#fff',
+        boxShadow: '0 2px 6px rgba(56,189,248,0.25)',
+      }}>
+        <IcWave />
+      </div>
+    )
+  }
+  const initials = (name || 'G').split(' ').map((s: string) => s[0]).slice(0, 2).join('')
+  return (
+    <div style={{
+      width: 40, height: 40, borderRadius: '50%', flexShrink: 0,
+      background: t.bgSurfaceMuted, border: `1px solid ${t.border}`,
+      display: 'grid', placeItems: 'center',
+      color: t.textMuted, fontWeight: 700, fontSize: 13,
+    }}>
+      {initials}
+    </div>
+  )
+}
+
+// ─── Main client component ────────────────────────────────────
 export function DashboardClient({
   businessDisplayName,
   conciergeName,
@@ -103,7 +179,6 @@ export function DashboardClient({
   messageCount,
   recentActivity,
 }: DashboardClientProps) {
-  const reduceMotion = useReducedMotion()
   const [unreadCount, setUnreadCount] = useState(activeChats)
 
   useEffect(() => {
@@ -120,26 +195,28 @@ export function DashboardClient({
     return () => clearInterval(id)
   }, [businessId])
 
-  const metrics = [
-    { label: 'Active chats', value: activeChats, suffix: '', accent: '#38bdf8' },
-    { label: 'Messages today', value: messageCount, suffix: '', accent: '#6366f1' },
-    { label: 'Response time', value: 2, suffix: 's', accent: '#10b981' },
-  ]
+  const today = new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date())
 
   return (
     <DashboardOceanNav activeNav="Dashboard">
       {({ isMobile, openNav }) => (
-        <main style={{ display: 'grid', gap: 32, maxWidth: 900, margin: '0 auto', position: 'relative', zIndex: 1 }}>
+        <main style={{
+          background: t.bgApp,
+          margin: isMobile ? '-20px -16px' : '-36px',
+          padding: isMobile ? '24px 16px' : '40px',
+          minHeight: '100vh',
+          fontFamily: 'var(--font-plus-jakarta, system-ui, sans-serif)',
+        }}>
 
           {isMobile && (
             <button
               type="button"
               onClick={openNav}
               style={{
-                width: 44, height: 44, borderRadius: 12,
+                width: 40, height: 40, borderRadius: 10,
                 border: `1px solid ${t.border}`,
-                background: t.bgSurface,
-                color: t.text, fontSize: 20, cursor: 'pointer',
+                background: t.bgSurface, color: t.text,
+                fontSize: 18, cursor: 'pointer', marginBottom: 20,
               }}
             >
               ☰
@@ -147,220 +224,180 @@ export function DashboardClient({
           )}
 
           {/* Greeting */}
-          <motion.section
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.3 }}
-            style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: 16 }}
-          >
-            <div>
-              <AnimatedHeading text={`${getGreeting()}, ${businessDisplayName}`} isMobile={isMobile} />
-              <motion.p
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ delay: 0.5 }}
-                style={{ margin: '8px 0 0', color: t.textMuted, fontSize: 14 }}
-              >
-                {new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date())}
-              </motion.p>
-            </div>
+          <section style={{ marginBottom: 28 }}>
+            <h1 style={{
+              margin: 0,
+              fontSize: isMobile ? 24 : 30,
+              fontWeight: 700,
+              color: t.text,
+              letterSpacing: '-0.02em',
+              lineHeight: 1.15,
+            }}>
+              {getGreeting()}, {businessDisplayName}
+            </h1>
+            <p style={{ margin: '6px 0 0', color: t.textMuted, fontSize: 14 }}>
+              {today}
+            </p>
+          </section>
 
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ delay: 0.4 }}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 8,
-                padding: '8px 16px', borderRadius: 999,
-                border: `1px solid ${t.accentSoftBorder}`,
-                background: t.accentSoftBg,
-                color: t.accent, fontSize: 13, fontWeight: 600,
-                backdropFilter: 'blur(12px)',
-              }}
-            >
-              <motion.span
-                animate={{ opacity: [1, 0.3, 1] }}
-                transition={{ duration: 2, repeat: Infinity }}
-                style={{ width: 7, height: 7, borderRadius: '50%', background: t.accent, boxShadow: `0 0 8px ${t.accent}` }}
-              />
-              {conciergeName} is live
-            </motion.div>
-          </motion.section>
-
-          {/* Metrics */}
-          <section style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 16 }}>
-            {metrics.map((m, i) => (
-              <motion.div
-                key={m.label}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.4, delay: 0.15 + i * 0.08, ease: [0.22, 1, 0.36, 1] }}
-                whileHover={reduceMotion ? undefined : { y: -3, boxShadow: `0 12px 40px rgba(0,0,0,0.5), 0 0 24px ${m.accent}22` }}
-                style={{
-                  background: 'rgba(255,255,255,0.07)',
-                  backdropFilter: 'blur(24px)',
-                  WebkitBackdropFilter: 'blur(24px)',
-                  border: '1px solid rgba(255,255,255,0.12)',
-                  borderLeft: `3px solid ${m.accent}`,
-                  borderRadius: 20,
-                  padding: '28px 28px 24px',
-                  boxShadow: `0 4px 24px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08)`,
-                  transition: 'box-shadow 0.2s ease',
-                  position: 'relative',
-                  overflow: 'hidden',
-                }}
-              >
-                {/* Subtle accent glow inside card */}
-                <div style={{
-                  position: 'absolute', top: 0, left: 0, width: '60%', height: '100%',
-                  background: `radial-gradient(ellipse at 0% 50%, ${m.accent}12 0%, transparent 70%)`,
-                  pointerEvents: 'none',
-                }} />
-                <div style={{ fontSize: 12, color: t.textMuted, letterSpacing: '0.14em', textTransform: 'uppercase', fontWeight: 600, position: 'relative' }}>
-                  {m.label}
-                </div>
-                <div style={{ marginTop: 14, fontSize: 48, fontWeight: 700, color: '#fff', lineHeight: 1, fontVariantNumeric: 'tabular-nums', position: 'relative' }}>
-                  <AnimatedCounter value={m.value} />{m.suffix}
-                </div>
-              </motion.div>
-            ))}
+          {/* Stats */}
+          <section style={{
+            display: 'grid',
+            gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)',
+            gap: 16,
+            marginBottom: 28,
+          }}>
+            <StatCard label="Active Chats"    value={activeChats}   delta="+4"    hint="vs. yesterday"    icon={<IcChat />} />
+            <StatCard label="Messages Today"  value={messageCount}  delta="+18%"  hint="vs. last 7 days"  icon={<IcWave />} />
+            <StatCard label="Response Time"   value="2s"            delta="-0.6s" hint="faster"            icon={<IcBolt />} />
           </section>
 
           {/* Actions */}
-          <motion.section
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4, delay: 0.35 }}
-            style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}
-          >
+          <section style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 32 }}>
             <Link href="/dashboard/settings?tab=widget" style={{ textDecoration: 'none' }}>
-              <motion.div
-                whileHover={reduceMotion ? undefined : { scale: 1.03, boxShadow: `0 0 32px rgba(96,184,255,0.5)` }}
-                whileTap={{ scale: 0.97 }}
+              <button
                 style={{
-                  padding: '13px 28px', borderRadius: 14,
-                  background: `linear-gradient(135deg, #ffffff 0%, ${t.accent} 100%)`,
-                  color: '#0d1f3c', fontWeight: 700, fontSize: 14, cursor: 'pointer',
-                  boxShadow: `0 4px 20px rgba(96,184,255,0.3)`,
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  padding: '10px 20px', borderRadius: 8,
+                  background: '#0ea5e9', border: 'none',
+                  color: '#fff', fontWeight: 600, fontSize: 14,
+                  cursor: 'pointer', fontFamily: 'inherit',
+                  boxShadow: '0 2px 8px rgba(14,165,233,0.35)',
+                  transition: 'background 0.15s',
                 }}
+                onMouseEnter={e => (e.currentTarget.style.background = '#0284c7')}
+                onMouseLeave={e => (e.currentTarget.style.background = '#0ea5e9')}
               >
-                Deploy Concierge
-              </motion.div>
+                <IcBolt /> Deploy Concierge
+              </button>
             </Link>
+
             <Link href="/dashboard/chats" style={{ textDecoration: 'none' }}>
-              <motion.div
-                whileHover={reduceMotion ? undefined : { scale: 1.02, background: t.bgSurfaceHover }}
-                whileTap={{ scale: 0.98 }}
+              <button
                 style={{
-                  padding: '12px 28px', borderRadius: 14,
-                  border: `1px solid ${t.border}`,
-                  background: t.bgSurface,
-                  backdropFilter: 'blur(12px)',
-                  color: t.text, fontWeight: 600, fontSize: 14, cursor: 'pointer',
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  padding: '10px 20px', borderRadius: 8,
+                  background: t.bgSurface, border: `1px solid ${t.border}`,
+                  color: t.text, fontWeight: 600, fontSize: 14,
+                  cursor: 'pointer', fontFamily: 'inherit',
                   transition: 'background 0.15s',
-                  display: 'flex', alignItems: 'center', gap: 8,
                 }}
+                onMouseEnter={e => (e.currentTarget.style.background = t.bgSurfaceHover)}
+                onMouseLeave={e => (e.currentTarget.style.background = t.bgSurface)}
               >
-                Unread Chats
-                <span style={{
-                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                  minWidth: 20, height: 20, borderRadius: 999,
-                  background: unreadCount > 0 ? t.accent : 'rgba(255,255,255,0.12)',
-                  color: unreadCount > 0 ? '#0d1f3c' : t.textMuted,
-                  fontSize: 11, fontWeight: 700, padding: '0 5px',
-                  transition: 'background 0.3s, color 0.3s',
-                }}>
-                  {unreadCount}
-                </span>
-              </motion.div>
+                <IcChat /> Unread Chats
+                {unreadCount > 0 && (
+                  <span style={{
+                    fontSize: 11, fontWeight: 700,
+                    padding: '2px 6px', borderRadius: 6,
+                    background: t.dangerBg, color: t.danger,
+                  }}>
+                    {unreadCount}
+                  </span>
+                )}
+              </button>
             </Link>
+
             <Link href="/dashboard/bookings" style={{ textDecoration: 'none' }}>
-              <motion.div
-                whileHover={reduceMotion ? undefined : { scale: 1.02, background: t.bgSurfaceHover }}
-                whileTap={{ scale: 0.98 }}
+              <button
                 style={{
-                  padding: '12px 28px', borderRadius: 14,
-                  border: `1px solid ${t.border}`,
-                  background: t.bgSurface,
-                  backdropFilter: 'blur(12px)',
-                  color: t.text, fontWeight: 600, fontSize: 14, cursor: 'pointer',
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  padding: '10px 20px', borderRadius: 8,
+                  background: t.bgSurface, border: `1px solid ${t.border}`,
+                  color: t.text, fontWeight: 600, fontSize: 14,
+                  cursor: 'pointer', fontFamily: 'inherit',
                   transition: 'background 0.15s',
                 }}
+                onMouseEnter={e => (e.currentTarget.style.background = t.bgSurfaceHover)}
+                onMouseLeave={e => (e.currentTarget.style.background = t.bgSurface)}
               >
-                Reservations
-              </motion.div>
+                <IcCal /> Reservations
+              </button>
             </Link>
-          </motion.section>
+          </section>
 
           {/* Recent activity */}
-          <motion.section
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4, delay: 0.45 }}
-            style={{
-              background: 'var(--t-glass-bg)',
-              backdropFilter: 'blur(24px)',
-              WebkitBackdropFilter: 'blur(24px)',
-              border: `1px solid ${t.border}`,
-              borderRadius: 20,
-              overflow: 'hidden',
-              boxShadow: '0 4px 24px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.06)',
-            }}
-          >
+          <section style={{
+            background: t.bgSurface,
+            border: `1px solid ${t.border}`,
+            borderRadius: 16,
+            overflow: 'hidden',
+            boxShadow: t.shadowCard,
+          }}>
             <div style={{
               padding: '20px 24px',
               borderBottom: `1px solid ${t.border}`,
               display: 'flex', justifyContent: 'space-between', alignItems: 'center',
             }}>
-              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Recent activity</span>
-              <span style={{ fontSize: 12, color: t.textMuted }}>Today</span>
+              <div>
+                <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: t.text, letterSpacing: '-0.01em' }}>
+                  Recent activity
+                </h2>
+                <p style={{ margin: '2px 0 0', fontSize: 12.5, color: t.textMuted }}>
+                  What {conciergeName} has been up to today
+                </p>
+              </div>
+              <Link href="/dashboard/chats" style={{
+                textDecoration: 'none', fontSize: 13, fontWeight: 600,
+                color: t.accent, display: 'inline-flex', alignItems: 'center', gap: 4,
+              }}>
+                View all <IcArrow />
+              </Link>
             </div>
 
             {recentActivity.length === 0 ? (
               <div style={{ padding: '48px 24px', textAlign: 'center', color: t.textMuted, fontSize: 14 }}>
-                Quiet so far — guests will show up here once they start chatting
+                Quiet so far — activity will appear here once guests start chatting
               </div>
             ) : (
-              recentActivity.map((item, i) => {
-                const isAI = item.role === 'assistant'
-                return (
-                  <motion.div
-                    key={item.id}
-                    initial={{ opacity: 0, x: -10 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: 0.5 + i * 0.07 }}
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: 'auto 1fr auto',
-                      gap: 14, alignItems: 'center',
-                      padding: '14px 24px',
-                      borderBottom: i < recentActivity.length - 1 ? `1px solid ${t.borderSoft}` : 'none',
-                      transition: 'background 0.15s',
-                    }}
-                    onMouseEnter={e => (e.currentTarget.style.background = t.bgSurfaceHover)}
-                    onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                  >
-                    <div style={{
-                      width: 34, height: 34, borderRadius: '50%',
-                      display: 'grid', placeItems: 'center',
-                      background: isAI ? t.accentSoftBg : 'rgba(180,160,255,0.1)',
-                      border: `1px solid ${isAI ? t.accentSoftBorder : 'rgba(180,160,255,0.2)'}`,
-                      color: isAI ? t.accent : '#b4a0ff',
-                      fontSize: 10, fontWeight: 800,
-                    }}>
-                      {isAI ? 'AI' : 'GU'}
+              recentActivity.map((item, i) => (
+                <div
+                  key={item.id}
+                  style={{
+                    display: 'flex', alignItems: 'flex-start', gap: 12,
+                    padding: '16px 24px',
+                    borderTop: i === 0 ? 'none' : `1px solid ${t.borderSoft}`,
+                    transition: 'background 0.12s',
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.background = t.bgSurfaceHover)}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                >
+                  <AvatarBubble role={item.role} name={item.role === 'guest' ? item.title.split(' ')[0] : undefined} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13.5, color: t.text, fontWeight: 600, lineHeight: 1.3 }}>
+                      {item.role === 'assistant' ? conciergeName : 'Guest'}
+                      <span style={{ color: t.textMuted, fontWeight: 400 }}>
+                        {item.role === 'assistant' ? ' · AI' : ' · guest'}
+                      </span>
                     </div>
-                    <div style={{ fontSize: 13, color: t.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <div style={{
+                      fontSize: 13.5, color: t.textMuted, marginTop: 2,
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }}>
                       {item.title}
                     </div>
-                    <div style={{ fontSize: 12, color: t.textSubtle, whiteSpace: 'nowrap' }}>
-                      {formatRelativeTime(item.timestamp)}
-                    </div>
-                  </motion.div>
-                )
-              })
+                  </div>
+                  <div style={{ fontSize: 12, color: t.textSubtle, whiteSpace: 'nowrap', paddingTop: 2, fontVariantNumeric: 'tabular-nums' }}>
+                    {formatRelativeTime(item.timestamp)}
+                  </div>
+                </div>
+              ))
             )}
-          </motion.section>
+
+            <div style={{
+              padding: '12px 24px',
+              borderTop: `1px solid ${t.border}`,
+              background: t.bgSurfaceMuted,
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            }}>
+              <span style={{ fontSize: 12, color: t.textMuted }}>
+                Showing {recentActivity.length} most recent events
+              </span>
+              <span style={{ fontSize: 12, color: t.green, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <IcCheck /> All caught up
+              </span>
+            </div>
+          </section>
 
         </main>
       )}

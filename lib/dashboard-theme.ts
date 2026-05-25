@@ -82,3 +82,13 @@ export const cardMuted = {
 }
 
 export type DashboardTheme = typeof t
+
+export const sidebar = {
+  bg: 'var(--t-sidebar-bg)',
+  text: 'var(--t-sidebar-text)',
+  textMuted: 'var(--t-sidebar-text-muted)',
+  textSubtle: 'var(--t-sidebar-text-subtle)',
+  border: 'var(--t-sidebar-border)',
+  surface: 'var(--t-sidebar-surface)',
+  surfaceHover: 'var(--t-sidebar-surface-hover)',
+}

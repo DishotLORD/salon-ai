@@ -18,6 +18,7 @@ export type Reservation = {
   scheduledAt: Date
   status: ResStatus
   specialRequests: string
+  customerId?: string | null
 }
 
 export type ReservationCardProps = {
@@ -33,6 +34,7 @@ export type ReservationCardProps = {
   onCancel?: (id: string) => void | Promise<void>
   onDelete?: (id: string) => void | Promise<void>
   onEdit?: (reservation: Reservation) => void
+  onGuestClick?: (customerId: string, guestName: string) => void
 }
 
 // ─── Status tokens ────────────────────────────────────────────────────────────
@@ -239,6 +241,7 @@ export function ReservationCard({
   onCancel,
   onDelete,
   onEdit,
+  onGuestClick,
 }: ReservationCardProps) {
   const reduceMotion = useReducedMotion()
   const [activeAction, setActiveAction] = useState<string | null>(null)
@@ -292,10 +295,18 @@ export function ReservationCard({
           </span>
 
           {/* Name */}
-          <span style={{
-            fontSize: 13, fontWeight: 600, color: t.text,
-            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          }}>
+          <span
+            onClick={() => r.customerId && onGuestClick?.(r.customerId, r.guestName)}
+            style={{
+              fontSize: 13, fontWeight: 600, color: t.text,
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              cursor: r.customerId && onGuestClick ? 'pointer' : 'default',
+              borderBottom: r.customerId && onGuestClick ? `1px dashed ${t.borderStrong}` : 'none',
+              transition: 'color 0.15s',
+            }}
+            onMouseEnter={(e) => { if (r.customerId && onGuestClick) (e.currentTarget as HTMLElement).style.color = t.accent }}
+            onMouseLeave={(e) => { if (r.customerId && onGuestClick) (e.currentTarget as HTMLElement).style.color = t.text }}
+          >
             {r.guestName}
           </span>
 
@@ -447,10 +458,19 @@ export function ReservationCard({
 
           {/* Name + meta */}
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{
-              fontSize: 14, fontWeight: 700, color: t.text, lineHeight: 1.2,
-              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-            }}>
+            <div
+              onClick={() => r.customerId && onGuestClick?.(r.customerId, r.guestName)}
+              style={{
+                fontSize: 14, fontWeight: 700, color: t.text, lineHeight: 1.2,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                cursor: r.customerId && onGuestClick ? 'pointer' : 'default',
+                display: 'inline-block', maxWidth: '100%',
+                borderBottom: r.customerId && onGuestClick ? `1px dashed ${t.borderStrong}` : 'none',
+                transition: 'color 0.15s',
+              }}
+              onMouseEnter={(e) => { if (r.customerId && onGuestClick) (e.currentTarget as HTMLElement).style.color = t.accent }}
+              onMouseLeave={(e) => { if (r.customerId && onGuestClick) (e.currentTarget as HTMLElement).style.color = t.text }}
+            >
               {r.guestName}
             </div>
 

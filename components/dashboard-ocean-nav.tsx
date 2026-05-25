@@ -8,7 +8,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { DashboardLogoutButton } from '@/components/dashboard-logout-button'
 import { drawerOverlay, drawerPanelLeft, oceanTransition } from '@/lib/ocean-motion'
 import { supabase } from '@/lib/supabase'
-import { t } from '@/lib/dashboard-theme'
+import { t, sidebar } from '@/lib/dashboard-theme'
 
 export type OceanDashboardNavId = 'Dashboard' | 'Chats' | 'Bookings' | 'CRM' | 'Settings'
 
@@ -160,7 +160,7 @@ function AnimatedWaveLogo() {
                 initial={{ y: 20, opacity: 0 }}
                 animate={{ y: 0, opacity: 1 }}
                 transition={{ duration: 0.4, delay: 0.35 + i * 0.05, ease: [0.22, 1, 0.36, 1] }}
-                style={{ color: t.text, display: 'inline-block' }}
+                style={{ color: sidebar.text, display: 'inline-block' }}
               >
                 {char}
               </motion.span>
@@ -170,7 +170,7 @@ function AnimatedWaveLogo() {
             initial={{ opacity: 0, x: -8 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.4, delay: 0.7 }}
-            style={{ fontSize: 10, color: t.textMuted, letterSpacing: '0.22em', textTransform: 'uppercase', marginTop: 4, fontWeight: 600 }}
+            style={{ fontSize: 10, color: sidebar.textMuted, letterSpacing: '0.22em', textTransform: 'uppercase', marginTop: 4, fontWeight: 600 }}
           >
             Restaurant AI
           </motion.div>
@@ -276,7 +276,7 @@ export function DashboardOceanNav({ activeNav, fillViewport, children }: Dashboa
                 padding: '11px 14px',
                 borderRadius: 12,
                 textDecoration: 'none',
-                color: active ? t.accent : t.textMuted,
+                color: active ? t.accent : sidebar.textMuted,
                 background: active ? t.accentSoftBg : 'transparent',
                 border: `1px solid ${active ? t.accentSoftBorder : 'transparent'}`,
                 fontSize: 14,
@@ -287,15 +287,15 @@ export function DashboardOceanNav({ activeNav, fillViewport, children }: Dashboa
               }}
               onMouseEnter={(e) => {
                 if (!active) {
-                  e.currentTarget.style.background = 'rgba(255,255,255,0.05)'
-                  e.currentTarget.style.color = t.text
-                  e.currentTarget.style.borderColor = t.borderSoft
+                  e.currentTarget.style.background = sidebar.surfaceHover
+                  e.currentTarget.style.color = sidebar.text
+                  e.currentTarget.style.borderColor = sidebar.border
                 }
               }}
               onMouseLeave={(e) => {
                 if (!active) {
                   e.currentTarget.style.background = 'transparent'
-                  e.currentTarget.style.color = t.textMuted
+                  e.currentTarget.style.color = sidebar.textMuted
                   e.currentTarget.style.borderColor = 'transparent'
                 }
               }}
@@ -327,8 +327,8 @@ export function DashboardOceanNav({ activeNav, fillViewport, children }: Dashboa
       style={{
         width: SIDEBAR_WIDTH,
         height: '100vh',
-        background: t.bgSidebar,
-        borderRight: `1px solid ${t.border}`,
+        background: sidebar.bg,
+        borderRight: `1px solid ${sidebar.border}`,
         display: 'flex',
         flexDirection: 'column',
         position: 'relative',
@@ -339,7 +339,7 @@ export function DashboardOceanNav({ activeNav, fillViewport, children }: Dashboa
     >
       <AnimatedWaveLogo />
 
-      <div style={{ margin: '0 16px 12px', height: 1, background: t.border }} />
+      <div style={{ margin: '0 16px 12px', height: 1, background: sidebar.border }} />
 
       {navList}
 
@@ -367,15 +367,15 @@ export function DashboardOceanNav({ activeNav, fillViewport, children }: Dashboa
           />
           <div>
             <div style={{ fontSize: 12, fontWeight: 600, color: t.accent }}>AI Online</div>
-            <div style={{ fontSize: 11, color: t.textMuted, marginTop: 1 }}>Ready for service</div>
+            <div style={{ fontSize: 11, color: sidebar.textMuted, marginTop: 1 }}>Ready for service</div>
           </div>
         </div>
 
         {/* Usage card */}
         <div style={{
           borderRadius: 12,
-          border: `1px solid ${t.border}`,
-          background: 'rgba(255,255,255,0.02)',
+          border: `1px solid ${sidebar.border}`,
+          background: sidebar.surface,
           padding: '12px 14px',
           display: 'flex',
           flexDirection: 'column',
@@ -384,10 +384,10 @@ export function DashboardOceanNav({ activeNav, fillViewport, children }: Dashboa
           {/* Usage row */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: 11, color: t.textMuted }}>Free plan</span>
-              <span style={{ fontSize: 11, color: t.textSubtle }}>61 / 500</span>
+              <span style={{ fontSize: 11, color: sidebar.textMuted }}>Free plan</span>
+              <span style={{ fontSize: 11, color: sidebar.textSubtle }}>61 / 500</span>
             </div>
-            <div style={{ height: 3, borderRadius: 99, background: 'rgba(255,255,255,0.08)', overflow: 'hidden' }}>
+            <div style={{ height: 3, borderRadius: 99, background: sidebar.surfaceHover, overflow: 'hidden' }}>
               <motion.div
                 initial={{ width: 0 }}
                 animate={{ width: '12.2%' }}
@@ -403,12 +403,12 @@ export function DashboardOceanNav({ activeNav, fillViewport, children }: Dashboa
             whileTap={{ scale: 0.98 }}
             style={{
               borderRadius: 8,
-              border: `1px solid ${t.border}`,
+              border: `1px solid ${sidebar.border}`,
               background: 'transparent',
               padding: '7px 12px',
               textAlign: 'center',
               cursor: 'pointer',
-              color: t.textMuted,
+              color: sidebar.textMuted,
               fontSize: 12,
               fontWeight: 500,
               transition: 'background 0.15s, border-color 0.15s, color 0.15s',
@@ -433,9 +433,9 @@ export function DashboardOceanNav({ activeNav, fillViewport, children }: Dashboa
             justifyContent: 'space-between',
             padding: '8px 12px',
             borderRadius: 10,
-            border: `1px solid ${t.border}`,
+            border: `1px solid ${sidebar.border}`,
             background: 'transparent',
-            color: t.textMuted,
+            color: sidebar.textMuted,
             fontSize: 12,
             fontWeight: 500,
             cursor: 'pointer',
@@ -447,7 +447,7 @@ export function DashboardOceanNav({ activeNav, fillViewport, children }: Dashboa
           }}
           onMouseLeave={(e) => {
             e.currentTarget.style.background = 'transparent'
-            e.currentTarget.style.borderColor = t.border
+            e.currentTarget.style.borderColor = sidebar.border
           }}
         >
           <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -460,8 +460,8 @@ export function DashboardOceanNav({ activeNav, fillViewport, children }: Dashboa
             width: 34,
             height: 18,
             borderRadius: 9,
-            background: theme === 'dark' ? t.accent : 'rgba(255,255,255,0.15)',
-            border: `1px solid ${theme === 'dark' ? 'transparent' : t.border}`,
+            background: theme === 'dark' ? t.accent : sidebar.surfaceHover,
+            border: `1px solid ${theme === 'dark' ? 'transparent' : sidebar.border}`,
             position: 'relative',
             flexShrink: 0,
             transition: 'background 0.2s',
@@ -482,17 +482,17 @@ export function DashboardOceanNav({ activeNav, fillViewport, children }: Dashboa
       </div>
 
       {/* Bottom — profile */}
-      <div style={{ padding: '12px 16px 16px', borderTop: `1px solid ${t.border}` }}>
+      <div style={{ padding: '12px 16px 16px', borderTop: `1px solid ${sidebar.border}` }}>
         <motion.div
-          whileHover={{ background: 'rgba(255,255,255,0.06)' }}
+          whileHover={{ background: sidebar.surfaceHover }}
           style={{
             display: 'flex',
             alignItems: 'center',
             gap: 10,
             padding: '10px 12px',
             borderRadius: 12,
-            background: 'rgba(255,255,255,0.03)',
-            border: `1px solid ${t.border}`,
+            background: sidebar.surface,
+            border: `1px solid ${sidebar.border}`,
             cursor: 'pointer',
             transition: 'background 0.15s',
           }}
@@ -511,14 +511,14 @@ export function DashboardOceanNav({ activeNav, fillViewport, children }: Dashboa
 
           {/* Info */}
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: t.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: sidebar.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {userEmail ?? 'Account'}
             </div>
-            <div style={{ fontSize: 11, color: t.textMuted, marginTop: 1 }}>Free plan</div>
+            <div style={{ fontSize: 11, color: sidebar.textMuted, marginTop: 1 }}>Free plan</div>
           </div>
 
           {/* Log out icon */}
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={t.textSubtle} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={sidebar.textSubtle} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
             <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
             <polyline points="16 17 21 12 16 7" />
             <line x1="21" y1="12" x2="9" y2="12" />
