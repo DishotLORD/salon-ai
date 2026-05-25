@@ -1,13 +1,37 @@
 'use client'
 
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { BookingsDayChips } from '@/components/bookings-day-chips'
+import { BookingsLightCalendar } from '@/components/bookings-light-calendar'
+import { BookingsDayTimeline } from '@/components/bookings-day-timeline'
 import { DashboardOceanNav } from '@/components/dashboard-ocean-nav'
+import { TimeDialPicker } from '@/components/time-dial-picker'
+import {
+  DEFAULT_OPERATING_HOURS,
+  formatHoursRangeLabel,
+  getDayHoursForDate,
+  peaksForDate,
+  parseOperatingHours,
+  scheduleKindLabel,
+  timelineRangeFromDayHours,
+  type OperatingHours,
+} from '@/lib/operating-hours'
 import { ReservationCard, type Reservation, type ResStatus } from '@/components/reservation-card'
 import { oceanTransition } from '@/lib/ocean-motion'
 import { supabase } from '@/lib/supabase'
 import { card, t } from '@/lib/dashboard-theme'
+import { bk, bkCard } from '@/lib/bookings-compact-ui'
+import { toDateIso, toWallClock } from '@/lib/reservation-schedule'
+import {
+  buildTimeSlots,
+  minutesToTime,
+  snapToGrid,
+  timeToMinutes,
+  timeToTimelineMinutes,
+} from '@/lib/time-timeline'
 
 type DbRow = {
   id: string
@@ -76,6 +100,7 @@ function startOfWeekMon(d: Date) {
 function fmtTime(d: Date) {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
+
 
 function statusColor(s: ResStatus) {
   const map: Record<ResStatus, { bg: string; border: string; text: string }> = {
@@ -180,7 +205,7 @@ function MonthCalendar({
               type="button"
               onClick={() => onSelectDay(date)}
               style={{
-                minHeight: 52,
+                minHeight: 44,
                 padding: 0,
                 background: isSelected ? t.accentSoftBg : t.bgSurface,
                 border: 'none',
@@ -200,7 +225,7 @@ function MonthCalendar({
               }}
             >
               {/* Count badge (left) + day number (right) */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 7px 0' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 5px 0' }}>
                 {count > 0 ? (
                   <span style={{
                     minWidth: 18,
@@ -670,8 +695,140 @@ function ReservationListView({
       )
 }
 
-// ─── Reservation Modal (Add + Edit) ───────────────────────────────────────────
 const STATUS_OPTIONS: ResStatus[] = ['pending', 'confirmed', 'seated', 'cancelled', 'no-show']
+
+const MODAL_FONT = {
+  playfair: 'var(--font-playfair), Georgia, serif',
+  jakarta: 'var(--font-plus-jakarta), system-ui, sans-serif',
+} as const
+
+const STATUS_ICONS: Record<ResStatus, string> = {
+  pending: '◷',
+  confirmed: '✦',
+  seated: '◎',
+  cancelled: '✕',
+  'no-show': '○',
+}
+
+function buildServiceName(
+  guestName: string,
+  partySize: number,
+  tableNumber: string,
+  notes: string,
+): string {
+  return [
+    guestName.trim().replace(/\u00b7/g, '-'),
+    `Party of ${partySize}`,
+    tableNumber.trim() ? `Table ${tableNumber.trim()}` : null,
+    notes.trim() ? `Notes: ${notes.trim()}` : null,
+  ]
+    .filter(Boolean)
+    .join(' \u00b7 ')
+}
+
+function PartySizeCompact({
+  value,
+  onChange,
+  reduceMotion,
+}: {
+  value: number
+  onChange: (n: number) => void
+  reduceMotion: boolean | null
+}) {
+  const quick = [1, 2, 3, 4, 5, 6, 7, 8]
+  const clamp = (n: number) => Math.min(50, Math.max(1, n))
+
+  const stepBtn: CSSProperties = {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    border: `1px solid ${t.border}`,
+    background: t.bgSurface,
+    color: t.text,
+    fontSize: 18,
+    cursor: 'pointer',
+    display: 'grid',
+    placeItems: 'center',
+    flexShrink: 0,
+  }
+
+  return (
+    <div style={{ display: 'grid', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <motion.button
+          type="button"
+          aria-label="Decrease party size"
+          onClick={() => onChange(clamp(value - 1))}
+          whileTap={reduceMotion ? undefined : { scale: 0.92 }}
+          disabled={value <= 1}
+          style={{ ...stepBtn, opacity: value <= 1 ? 0.4 : 1 }}
+        >
+          −
+        </motion.button>
+        <motion.div
+          key={value}
+          initial={reduceMotion ? false : { scale: 0.9, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ type: 'spring', stiffness: 500, damping: 28 }}
+          style={{
+            minWidth: 44,
+            textAlign: 'center',
+            fontFamily: MODAL_FONT.playfair,
+            fontSize: 26,
+            fontWeight: 600,
+            color: t.text,
+            lineHeight: 1,
+            fontVariantNumeric: 'tabular-nums',
+          }}
+        >
+          {value}
+        </motion.div>
+        <motion.button
+          type="button"
+          aria-label="Increase party size"
+          onClick={() => onChange(clamp(value + 1))}
+          whileTap={reduceMotion ? undefined : { scale: 0.92 }}
+          disabled={value >= 50}
+          style={{ ...stepBtn, opacity: value >= 50 ? 0.4 : 1 }}
+        >
+          +
+        </motion.button>
+        <span style={{ fontSize: 12, color: t.textMuted, fontFamily: MODAL_FONT.jakarta }}>
+          {value === 1 ? 'guest' : 'guests'}
+        </span>
+      </div>
+      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+        {quick.map((n) => {
+          const active = value === n
+          return (
+            <motion.button
+              key={n}
+              type="button"
+              onClick={() => onChange(n)}
+              whileTap={reduceMotion ? undefined : { scale: 0.94 }}
+              style={{
+                minWidth: 32,
+                height: 28,
+                padding: '0 8px',
+                borderRadius: 8,
+                border: `1px solid ${active ? t.accentSoftBorder : t.border}`,
+                background: active ? t.accentSoftBg : t.bgSurfaceMuted,
+                color: active ? t.accent : t.textMuted,
+                fontSize: 12,
+                fontWeight: active ? 700 : 500,
+                cursor: 'pointer',
+                fontFamily: MODAL_FONT.jakarta,
+                boxShadow: active ? t.accentGlow : 'none',
+              }}
+            >
+              {n}
+            </motion.button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
 
 function ReservationModal({
   mode,
@@ -692,44 +849,117 @@ function ReservationModal({
 }) {
   const reduceMotion = useReducedMotion()
   const isEdit = mode === 'edit' && editReservation !== null
+  const appointmentId = editReservation?.id ?? null
 
   const nowDefault = new Date()
   const defaultDate = initialDate ?? nowDefault.toISOString().split('T')[0]
   const defaultTime = `${String(nowDefault.getHours() + 1).padStart(2, '0')}:00`
 
-  const [guestName, setGuestName] = useState(
-    isEdit ? editReservation!.guestName : '',
-  )
-  const [partySize, setPartySize] = useState(isEdit ? editReservation!.partySize : 2)
-  const [partySizeInput, setPartySizeInput] = useState(String(isEdit ? editReservation!.partySize : 2))
-  const [date, setDate] = useState(() => {
-    if (isEdit) {
-      const d = editReservation!.scheduledAt
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-    }
-    return defaultDate
-  })
-  const [time, setTime] = useState(() => {
-    if (isEdit) {
-      const h = String(editReservation!.scheduledAt.getHours()).padStart(2, '0')
-      const m = String(editReservation!.scheduledAt.getMinutes()).padStart(2, '0')
-      return `${h}:${m}`
-    }
-    return defaultTime
-  })
-  const [tableNumber, setTableNumber] = useState(
-    isEdit && editReservation!.tableNumber !== '—' ? editReservation!.tableNumber : '',
-  )
-  const [specialRequests, setSpecialRequests] = useState(
-    isEdit ? editReservation!.specialRequests : '',
-  )
-  const [editStatus, setEditStatus] = useState<ResStatus>(
-    isEdit ? editReservation!.status : 'pending',
-  )
+  const [hydrating, setHydrating] = useState(isEdit)
+  const [guestName, setGuestName] = useState('')
+  const [partySize, setPartySize] = useState(2)
+  const [date, setDate] = useState(defaultDate)
+  const [time, setTime] = useState(defaultTime)
+  const [tableNumber, setTableNumber] = useState('')
+  const [specialRequests, setSpecialRequests] = useState('')
+  const [editStatus, setEditStatus] = useState<ResStatus>('pending')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [focusedField, setFocusedField] = useState<string | null>(null)
   const dateInputRef = useRef<HTMLInputElement>(null)
+  const [operatingHours, setOperatingHours] = useState<OperatingHours>(DEFAULT_OPERATING_HOURS)
+
+  const dayHours = useMemo(() => getDayHoursForDate(operatingHours, date), [operatingHours, date])
+  const timeRange = useMemo(() => timelineRangeFromDayHours(dayHours), [dayHours])
+  const reservationPeaks = useMemo(
+    () => (timeRange ? peaksForDate(date, timeRange) : []),
+    [date, timeRange],
+  )
+
+  useEffect(() => {
+    if (!businessId) return
+    let cancelled = false
+    void (async () => {
+      const { data } = await supabase
+        .from('businesses')
+        .select('operating_hours')
+        .eq('id', businessId)
+        .maybeSingle()
+      if (cancelled || !data) return
+      setOperatingHours(parseOperatingHours((data as { operating_hours?: unknown }).operating_hours))
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [businessId])
+
+  const applyReservation = useCallback(
+    (r: Reservation) => {
+      const d = r.scheduledAt
+      const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      const row = getDayHoursForDate(operatingHours, dateStr)
+      const range = timelineRangeFromDayHours(row)
+      setGuestName(r.guestName)
+      setPartySize(r.partySize)
+      setDate(dateStr)
+      setTime(
+        range
+          ? snapToGrid(d.getHours() * 60 + d.getMinutes(), range)
+          : `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`,
+      )
+      setTableNumber(r.tableNumber !== '—' ? r.tableNumber : '')
+      setSpecialRequests(r.specialRequests)
+      setEditStatus(r.status)
+    },
+    [operatingHours],
+  )
+
+  useEffect(() => {
+    if (!timeRange) return
+    setTime((prev) => snapToGrid(timeToMinutes(prev), timeRange))
+  }, [date, timeRange])
+
+  useEffect(() => {
+    if (!isEdit || !appointmentId) {
+      if (!isEdit) {
+        setGuestName('')
+        setPartySize(2)
+        setDate(defaultDate)
+        setTime(defaultTime)
+        setTableNumber('')
+        setSpecialRequests('')
+        setEditStatus('pending')
+      }
+      setHydrating(false)
+      return
+    }
+
+    let cancelled = false
+    setHydrating(true)
+    setError('')
+
+    void (async () => {
+      const { data, error: fetchError } = await supabase
+        .from('appointments')
+        .select('id, service_name, scheduled_at, status, customer_id, notes')
+        .eq('id', appointmentId)
+        .single()
+
+      if (cancelled) return
+
+      if (fetchError || !data) {
+        applyReservation(editReservation!)
+        setError(fetchError?.message ?? 'Could not load reservation.')
+      } else {
+        applyReservation(parseReservation(data as DbRow))
+      }
+      setHydrating(false)
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [isEdit, appointmentId, defaultDate, defaultTime, editReservation, applyReservation])
 
   const handleSubmit = async () => {
     if (!guestName.trim()) {
@@ -738,6 +968,10 @@ function ReservationModal({
     }
     if (!date || !time) {
       setError('Date and time are required.')
+      return
+    }
+    if (!timeRange) {
+      setError('The restaurant is closed on this day — choose another date.')
       return
     }
     if (!businessId && !isEdit) {
@@ -750,24 +984,19 @@ function ReservationModal({
 
     const wallClock = `${date}T${time}:00`
     const scheduledAt = new Date(wallClock)
+    const notesValue = specialRequests.trim() || null
+    const serviceName = buildServiceName(guestName, partySize, tableNumber, specialRequests)
 
-    const svcParts = [
-      guestName.trim().replace(/\u00b7/g, '-'),
-      `Party of ${partySize}`,
-      tableNumber.trim() ? `Table ${tableNumber.trim()}` : null,
-      specialRequests.trim() ? `Notes: ${specialRequests.trim()}` : null,
-    ].filter(Boolean)
-    const serviceName = svcParts.join(' \u00b7 ')
-
-    if (isEdit) {
+    if (isEdit && editReservation) {
       const { error: updateError } = await supabase
         .from('appointments')
         .update({
           service_name: serviceName,
           scheduled_at: wallClock,
           status: editStatus,
+          notes: notesValue,
         })
-        .eq('id', editReservation!.id)
+        .eq('id', editReservation.id)
 
       setSaving(false)
       if (updateError) {
@@ -776,7 +1005,7 @@ function ReservationModal({
       }
 
       onUpdated({
-        ...editReservation!,
+        ...editReservation,
         guestName: guestName.trim(),
         partySize,
         tableNumber: tableNumber.trim() || '—',
@@ -794,6 +1023,7 @@ function ReservationModal({
         service_name: serviceName,
         scheduled_at: wallClock,
         status: 'confirmed',
+        notes: notesValue,
       })
       .select('id, service_name, scheduled_at, status, customer_id, notes')
       .single()
@@ -807,331 +1037,254 @@ function ReservationModal({
     onAdded(parseReservation(data as DbRow))
   }
 
-  // ── UI helpers ───────────────────────────────────────────────────────────────
-  const TIME_SLOTS = Array.from({ length: 22 }, (_, i) => {
-    const totalMins = 12 * 60 + i * 30
-    const h = Math.floor(totalMins / 60)
-    const m = totalMins % 60
-    const value = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
-    const period = h < 12 ? 'AM' : 'PM'
-    const dh = h > 12 ? h - 12 : h
-    return { value, label: `${dh}:${String(m).padStart(2, '0')} ${period}` }
-  })
-
-  const displayDate = date
-    ? new Date(date + 'T12:00:00').toLocaleDateString(undefined, {
-        weekday: 'long',
-        month: 'long',
-        day: 'numeric',
-      })
-    : 'Select date'
-
   const guestFloating = focusedField === 'guest' || guestName.length > 0
 
-  // Luxury palette — these are intentional hardcoded brand values for this modal
-  const NAVY = '#050d1a'
-  const SURFACE = '#091525'
-  const SKY = '#38bdf8'
-  const SKY_GLOW = 'rgba(56,189,248,0.18)'
-  const BORDER_REST = 'rgba(56,189,248,0.14)'
-  const TXT = '#deeeff'
-  const TXT_MUTED = '#7096b8'
-  const TXT_SUBTLE = '#3a5a78'
+  const fieldFocus = (field: string): CSSProperties =>
+    focusedField === field
+      ? { border: `1.5px solid ${t.accent}`, boxShadow: `0 0 0 3px ${t.accentSoftBg}` }
+      : { border: `1px solid ${t.border}` }
 
-  const inp: React.CSSProperties = {
+  const inp: CSSProperties = {
     width: '100%',
-    borderRadius: 12,
-    background: SURFACE,
-    color: TXT,
-    paddingLeft: 16,
-    paddingRight: 16,
-    fontSize: 15,
+    borderRadius: 10,
+    background: t.bgSurface,
+    color: t.text,
+    fontSize: 14,
     outline: 'none',
-    fontFamily: 'inherit',
+    fontFamily: MODAL_FONT.jakarta,
     boxSizing: 'border-box',
-    transition: 'border-color 0.18s, box-shadow 0.18s',
+    transition: 'border-color 0.18s ease, box-shadow 0.18s ease',
   }
 
-  const iField = (field: string): React.CSSProperties =>
-    focusedField === field
-      ? { border: `1px solid ${SKY}`, boxShadow: `0 0 0 3px ${SKY_GLOW}` }
-      : { border: `1px solid ${BORDER_REST}` }
-
-  const secLabel: React.CSSProperties = {
+  const sectionLabel: CSSProperties = {
     display: 'block',
-    color: SKY,
+    marginBottom: 6,
+    color: t.textMuted,
     fontSize: 10,
     fontWeight: 700,
-    letterSpacing: '0.18em',
+    letterSpacing: '0.14em',
     textTransform: 'uppercase',
-    marginBottom: 10,
-  }
-
-  const stepBtn: React.CSSProperties = {
-    width: 44,
-    height: 44,
-    borderRadius: '50%',
-    border: `1px solid ${BORDER_REST}`,
-    background: NAVY,
-    color: SKY,
-    fontSize: 22,
-    cursor: 'pointer',
-    display: 'grid',
-    placeItems: 'center',
-    flexShrink: 0,
+    fontFamily: MODAL_FONT.jakarta,
   }
 
   return (
     <motion.div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="reservation-modal-title"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      transition={{ duration: 0.22 }}
+      transition={{ duration: 0.28 }}
       onClick={onClose}
       style={{
         position: 'fixed',
         inset: 0,
+        zIndex: 1000,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        zIndex: 1000,
-        background: 'rgba(2,8,20,0.88)',
-        backdropFilter: 'blur(4px)',
-        WebkitBackdropFilter: 'blur(4px)',
+        padding: 16,
+        background: 'rgba(6,14,28,0.72)',
+        backdropFilter: 'blur(12px)',
+        WebkitBackdropFilter: 'blur(12px)',
       }}
     >
       <motion.div
-        initial={{ opacity: 0, y: 32 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: 24 }}
+        initial={{ opacity: 0, scale: 0.94, y: 10 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.96, y: 8 }}
         transition={
           reduceMotion
             ? { duration: 0.15 }
-            : { duration: 0.3, ease: [0.16, 1, 0.3, 1] }
+            : { duration: 0.32, ease: [0.22, 1, 0.36, 1] }
         }
         onClick={(e) => e.stopPropagation()}
         style={{
           position: 'relative',
-          width: 520,
-          maxWidth: '95vw',
-          maxHeight: '92vh',
-          overflowY: 'auto',
-          background: NAVY,
-          borderRadius: 20,
-          border: '1px solid rgba(56,189,248,0.18)',
-          boxShadow: '0 32px 64px rgba(0,0,0,0.72), 0 0 0 1px rgba(56,189,248,0.06)',
+          width: 'min(420px, 100%)',
+          maxHeight: 'min(88vh, 720px)',
+          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
+          borderRadius: 16,
+          background: 'var(--t-glass-bg)',
+          border: `1px solid ${t.border}`,
+          boxShadow: t.shadowLg,
+          fontFamily: MODAL_FONT.jakarta,
         }}
       >
-        {/* Sky-blue top cap */}
-        <div style={{ height: 3, background: SKY, borderRadius: '20px 20px 0 0' }} />
-
-        <div style={{ padding: '28px 32px 32px' }}>
-
-          {/* Header */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
-            <div>
+        <div
+          style={{
+            padding: '14px 18px 12px',
+            borderBottom: `1px solid ${t.border}`,
+            background: t.accentSoftBg,
+            flexShrink: 0,
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+            <div style={{ minWidth: 0 }}>
+              <p
+                style={{
+                  margin: '0 0 4px',
+                  fontSize: 10,
+                  fontWeight: 700,
+                  letterSpacing: '0.16em',
+                  textTransform: 'uppercase',
+                  color: t.accent,
+                  fontFamily: MODAL_FONT.jakarta,
+                }}
+              >
+                {isEdit ? 'Booking' : 'New'}
+              </p>
               <h2
+                id="reservation-modal-title"
                 style={{
                   margin: 0,
-                  color: '#f0f8ff',
-                  fontSize: 28,
-                  fontWeight: 700,
-                  fontFamily: 'var(--font-playfair)',
+                  fontFamily: MODAL_FONT.playfair,
+                  fontSize: 22,
+                  fontWeight: 600,
+                  color: t.text,
                   letterSpacing: '-0.02em',
                   lineHeight: 1.15,
                 }}
               >
-                {isEdit ? 'Edit booking' : 'New booking'}
+                {isEdit ? 'Edit reservation' : 'Add reservation'}
               </h2>
-              <p style={{ margin: '6px 0 0', color: TXT_MUTED, fontSize: 13 }}>
-                {isEdit ? 'Update reservation details' : date ? displayDate : 'Add reservation details'}
-              </p>
             </div>
-            <button
+            <motion.button
               type="button"
+              aria-label="Close"
               onClick={onClose}
+              whileHover={reduceMotion ? undefined : { scale: 1.05 }}
+              whileTap={reduceMotion ? undefined : { scale: 0.95 }}
               style={{
                 flexShrink: 0,
-                marginLeft: 16,
-                width: 34,
-                height: 34,
-                borderRadius: '50%',
-                border: `1px solid ${BORDER_REST}`,
-                background: 'transparent',
-                color: TXT_MUTED,
+                width: 32,
+                height: 32,
+                borderRadius: 8,
+                border: `1px solid ${t.border}`,
+                background: t.bgSurface,
+                color: t.textMuted,
                 cursor: 'pointer',
-                fontSize: 20,
+                fontSize: 18,
                 display: 'grid',
                 placeItems: 'center',
+                lineHeight: 1,
               }}
             >
               ×
-            </button>
+            </motion.button>
           </div>
+        </div>
 
-          <div style={{ height: 1, background: 'rgba(56,189,248,0.1)', marginBottom: 28 }} />
-
-          <div style={{ display: 'grid', gap: 22 }}>
-
-            {/* Guest name — floating label */}
-            <div style={{ position: 'relative' }}>
-              <input
-                type="text"
-                value={guestName}
-                onChange={(e) => setGuestName(e.target.value)}
-                onFocus={() => setFocusedField('guest')}
-                onBlur={() => setFocusedField(null)}
-                placeholder=""
-                style={{
-                  ...inp,
-                  ...iField('guest'),
-                  paddingTop: guestFloating ? 24 : 18,
-                  paddingBottom: guestFloating ? 10 : 18,
-                  fontSize: 16,
-                  fontWeight: 500,
-                }}
-              />
-              <span
-                style={{
-                  position: 'absolute',
-                  left: 16,
-                  top: guestFloating ? 8 : 17,
-                  fontSize: guestFloating ? 10 : 16,
-                  fontWeight: guestFloating ? 700 : 400,
-                  letterSpacing: guestFloating ? '0.18em' : 0,
-                  textTransform: guestFloating ? 'uppercase' : 'none',
-                  color: focusedField === 'guest' ? SKY : guestFloating ? TXT_MUTED : TXT_SUBTLE,
-                  pointerEvents: 'none',
-                  transition: 'all 0.18s ease',
-                  userSelect: 'none',
-                }}
-              >
-                Guest name
-              </span>
+        <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px 16px' }}>
+          {hydrating ? (
+            <div style={{ display: 'grid', gap: 10, padding: '12px 0' }}>
+              {[48, 40, 56, 40].map((h, i) => (
+                <motion.div
+                  key={i}
+                  animate={{ opacity: [0.35, 0.7, 0.35] }}
+                  transition={{ duration: 1.2, repeat: Infinity, delay: i * 0.1 }}
+                  style={{ height: h, borderRadius: 10, background: t.bgSurfaceMuted }}
+                />
+              ))}
             </div>
-
-            {/* Party size — quick-select grid + stepper overflow */}
-            <div>
-              <span style={secLabel}>Party size</span>
-              {/* Quick-select 1–8 */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(8, 1fr)', gap: 6, marginBottom: 8 }}>
-                {[1,2,3,4,5,6,7,8].map((n) => (
-                  <motion.button
-                    key={n}
-                    type="button"
-                    onClick={() => { setPartySize(n); setPartySizeInput(String(n)) }}
-                    whileTap={reduceMotion ? undefined : { scale: 0.9 }}
-                    style={{
-                      height: 44,
-                      borderRadius: 10,
-                      border: partySize === n ? `1px solid ${SKY}` : `1px solid ${BORDER_REST}`,
-                      background: partySize === n ? `rgba(56,189,248,0.14)` : SURFACE,
-                      color: partySize === n ? SKY : TXT_MUTED,
-                      fontSize: 15,
-                      fontWeight: partySize === n ? 700 : 500,
-                      cursor: 'pointer',
-                      transition: 'all 0.15s',
-                      boxShadow: partySize === n ? `0 0 0 2px rgba(56,189,248,0.18)` : 'none',
-                    }}
-                  >
-                    {n}
-                  </motion.button>
-                ))}
-              </div>
-              {/* Stepper for 9+ */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <motion.button
-                  type="button"
-                  onClick={() => { const n = Math.max(1, partySize - 1); setPartySize(n); setPartySizeInput(String(n)) }}
-                  whileTap={reduceMotion ? undefined : { scale: 0.88 }}
-                  style={{ ...stepBtn, width: 38, height: 38, fontSize: 18, opacity: partySize <= 1 ? 0.35 : 1 }}
-                >
-                  −
-                </motion.button>
-                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+          ) : (
+            <motion.div
+              initial="hidden"
+              animate="visible"
+              variants={{
+                hidden: {},
+                visible: { transition: { staggerChildren: 0.04, delayChildren: 0.02 } },
+              }}
+              style={{ display: 'grid', gap: 14 }}
+            >
+              {/* Guest */}
+              <motion.div variants={{ hidden: { opacity: 0, y: 10 }, visible: { opacity: 1, y: 0 } }}>
+                <div style={{ position: 'relative' }}>
                   <input
                     type="text"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
-                    value={partySizeInput}
-                    onChange={(e) => {
-                      const raw = e.target.value.replace(/\D/g, '')
-                      setPartySizeInput(raw)
-                      const v = parseInt(raw, 10)
-                      if (!isNaN(v) && v >= 1) setPartySize(Math.min(50, v))
-                    }}
-                    onFocus={() => setFocusedField('partySize')}
-                    onBlur={() => {
-                      setFocusedField(null)
-                      // restore valid value if field left empty
-                      const v = parseInt(partySizeInput, 10)
-                      const safe = isNaN(v) || v < 1 ? 1 : Math.min(50, v)
-                      setPartySize(safe)
-                      setPartySizeInput(String(safe))
-                    }}
+                    value={guestName}
+                    onChange={(e) => setGuestName(e.target.value)}
+                    onFocus={() => setFocusedField('guest')}
+                    onBlur={() => setFocusedField(null)}
+                    autoComplete="name"
                     style={{
-                      width: 48,
-                      background: 'transparent',
-                      border: 'none',
-                      outline: 'none',
-                      color: TXT,
-                      fontSize: 20,
-                      fontWeight: 700,
-                      textAlign: 'center',
-                      fontFamily: 'inherit',
+                      ...inp,
+                      ...fieldFocus('guest'),
+                      paddingTop: guestFloating ? 22 : 14,
+                      paddingBottom: guestFloating ? 8 : 14,
+                      paddingLeft: 14,
+                      paddingRight: 14,
+                      fontWeight: 500,
                     }}
                   />
-                  <span style={{ color: TXT_MUTED, fontSize: 13, userSelect: 'none' }}>
-                    {partySize === 1 ? 'guest' : 'guests'}
-                  </span>
+                  <label
+                    style={{
+                      position: 'absolute',
+                      left: 14,
+                      top: guestFloating ? 8 : 14,
+                      fontSize: guestFloating ? 10 : 14,
+                      fontWeight: guestFloating ? 700 : 400,
+                      letterSpacing: guestFloating ? '0.12em' : 0,
+                      textTransform: guestFloating ? 'uppercase' : 'none',
+                      color: focusedField === 'guest' ? t.accent : guestFloating ? t.textMuted : t.textSubtle,
+                      pointerEvents: 'none',
+                      transition: 'all 0.18s cubic-bezier(0.4,0,0.2,1)',
+                      fontFamily: MODAL_FONT.jakarta,
+                    }}
+                  >
+                    Guest name
+                  </label>
                 </div>
-                <motion.button
-                  type="button"
-                  onClick={() => { const n = Math.min(50, partySize + 1); setPartySize(n); setPartySizeInput(String(n)) }}
-                  whileTap={reduceMotion ? undefined : { scale: 0.88 }}
-                  style={{ ...stepBtn, width: 38, height: 38, fontSize: 18, opacity: partySize >= 50 ? 0.35 : 1 }}
-                >
-                  +
-                </motion.button>
-              </div>
-            </div>
+              </motion.div>
 
-            {/* Date + Time */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-              <div>
-                <span style={secLabel}>Date</span>
+              <motion.div variants={{ hidden: { opacity: 0, y: 8 }, visible: { opacity: 1, y: 0 } }}>
+                <span style={sectionLabel}>Party size</span>
+                <PartySizeCompact value={partySize} onChange={setPartySize} reduceMotion={reduceMotion} />
+              </motion.div>
+
+              <motion.div variants={{ hidden: { opacity: 0, y: 8 }, visible: { opacity: 1, y: 0 } }}>
+                <span style={sectionLabel}>Date</span>
                 <div
                   style={{
                     position: 'relative',
-                    background: SURFACE,
-                    border: `1px solid ${BORDER_REST}`,
-                    borderRadius: 12,
-                    height: 50,
-                    cursor: 'pointer',
+                    height: 42,
+                    borderRadius: 10,
+                    ...fieldFocus('date'),
+                    background: t.bgSurface,
                     display: 'flex',
                     alignItems: 'center',
-                    padding: '0 14px',
-                    gap: 10,
-                    overflow: 'hidden',
+                    padding: '0 12px',
+                    gap: 8,
+                    cursor: 'pointer',
                   }}
+                  onClick={() => dateInputRef.current?.showPicker?.() ?? dateInputRef.current?.click()}
                 >
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
-                    <rect x="1.5" y="3" width="13" height="11" rx="2" stroke={SKY} strokeWidth="1.2"/>
-                    <path d="M1.5 6.5h13" stroke={SKY} strokeWidth="1.2"/>
-                    <path d="M5 1.5V4M11 1.5V4" stroke={SKY} strokeWidth="1.2" strokeLinecap="round"/>
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
+                    <rect x="1.5" y="3" width="13" height="11" rx="2" stroke={t.accent} strokeWidth="1.2" />
+                    <path d="M1.5 6.5h13" stroke={t.accent} strokeWidth="1.2" />
+                    <path d="M5 1.5V4M11 1.5V4" stroke={t.accent} strokeWidth="1.2" strokeLinecap="round" />
                   </svg>
                   <span
                     style={{
-                      color: date ? TXT : TXT_SUBTLE,
-                      fontSize: 13,
-                      fontWeight: 500,
                       flex: 1,
+                      fontSize: 12,
+                      fontWeight: 500,
+                      color: date ? t.text : t.textSubtle,
                       overflow: 'hidden',
                       textOverflow: 'ellipsis',
                       whiteSpace: 'nowrap',
                     }}
                   >
-                    {displayDate}
+                    {date
+                      ? new Date(`${date}T12:00:00`).toLocaleDateString(undefined, {
+                          weekday: 'short',
+                          month: 'short',
+                          day: 'numeric',
+                        })
+                      : 'Select date'}
                   </span>
                   <input
                     ref={dateInputRef}
@@ -1139,201 +1292,206 @@ function ReservationModal({
                     value={date}
                     min={isEdit ? undefined : new Date().toISOString().split('T')[0]}
                     onChange={(e) => setDate(e.target.value)}
+                    onFocus={() => setFocusedField('date')}
+                    onBlur={() => setFocusedField(null)}
                     style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer', width: '100%' }}
                   />
                 </div>
-              </div>
+              </motion.div>
 
-              <div>
-                <span style={secLabel}>Time</span>
-                <div style={{ position: 'relative' }}>
-                  <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', zIndex: 1 }}
-                  >
-                    <circle cx="8" cy="8" r="6.25" stroke={SKY} strokeWidth="1.2"/>
-                    <path d="M8 5v3l2 1.5" stroke={SKY} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                  <select
-                    value={time}
-                    onChange={(e) => setTime(e.target.value)}
-                    onFocus={() => setFocusedField('time')}
-                    onBlur={() => setFocusedField(null)}
-                    style={{
-                      ...inp,
-                      ...iField('time'),
-                      paddingLeft: 42,
-                      paddingTop: 0,
-                      paddingBottom: 0,
-                      height: 50,
-                      appearance: 'none',
-                      WebkitAppearance: 'none',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    {TIME_SLOTS.map(({ value, label }) => (
-                      <option key={value} value={value} style={{ color: '#ffffff', background: '#091525' }}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            {/* Table */}
-            <div>
-              <span style={secLabel}>Table</span>
-              <input
-                type="text"
-                value={tableNumber}
-                onChange={(e) => setTableNumber(e.target.value)}
-                onFocus={() => setFocusedField('table')}
-                onBlur={() => setFocusedField(null)}
-                placeholder="Optional"
-                style={{
-                  ...inp,
-                  ...iField('table'),
-                  paddingTop: 16,
-                  paddingBottom: 16,
-                }}
-              />
-            </div>
-
-            {/* Status (edit only) */}
-            {isEdit && (
-              <div>
-                <span style={secLabel}>Status</span>
-                <select
-                  value={editStatus}
-                  onChange={(e) => setEditStatus(e.target.value as ResStatus)}
-                  onFocus={() => setFocusedField('status')}
-                  onBlur={() => setFocusedField(null)}
+              <motion.div variants={{ hidden: { opacity: 0, y: 8 }, visible: { opacity: 1, y: 0 } }}>
+                <span style={sectionLabel}>Time</span>
+                <p
                   style={{
-                    ...inp,
-                    ...iField('status'),
-                    paddingTop: 0,
-                    paddingBottom: 0,
-                    height: 50,
-                    appearance: 'none',
-                    WebkitAppearance: 'none',
-                    cursor: 'pointer',
+                    margin: '0 0 8px',
+                    fontSize: 11,
+                    color: t.textMuted,
+                    fontFamily: MODAL_FONT.jakarta,
+                    lineHeight: 1.4,
                   }}
                 >
-                  {STATUS_OPTIONS.map((s) => (
-                    <option key={s} value={s} style={{ color: '#ffffff', background: '#091525' }}>
-                      {s.charAt(0).toUpperCase() + s.slice(1)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
+                  {scheduleKindLabel(date)} · {formatHoursRangeLabel(dayHours)}
+                </p>
+                {timeRange ? (
+                  <TimeDialPicker
+                    value={time}
+                    onChange={setTime}
+                    range={timeRange}
+                    peaks={reservationPeaks}
+                    reduceMotion={reduceMotion}
+                  />
+                ) : (
+                  <div
+                    style={{
+                      borderRadius: 12,
+                      border: `1px dashed ${t.border}`,
+                      background: t.bgSurfaceMuted,
+                      padding: '16px 14px',
+                      fontSize: 13,
+                      color: t.textMuted,
+                      fontFamily: MODAL_FONT.jakarta,
+                      lineHeight: 1.5,
+                      textAlign: 'center',
+                    }}
+                  >
+                    Closed on this day — pick another date to set a time.
+                  </div>
+                )}
+              </motion.div>
 
-            {/* Notes */}
-            <div>
-              <span style={secLabel}>Notes</span>
-              <textarea
-                value={specialRequests}
-                onChange={(e) => setSpecialRequests(e.target.value)}
-                onFocus={() => setFocusedField('notes')}
-                onBlur={() => setFocusedField(null)}
-                placeholder="Dietary requirements, special occasion, seating preference..."
-                rows={3}
-                style={{
-                  ...inp,
-                  ...iField('notes'),
-                  paddingTop: 14,
-                  paddingBottom: 14,
-                  resize: 'none',
-                  lineHeight: 1.6,
-                }}
-              />
-            </div>
-
-            {/* Error */}
-            {error && (
-              <div
-                style={{
-                  padding: '12px 16px',
-                  borderRadius: 10,
-                  background: 'rgba(239,68,68,0.1)',
-                  border: '1px solid rgba(239,68,68,0.25)',
-                  color: '#f87171',
-                  fontSize: 13,
-                }}
-              >
-                {error}
-              </div>
-            )}
-
-            {/* Submit */}
-            <motion.button
-              type="button"
-              onClick={() => void handleSubmit()}
-              disabled={saving}
-              whileHover={saving || reduceMotion ? undefined : { scale: 1.02 }}
-              whileTap={saving || reduceMotion ? undefined : { scale: 0.97 }}
-              style={{
-                position: 'relative',
-                width: '100%',
-                height: 56,
-                border: 'none',
-                borderRadius: 12,
-                background: saving ? 'rgba(56,189,248,0.35)' : SKY,
-                color: saving ? 'rgba(5,13,26,0.5)' : NAVY,
-                fontWeight: 700,
-                fontSize: 15,
-                letterSpacing: '0.06em',
-                textTransform: 'uppercase',
-                cursor: saving ? 'not-allowed' : 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 8,
-                marginTop: 4,
-                overflow: 'hidden',
-              }}
-            >
-              {!saving && !reduceMotion && (
-                <motion.div
-                  animate={{ x: ['-120%', '280%'] }}
-                  transition={{ repeat: Infinity, duration: 2.8, ease: 'linear', repeatDelay: 1.4 }}
+              <motion.div variants={{ hidden: { opacity: 0, y: 8 }, visible: { opacity: 1, y: 0 } }}>
+                <span style={sectionLabel}>Table</span>
+                <input
+                  type="text"
+                  value={tableNumber}
+                  onChange={(e) => setTableNumber(e.target.value)}
+                  onFocus={() => setFocusedField('table')}
+                  onBlur={() => setFocusedField(null)}
+                  placeholder="Optional"
                   style={{
-                    position: 'absolute',
-                    top: 0,
-                    bottom: 0,
-                    width: '35%',
-                    background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.22), transparent)',
-                    pointerEvents: 'none',
+                    ...inp,
+                    ...fieldFocus('table'),
+                    padding: '11px 14px',
                   }}
                 />
+              </motion.div>
+
+              {isEdit && (
+                <motion.div variants={{ hidden: { opacity: 0, y: 8 }, visible: { opacity: 1, y: 0 } }}>
+                  <span style={sectionLabel}>Status</span>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {STATUS_OPTIONS.map((statusKey) => {
+                      const pal = statusColor(statusKey)
+                      const active = editStatus === statusKey
+                      const label =
+                        statusKey === 'no-show'
+                          ? 'No-show'
+                          : statusKey.charAt(0).toUpperCase() + statusKey.slice(1)
+                      return (
+                        <motion.button
+                          key={statusKey}
+                          type="button"
+                          onClick={() => setEditStatus(statusKey)}
+                          whileTap={reduceMotion ? undefined : { scale: 0.97 }}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 5,
+                            padding: '5px 9px',
+                            borderRadius: 999,
+                            border: `1px solid ${active ? pal.border : t.border}`,
+                            background: active ? pal.bg : t.bgSurfaceMuted,
+                            color: active ? pal.text : t.textMuted,
+                            cursor: 'pointer',
+                            fontFamily: MODAL_FONT.jakarta,
+                            fontSize: 10,
+                            fontWeight: active ? 700 : 500,
+                            boxShadow: active ? t.accentGlow : 'none',
+                          }}
+                        >
+                          <span style={{ fontSize: 13, lineHeight: 1 }}>{STATUS_ICONS[statusKey]}</span>
+                          {label}
+                        </motion.button>
+                      )
+                    })}
+                  </div>
+                </motion.div>
               )}
-              {saving ? (
-                <>
-                  <motion.span
-                    animate={{ rotate: 360 }}
-                    transition={{ repeat: Infinity, duration: 0.7, ease: 'linear' }}
-                    style={{
-                      width: 16,
-                      height: 16,
-                      borderRadius: '50%',
-                      border: '2px solid rgba(5,13,26,0.25)',
-                      borderTopColor: NAVY,
-                      display: 'inline-block',
-                    }}
-                  />
-                  {isEdit ? 'Saving…' : 'Confirming…'}
-                </>
-              ) : isEdit ? (
-                'Save Changes'
-              ) : (
-                'Confirm booking'
+
+              <motion.div variants={{ hidden: { opacity: 0, y: 8 }, visible: { opacity: 1, y: 0 } }}>
+                <span style={sectionLabel}>Notes</span>
+                <textarea
+                  value={specialRequests}
+                  onChange={(e) => setSpecialRequests(e.target.value)}
+                  onFocus={() => setFocusedField('notes')}
+                  onBlur={() => setFocusedField(null)}
+                  placeholder="Dietary, occasion, seating…"
+                  rows={2}
+                  style={{
+                    ...inp,
+                    ...fieldFocus('notes'),
+                    padding: '10px 14px',
+                    resize: 'vertical',
+                    minHeight: 64,
+                    lineHeight: 1.5,
+                  }}
+                />
+              </motion.div>
+
+              {error && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  style={{
+                    padding: '10px 12px',
+                    borderRadius: 8,
+                    background: t.dangerBg,
+                    border: `1px solid ${t.dangerBorder}`,
+                    color: t.danger,
+                    fontSize: 12,
+                  }}
+                >
+                  {error}
+                </motion.div>
               )}
-            </motion.button>
-          </div>
+            </motion.div>
+          )}
+        </div>
+
+        <div
+          style={{
+            padding: '12px 18px 14px',
+            borderTop: `1px solid ${t.border}`,
+            background: t.bgSurfaceMuted,
+            flexShrink: 0,
+          }}
+        >
+          <motion.button
+            type="button"
+            onClick={() => void handleSubmit()}
+            disabled={saving || hydrating}
+            whileHover={saving || hydrating || reduceMotion ? undefined : { scale: 1.01 }}
+            whileTap={saving || hydrating || reduceMotion ? undefined : { scale: 0.98 }}
+            style={{
+              width: '100%',
+              height: 44,
+              border: 'none',
+              borderRadius: 10,
+              background: saving || hydrating ? t.bgSubtle : t.accent,
+              color: saving || hydrating ? t.textSubtle : '#0f172a',
+              fontWeight: 600,
+              fontSize: 14,
+              cursor: saving || hydrating ? 'not-allowed' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+              fontFamily: MODAL_FONT.jakarta,
+              boxShadow: saving || hydrating ? 'none' : t.shadowGlow,
+            }}
+          >
+            {saving ? (
+              <>
+                <motion.span
+                  animate={{ rotate: 360 }}
+                  transition={{ repeat: Infinity, duration: 0.75, ease: 'linear' }}
+                  style={{
+                    width: 14,
+                    height: 14,
+                    borderRadius: '50%',
+                    border: '2px solid rgba(15,23,42,0.15)',
+                    borderTopColor: '#0f172a',
+                    display: 'inline-block',
+                  }}
+                />
+                {isEdit ? 'Saving…' : 'Confirming…'}
+              </>
+            ) : isEdit ? (
+              'Save changes'
+            ) : (
+              'Confirm booking'
+            )}
+          </motion.button>
         </div>
       </motion.div>
     </motion.div>
@@ -1341,6 +1499,7 @@ function ReservationModal({
 }
 
 // ─── Guest Profile Drawer ─────────────────────────────────────────────────────
+
 
 type GuestProfile = {
   id: string
@@ -1508,6 +1667,11 @@ export default function BookingsPage() {
   const [editReservation, setEditReservation] = useState<Reservation | null>(null)
   const [prefilledDate, setPrefilledDate] = useState<string | undefined>(undefined)
   const [guestDrawer, setGuestDrawer] = useState<{ customerId: string; guestName: string } | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'confirmed' | 'pending' | 'cancelled'>('all')
+  const [calendarView, setCalendarView] = useState<'month' | 'day'>('month')
+  const [operatingHours, setOperatingHours] = useState<OperatingHours>(DEFAULT_OPERATING_HOURS)
+  const [tableVisibleCount, setTableVisibleCount] = useState(10)
   const reduceMotion = useReducedMotion()
 
   const now = new Date()
@@ -1515,6 +1679,36 @@ export default function BookingsPage() {
   const displayMonth = new Date(today.getFullYear(), today.getMonth() + monthOffset, 1)
   const monthLabel = displayMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
   const effectiveDay = selectedDay ?? today
+  const effectiveDayIso = toDateIso(effectiveDay)
+
+  const dayHours = useMemo(
+    () => getDayHoursForDate(operatingHours, effectiveDayIso),
+    [operatingHours, effectiveDayIso],
+  )
+  const timeRange = useMemo(
+    () => timelineRangeFromDayHours(dayHours),
+    [dayHours],
+  )
+  const dayPeaks = useMemo(
+    () => (timeRange ? peaksForDate(effectiveDayIso, timeRange) : []),
+    [effectiveDayIso, timeRange],
+  )
+
+  const dayPanelReservations = useMemo(
+    () => reservations.filter((r) => isSameDay(r.scheduledAt, effectiveDay)),
+    [reservations, effectiveDay],
+  )
+
+  function navigateDayOffset(offset: number) {
+    const next = new Date(effectiveDay)
+    next.setDate(next.getDate() + offset)
+    setSelectedDay(next)
+    setTableVisibleCount(10)
+    const monthDiff =
+      (next.getFullYear() - today.getFullYear()) * 12 +
+      (next.getMonth() - today.getMonth())
+    setMonthOffset(monthDiff)
+  }
 
   // ─── Load data ─────────────────────────────────────────────────────────────
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -1629,7 +1823,51 @@ export default function BookingsPage() {
     }
   }, [monthOffset]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    if (!businessId) return
+    let cancelled = false
+    void (async () => {
+      const { data } = await supabase
+        .from('businesses')
+        .select('operating_hours')
+        .eq('id', businessId)
+        .maybeSingle()
+      if (!cancelled && data) {
+        setOperatingHours(
+          parseOperatingHours((data as { operating_hours?: unknown }).operating_hours),
+        )
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [businessId])
+
   // ─── Helpers ───────────────────────────────────────────────────────────────
+  async function rescheduleReservation(id: string, dateIso: string, time: string) {
+    if (!timeRange) {
+      setUpdateError('Restaurant is closed on this day.')
+      return
+    }
+    const slots = buildTimeSlots(timeRange)
+    const snapped = snapToGrid(timeToTimelineMinutes(time, timeRange), timeRange, slots)
+    const wallClock = toWallClock(dateIso, snapped)
+    const nextAt = new Date(wallClock)
+    const previous = reservations
+    setReservations((prev) =>
+      prev.map((r) => (r.id === id ? { ...r, scheduledAt: nextAt } : r)),
+    )
+    setUpdateError(null)
+    const { error } = await supabase
+      .from('appointments')
+      .update({ scheduled_at: wallClock })
+      .eq('id', id)
+    if (error) {
+      setReservations(previous)
+      setUpdateError("Couldn't reschedule. Please try again.")
+    }
+  }
+
   async function updateStatus(id: string, status: ResStatus) {
     const previous = reservations
     setReservations((prev) => prev.map((r) => (r.id === id ? { ...r, status } : r)))
@@ -1676,6 +1914,22 @@ export default function BookingsPage() {
     return { todayCovers, weekCount, pending }
   }, [reservations]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  const newStats = useMemo(() => {
+    const now2 = new Date()
+    const todayAll = reservations.filter((r) => isSameDay(r.scheduledAt, today))
+    const todayCount = todayAll.length
+    const upcomingList = todayAll
+      .filter((r) => r.scheduledAt > now2 && r.status !== 'cancelled' && r.status !== 'no-show')
+      .sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime())
+    const upcomingCount = upcomingList.length
+    const nextUpcomingTime = upcomingList.length > 0 ? fmtTime(upcomingList[0].scheduledAt) : null
+    const nextUpcomingId = upcomingList.length > 0 ? upcomingList[0].id : null
+    const confirmedCount = todayAll.filter((r) => r.status === 'confirmed').length
+    const confirmedPct = todayCount > 0 ? Math.round((confirmedCount / todayCount) * 100) : 0
+    const cancelledCount = todayAll.filter((r) => r.status === 'cancelled').length
+    return { todayCount, upcomingCount, nextUpcomingTime, nextUpcomingId, confirmedCount, confirmedPct, cancelledCount }
+  }, [reservations]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // ─── Right panel reservations ───────────────────────────────────────────────
   const rightReservations = useMemo(() => {
     if (rightTab === 'day') return reservations.filter((r) => isSameDay(r.scheduledAt, effectiveDay))
@@ -1688,19 +1942,60 @@ export default function BookingsPage() {
     return reservations
   }, [reservations, rightTab, effectiveDay]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  const filteredTableReservations = useMemo(() => {
+    let list = selectedDay
+      ? reservations.filter((r) => isSameDay(r.scheduledAt, selectedDay))
+      : reservations
+    if (statusFilter !== 'all') {
+      list = list.filter((r) => r.status === (statusFilter as ResStatus))
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase()
+      list = list.filter(
+        (r) =>
+          r.guestName.toLowerCase().includes(q) ||
+          (r.specialRequests ?? '').toLowerCase().includes(q),
+      )
+    }
+    return list
+  }, [reservations, selectedDay, statusFilter, searchQuery])
+
+  const lightStatusColors: Record<ResStatus, { bg: string; color: string }> = {
+    confirmed: { bg: '#dcfce7', color: '#16a34a' },
+    seated:    { bg: '#dbeafe', color: '#2563eb' },
+    pending:   { bg: '#fef3c7', color: '#d97706' },
+    cancelled: { bg: '#fee2e2', color: '#dc2626' },
+    'no-show': { bg: '#f1f5f9', color: '#64748b' },
+  }
+
   const showModal = showAddModal || editReservation !== null
 
   function handleDaySelect(d: Date) {
     setSelectedDay((prev) => (prev && isSameDay(prev, d) ? null : d))
     setRightTab('day')
+    setTableVisibleCount(10)
   }
 
   function handleAddForDay() {
-    const d = effectiveDay
-    const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-    setPrefilledDate(iso)
+    setPrefilledDate(effectiveDayIso)
     setShowAddModal(true)
   }
+
+  function setCalendarViewDay() {
+    setCalendarView('day')
+    if (!selectedDay) setSelectedDay(effectiveDay)
+  }
+
+  const calendarToggleBtn = (active: boolean): CSSProperties => ({
+    padding: '5px 12px',
+    borderRadius: bk.radiusSm,
+    border: active ? 'none' : bk.border,
+    background: active ? '#0f172a' : '#ffffff',
+    color: active ? '#ffffff' : '#64748b',
+    fontSize: bk.caption,
+    fontWeight: 600,
+    cursor: 'pointer',
+  })
 
   const RIGHT_TABS = [
     { key: 'day' as const, label: effectiveDay.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) },
@@ -1735,9 +2030,14 @@ export default function BookingsPage() {
 
   return (
     <>
-      <DashboardOceanNav activeNav="Bookings">
+      <DashboardOceanNav activeNav="Bookings" flatBackground="#f8fafc">
         {({ isMobile, openNav }) => (
-          <main style={{ paddingBottom: 48 }}>
+          <main style={{
+            background: '#f8fafc',
+            minHeight: '100vh',
+            margin: isMobile ? '-20px -16px' : '-36px',
+            padding: isMobile ? bk.pagePadMobile : bk.pagePad,
+          }}>
 
             {/* Mobile hamburger */}
             {isMobile && (
@@ -1752,21 +2052,21 @@ export default function BookingsPage() {
             )}
 
             {/* ── HEADER ── */}
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={oceanTransition(reduceMotion, { duration: 0.22 })}
-              style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}
-            >
-              <div>
-                <h1 style={{ margin: 0, color: t.text, fontSize: 30, fontWeight: 700, fontFamily: 'var(--font-playfair)', letterSpacing: '-0.03em' }}>
-                  Reservations
-                </h1>
-                <p style={{ margin: '4px 0 0', color: t.textMuted, fontSize: 13 }}>
-                  {monthLabel}
-                </p>
-              </div>
-              {isMobile && (
+            {isMobile ? (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={oceanTransition(reduceMotion, { duration: 0.22 })}
+                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}
+              >
+                <div>
+                  <h1 style={{ margin: 0, color: t.text, fontSize: bk.h1Mobile, fontWeight: 700, fontFamily: 'var(--font-playfair)', letterSpacing: '-0.03em' }}>
+                    Reservations
+                  </h1>
+                  <p style={{ margin: '4px 0 0', color: t.textMuted, fontSize: 13 }}>
+                    {monthLabel}
+                  </p>
+                </div>
                 <motion.button
                   type="button"
                   whileHover={reduceMotion ? undefined : { y: -1 }}
@@ -1776,8 +2076,80 @@ export default function BookingsPage() {
                 >
                   + New
                 </motion.button>
-              )}
-            </motion.div>
+              </motion.div>
+            ) : (
+              /* ── Desktop top bar ── */
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingBottom: 14, fontFamily: bk.font, flexWrap: 'wrap' as const }}>
+                <h1 style={{ margin: 0, fontSize: bk.h1, fontWeight: 700, color: '#0f172a', letterSpacing: '-0.02em', whiteSpace: 'nowrap' as const, marginRight: 6 }}>
+                  Reservations
+                </h1>
+
+                {/* Date navigator */}
+                <div style={{ display: 'flex', alignItems: 'center', background: '#ffffff', border: bk.border, borderRadius: bk.radiusSm, overflow: 'hidden' }}>
+                  <button type="button" onClick={() => navigateDayOffset(-1)} style={{ width: 30, height: bk.controlH, border: 'none', borderRight: '1px solid #e2e8f0', background: 'transparent', color: '#64748b', cursor: 'pointer', fontSize: 15, display: 'grid', placeItems: 'center' }}>‹</button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 10px' }}>
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                      <rect x="1" y="2.5" width="12" height="10" rx="1.5" stroke="#94a3b8" strokeWidth="1.2"/>
+                      <path d="M1 5.5h12" stroke="#94a3b8" strokeWidth="1.2"/>
+                      <path d="M4.5 1v2M9.5 1v2" stroke="#94a3b8" strokeWidth="1.2" strokeLinecap="round"/>
+                    </svg>
+                    <span style={{ fontSize: bk.body, fontWeight: 600, color: '#0f172a', whiteSpace: 'nowrap' as const }}>
+                      {effectiveDay.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                    </span>
+                  </div>
+                  <button type="button" onClick={() => navigateDayOffset(1)} style={{ width: 30, height: bk.controlH, border: 'none', borderLeft: '1px solid #e2e8f0', background: 'transparent', color: '#64748b', cursor: 'pointer', fontSize: 15, display: 'grid', placeItems: 'center' }}>›</button>
+                </div>
+
+                {/* Today pill */}
+                <button type="button" onClick={() => { setSelectedDay(today); setMonthOffset(0) }} style={{ padding: '6px 12px', background: '#ffffff', border: bk.border, borderRadius: bk.radiusSm, fontSize: bk.body, fontWeight: 500, color: '#0f172a', cursor: 'pointer', whiteSpace: 'nowrap' as const }}>
+                  Today
+                </button>
+
+                <div style={{ flex: 1 }} />
+
+                {/* Search */}
+                <div style={{ position: 'relative' as const, flex: '0 1 300px', minWidth: 180 }}>
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ position: 'absolute' as const, left: 10, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' as const }}>
+                    <circle cx="6" cy="6" r="4.5" stroke="#94a3b8" strokeWidth="1.2"/>
+                    <path d="M9.5 9.5L12 12" stroke="#94a3b8" strokeWidth="1.2" strokeLinecap="round"/>
+                  </svg>
+                  <input
+                    type="search"
+                    placeholder="Search by guest name, phone or email..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    style={{ width: '100%', padding: '6px 10px 6px 28px', background: '#ffffff', border: bk.border, borderRadius: bk.radiusSm, fontSize: bk.body, color: '#0f172a', outline: 'none', boxSizing: 'border-box' as const, fontFamily: 'inherit' }}
+                  />
+                </div>
+
+                {/* Filters */}
+                <button type="button" style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 12px', background: '#ffffff', border: bk.border, borderRadius: bk.radiusSm, fontSize: bk.body, fontWeight: 500, color: '#374151', cursor: 'pointer', whiteSpace: 'nowrap' as const }}>
+                  <svg width="14" height="10" viewBox="0 0 14 10" fill="none">
+                    <path d="M1 1.5h12M3 5h8M5 8.5h4" stroke="#64748b" strokeWidth="1.2" strokeLinecap="round"/>
+                  </svg>
+                  Filters
+                </button>
+
+                {/* + New Reservation */}
+                <button type="button" onClick={() => setShowAddModal(true)} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 14px', background: '#0f172a', border: 'none', borderRadius: bk.radiusSm, fontSize: bk.body, fontWeight: 600, color: '#ffffff', cursor: 'pointer', whiteSpace: 'nowrap' as const }}>
+                  <span style={{ fontSize: 14, lineHeight: 1 }}>+</span>
+                  New Reservation
+                </button>
+
+                {/* Notification bell */}
+                <div style={{ position: 'relative' as const, flexShrink: 0 }}>
+                  <button type="button" style={{ width: bk.controlH, height: bk.controlH, borderRadius: '50%', border: bk.border, background: '#ffffff', cursor: 'pointer', display: 'grid', placeItems: 'center' }}>
+                    <svg width="16" height="17" viewBox="0 0 16 17" fill="none">
+                      <path d="M8 1.5C5.515 1.5 3.5 3.515 3.5 6v3.25L2 11v.75h12V11l-1.5-1.75V6C12.5 3.515 10.485 1.5 8 1.5z" stroke="#374151" strokeWidth="1.2" strokeLinejoin="round"/>
+                      <path d="M6.5 12.25a1.5 1.5 0 0 0 3 0" stroke="#374151" strokeWidth="1.2" strokeLinecap="round"/>
+                    </svg>
+                  </button>
+                  <span style={{ position: 'absolute' as const, top: -1, right: -1, minWidth: 16, height: 16, borderRadius: 8, background: '#6366f1', color: '#fff', fontSize: 9, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px', border: '2px solid #f8fafc' }}>
+                    2
+                  </span>
+                </div>
+              </div>
+            )}
 
             {/* ── ERRORS ── */}
             {(loadError || updateError) && (
@@ -1823,6 +2195,15 @@ export default function BookingsPage() {
                   today={today}
                 />
 
+                <BookingsDayChips
+                  date={effectiveDay}
+                  reservations={dayPanelReservations}
+                  loading={loading}
+                  statusColors={lightStatusColors}
+                  onEdit={(r) => setEditReservation(r)}
+                  onAdd={handleAddForDay}
+                />
+
                 {/* Tabs */}
                 <div style={{ display: 'flex', padding: 3, borderRadius: 9, background: t.bgSurfaceMuted, border: `1px solid ${t.borderSoft}`, gap: 2 }}>
                   {RIGHT_TABS.map(({ key, label }) => (
@@ -1845,123 +2226,332 @@ export default function BookingsPage() {
                 />
               </div>
             ) : (
-              /* ── DESKTOP ───────────────────────────────────────────────── */
+              /* ── DESKTOP ── */
+              <>
+              {/* ── STAT CARDS ── */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: bk.gapMd, marginBottom: 12, fontFamily: bk.font }}>
+                {/* Today */}
+                <div style={{ ...bkCard, padding: bk.cardPad }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <span style={{ fontSize: bk.caption, fontWeight: 600, color: '#64748b' }}>Today</span>
+                    <div style={{ width: 28, height: 28, borderRadius: bk.radiusSm, background: '#ede9fe', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+                      <svg width="15" height="15" viewBox="0 0 18 18" fill="none">
+                        <rect x="2" y="3.5" width="14" height="12" rx="2" stroke="#7c3aed" strokeWidth="1.4"/>
+                        <path d="M2 7.5h14" stroke="#7c3aed" strokeWidth="1.4"/>
+                        <path d="M6 2v2M12 2v2" stroke="#7c3aed" strokeWidth="1.4" strokeLinecap="round"/>
+                      </svg>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: bk.statValue, fontWeight: 700, color: '#0f172a', lineHeight: 1, letterSpacing: '-0.02em', marginBottom: 2 }}>
+                    {loading ? '—' : newStats.todayCount}
+                  </div>
+                  <div style={{ fontSize: bk.caption, color: '#94a3b8', marginBottom: 6 }}>reservations</div>
+                  <div style={{ fontSize: bk.caption, fontWeight: 600, color: '#10b981' }}>↑ 18% vs yesterday</div>
+                </div>
+
+                {/* Upcoming */}
+                <div style={{ ...bkCard, padding: bk.cardPad }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <span style={{ fontSize: bk.caption, fontWeight: 600, color: '#64748b' }}>Upcoming</span>
+                    <div style={{ width: 28, height: 28, borderRadius: bk.radiusSm, background: '#dbeafe', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+                      <svg width="15" height="15" viewBox="0 0 18 18" fill="none">
+                        <circle cx="9" cy="9" r="7" stroke="#2563eb" strokeWidth="1.4"/>
+                        <path d="M9 5.5V9l2.5 2" stroke="#2563eb" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: bk.statValue, fontWeight: 700, color: '#0f172a', lineHeight: 1, letterSpacing: '-0.02em', marginBottom: 2 }}>
+                    {loading ? '—' : newStats.upcomingCount}
+                  </div>
+                  <div style={{ fontSize: bk.caption, color: '#94a3b8', marginBottom: 6 }}>reservations</div>
+                  <div style={{ fontSize: bk.caption, fontWeight: 600, color: '#2563eb' }}>
+                    {newStats.nextUpcomingTime ? `Next: ${newStats.nextUpcomingTime}` : 'No upcoming today'}
+                  </div>
+                </div>
+
+                {/* Confirmed */}
+                <div style={{ ...bkCard, padding: bk.cardPad }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <span style={{ fontSize: bk.caption, fontWeight: 600, color: '#64748b' }}>Confirmed</span>
+                    <div style={{ width: 28, height: 28, borderRadius: bk.radiusSm, background: '#dcfce7', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+                      <svg width="15" height="15" viewBox="0 0 18 18" fill="none">
+                        <circle cx="9" cy="9" r="7" stroke="#16a34a" strokeWidth="1.4"/>
+                        <path d="M6 9l2 2 4-4" stroke="#16a34a" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: bk.statValue, fontWeight: 700, color: '#0f172a', lineHeight: 1, letterSpacing: '-0.02em', marginBottom: 2 }}>
+                    {loading ? '—' : newStats.confirmedCount}
+                  </div>
+                  <div style={{ fontSize: bk.caption, color: '#94a3b8', marginBottom: 6 }}>reservations</div>
+                  <div>
+                    <div style={{ height: 3, background: '#f1f5f9', borderRadius: 2, overflow: 'hidden', marginBottom: 4 }}>
+                      <div style={{ height: '100%', width: `${loading ? 0 : newStats.confirmedPct}%`, background: '#16a34a', borderRadius: 2, transition: 'width 0.4s ease' }} />
+                    </div>
+                    <div style={{ fontSize: bk.micro, color: '#64748b' }}>{loading ? '—' : `${newStats.confirmedPct}%`} of today</div>
+                  </div>
+                </div>
+
+                {/* Cancelled */}
+                <div style={{ ...bkCard, padding: bk.cardPad }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <span style={{ fontSize: bk.caption, fontWeight: 600, color: '#64748b' }}>Cancelled</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: bk.micro, fontWeight: 600, color: '#6366f1', cursor: 'pointer' }}>View all</span>
+                      <div style={{ width: 28, height: 28, borderRadius: bk.radiusSm, background: '#fee2e2', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+                        <svg width="15" height="15" viewBox="0 0 18 18" fill="none">
+                          <circle cx="9" cy="9" r="7" stroke="#dc2626" strokeWidth="1.4"/>
+                          <path d="M6.5 6.5l5 5M11.5 6.5l-5 5" stroke="#dc2626" strokeWidth="1.4" strokeLinecap="round"/>
+                        </svg>
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: bk.statValue, fontWeight: 700, color: '#0f172a', lineHeight: 1, letterSpacing: '-0.02em', marginBottom: 2 }}>
+                    {loading ? '—' : newStats.cancelledCount}
+                  </div>
+                  <div style={{ fontSize: bk.caption, color: '#94a3b8', marginBottom: 6 }}>reservations</div>
+                  <div style={{ fontSize: bk.caption, fontWeight: 600, color: '#ef4444' }}>↓ 25% vs yesterday</div>
+                </div>
+              </div>
+
               <motion.div
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={oceanTransition(reduceMotion, { duration: 0.2 })}
-                style={{ display: 'grid', gridTemplateColumns: '292px 1fr', gap: 16, alignItems: 'start' }}
+                style={{ display: 'grid', gridTemplateColumns: '7fr 3fr', gap: bk.gapMd, alignItems: 'start' }}
               >
-                {/* LEFT SIDEBAR */}
-                <div style={{ display: 'grid', gap: 10 }}>
-
-                  {/* Stats list */}
-                  <div style={{ ...glass, overflow: 'hidden' }}>
-                    {statRows.map(({ label, value, hi }, i, arr) => (
-                      <div key={label} style={{ padding: '11px 14px', borderBottom: i < arr.length - 1 ? `1px solid ${t.borderSoft}` : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontSize: 11, color: t.textMuted, fontWeight: 500 }}>{label}</span>
-                        <span style={{ fontSize: 18, fontWeight: 700, color: hi ? t.warning : t.text, fontFamily: 'var(--font-geist-mono)', letterSpacing: '-0.03em' }}>{value}</span>
-                      </div>
-                    ))}
+                {/* LEFT: Month overview or Day timeline */}
+                <div style={{ display: 'grid', gap: bk.gap }}>
+                  <div style={{ display: 'flex', gap: 8, fontFamily: 'var(--font-plus-jakarta), system-ui, sans-serif' }}>
+                    <button
+                      type="button"
+                      onClick={() => setCalendarView('month')}
+                      style={calendarToggleBtn(calendarView === 'month')}
+                    >
+                      Month
+                    </button>
+                    <button
+                      type="button"
+                      onClick={setCalendarViewDay}
+                      style={calendarToggleBtn(calendarView === 'day')}
+                    >
+                      Day
+                    </button>
                   </div>
 
-                  {/* Month nav */}
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '2px 2px' }}>
-                    <button type="button" onClick={() => setMonthOffset((o) => o - 1)} style={navPill}>←</button>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: t.text, letterSpacing: '0.02em' }}>{monthLabel}</span>
-                    <button type="button" onClick={() => setMonthOffset((o) => o + 1)} style={navPill}>→</button>
-                  </div>
-
-                  {/* Calendar */}
-                  <div style={{ ...glass, overflow: 'hidden' }}>
-                    <MonthCalendar
-                      displayMonth={displayMonth}
+                  {calendarView === 'month' ? (
+                    <>
+                      <BookingsLightCalendar
+                        displayMonth={displayMonth}
+                        reservations={reservations}
+                        selectedDay={selectedDay}
+                        onSelectDay={handleDaySelect}
+                        onMonthPrev={() => setMonthOffset((o) => o - 1)}
+                        onMonthNext={() => setMonthOffset((o) => o + 1)}
+                        onJumpToday={() => { setMonthOffset(0); setSelectedDay(today); setTableVisibleCount(10) }}
+                        onClearDay={() => { setSelectedDay(null); setTableVisibleCount(10) }}
+                        today={today}
+                        reduceMotion={reduceMotion}
+                      />
+                      <BookingsDayChips
+                        date={effectiveDay}
+                        reservations={dayPanelReservations}
+                        loading={loading}
+                        statusColors={lightStatusColors}
+                        onEdit={(r) => setEditReservation(r)}
+                        onAdd={handleAddForDay}
+                      />
+                    </>
+                  ) : (
+                    <BookingsDayTimeline
+                      date={effectiveDay}
                       reservations={reservations}
-                      selectedDay={selectedDay}
-                      onSelectDay={handleDaySelect}
-                      today={today}
-                      bare
+                      range={timeRange}
+                      peaks={dayPeaks}
+                      loading={loading}
+                      reduceMotion={reduceMotion}
+                      onReschedule={(id, newTime) => void rescheduleReservation(id, effectiveDayIso, newTime)}
+                      onEdit={(r) => setEditReservation(r)}
+                      onAdd={handleAddForDay}
                     />
-                  </div>
-
-                  {/* Today shortcut */}
-                  <button
-                    type="button"
-                    onClick={() => { setMonthOffset(0); setSelectedDay(today); setRightTab('day') }}
-                    style={{
-                      padding: '8px 0', borderRadius: 8, width: '100%',
-                      border: `1px solid ${monthOffset === 0 && selectedDay && isSameDay(selectedDay, today) ? t.accent : t.borderSoft}`,
-                      background: monthOffset === 0 && selectedDay && isSameDay(selectedDay, today) ? t.accentSoftBg : t.bgSurface,
-                      color: monthOffset === 0 && selectedDay && isSameDay(selectedDay, today) ? t.accent : t.textMuted,
-                      fontSize: 12, fontWeight: 600, cursor: 'pointer', letterSpacing: '0.04em',
-                    }}
-                  >
-                    Jump to today
-                  </button>
+                  )}
                 </div>
 
                 {/* RIGHT MAIN PANEL */}
-                <div style={{ ...glass, overflow: 'hidden' }}>
-                  {/* Panel header */}
-                  <div style={{ padding: '14px 20px', borderBottom: `1px solid ${t.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-                    <div>
-                      <div style={{ fontSize: 15, fontWeight: 700, color: t.text }}>
-                        {rightTab === 'day'
-                          ? effectiveDay.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })
-                          : rightTab === 'week' ? 'This week' : 'All reservations'
-                        }
-                      </div>
-                      <div style={{ fontSize: 12, color: t.textMuted, marginTop: 2 }}>
-                        {loading ? '—' : `${rightReservations.length} reservation${rightReservations.length !== 1 ? 's' : ''}`}
-                      </div>
-                    </div>
+                <div style={{ ...bkCard, overflow: 'hidden' }}>
 
-                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                      {/* Segment tabs */}
-                      <div style={{ display: 'inline-flex', padding: 3, borderRadius: 9, background: t.bgSurfaceMuted, border: `1px solid ${t.borderSoft}`, gap: 2 }}>
-                        {RIGHT_TABS.map(({ key, label }) => (
-                          <button key={key} type="button" onClick={() => setRightTab(key)} style={segTab(rightTab === key)}>
-                            {label}
+                  {/* Filter tabs + view toggle */}
+                  <div style={{ padding: '10px 12px', borderBottom: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      {(['all', 'confirmed', 'pending', 'cancelled'] as const).map((f) => {
+                        const active = statusFilter === f
+                        return (
+                          <button
+                            key={f}
+                            type="button"
+                            onClick={() => { setStatusFilter(f); setTableVisibleCount(10) }}
+                            style={{
+                              padding: '5px 11px',
+                              borderRadius: 999,
+                              border: active ? 'none' : bk.border,
+                              background: active ? '#0f172a' : '#ffffff',
+                              color: active ? '#ffffff' : '#64748b',
+                              fontSize: bk.caption,
+                              fontWeight: active ? 600 : 500,
+                              cursor: 'pointer',
+                              transition: 'background 0.15s, color 0.15s',
+                            }}
+                          >
+                            {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
                           </button>
-                        ))}
-                      </div>
-
-                      {/* Book for selected day */}
-                      {rightTab === 'day' && (
+                        )
+                      })}
+                    </div>
+                    {selectedDay && (
+                      <span style={{ fontSize: bk.caption, color: '#6366f1', fontWeight: 600 }}>
+                        {selectedDay.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                        {' · '}
                         <button
                           type="button"
-                          onClick={handleAddForDay}
-                          style={{ padding: '7px 14px', borderRadius: 8, border: `1px solid ${t.borderSoft}`, background: t.bgSurface, color: t.text, fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                          onClick={() => { setSelectedDay(null); setTableVisibleCount(10) }}
+                          style={{ fontSize: 12, color: '#94a3b8', fontWeight: 500, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
                         >
-                          + Book
+                          Clear ×
                         </button>
-                      )}
-
-                      {/* New booking */}
-                      <motion.button
-                        type="button"
-                        whileHover={reduceMotion ? undefined : { y: -1 }}
-                        whileTap={reduceMotion ? undefined : { scale: 0.98 }}
-                        onClick={() => setShowAddModal(true)}
-                        style={{ border: 'none', borderRadius: 8, padding: '8px 16px', background: t.accent, color: '#ffffff', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}
-                      >
-                        New booking
-                      </motion.button>
-                    </div>
+                      </span>
+                    )}
                   </div>
 
-                  <ReservationListView
-                    reservations={rightReservations}
-                    loading={loading}
-                    onConfirm={(id) => void updateStatus(id, 'confirmed')}
-                    onCancel={(id) => void updateStatus(id, 'cancelled')}
-                    onDelete={(id) => void deleteReservation(id)}
-                    onEdit={(r) => setEditReservation(r)}
-                    isMobile={false}
-                    onGuestClick={(cid, name) => setGuestDrawer({ customerId: cid, guestName: name })}
-                  />
+                  {/* Table */}
+                  <>
+                    <div>
+                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr style={{ background: '#fafafa', borderBottom: '1px solid #e2e8f0' }}>
+                            {(['Time', 'Guest', 'Status', ''] as const).map((col, i) => (
+                              <th
+                                key={i}
+                                style={{
+                                  padding: '7px 10px',
+                                  textAlign: 'left',
+                                  fontSize: 9,
+                                  fontWeight: 700,
+                                  color: '#94a3b8',
+                                  textTransform: 'uppercase' as const,
+                                  letterSpacing: '0.08em',
+                                  whiteSpace: 'nowrap' as const,
+                                  width: i === 0 ? 60 : i === 2 ? 72 : i === 3 ? 36 : 'auto',
+                                }}
+                              >
+                                {col}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {loading ? (
+                            Array.from({ length: 5 }).map((_, i) => (
+                              <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                {[48, 100, 52, 24].map((w, c) => (
+                                  <td key={c} style={{ padding: '7px 10px' }}>
+                                    <div style={{ height: 11, borderRadius: 5, background: '#f1f5f9', width: w }} />
+                                    {c === 1 && <div style={{ height: 9, borderRadius: 4, background: '#f8fafc', width: 72, marginTop: 5 }} />}
+                                  </td>
+                                ))}
+                              </tr>
+                            ))
+                          ) : filteredTableReservations.length === 0 ? (
+                            <tr>
+                              <td colSpan={4} style={{ padding: '24px 10px', textAlign: 'center', color: '#94a3b8', fontSize: bk.caption }}>
+                                No reservations
+                              </td>
+                            </tr>
+                          ) : (
+                            filteredTableReservations.slice(0, tableVisibleCount).map((r) => {
+                              const isNext = r.id === newStats.nextUpcomingId
+                              const sc = lightStatusColors[r.status]
+                              const location = r.tableNumber !== '—' ? `Table ${r.tableNumber}` : (r.specialRequests || 'Main Dining')
+                              return (
+                                <tr
+                                  key={r.id}
+                                  style={{
+                                    borderBottom: '1px solid #f1f5f9',
+                                    borderLeft: `3px solid ${isNext ? '#6366f1' : 'transparent'}`,
+                                    transition: 'background 0.1s',
+                                  }}
+                                  onMouseEnter={(e) => { e.currentTarget.style.background = '#f8fafc' }}
+                                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+                                >
+                                  {/* Time */}
+                                  <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' as const }}>
+                                    <span style={{ fontSize: bk.body, fontWeight: 700, color: '#0f172a' }}>{fmtTime(r.scheduledAt)}</span>
+                                  </td>
+
+                                  {/* Guest + details */}
+                                  <td style={{ padding: '7px 10px', maxWidth: 0 }}>
+                                    <div style={{ fontSize: bk.body, fontWeight: 700, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>
+                                      {r.customerId ? (
+                                        <span
+                                          style={{ cursor: 'pointer', borderBottom: '1px dashed #cbd5e1' }}
+                                          onClick={() => setGuestDrawer({ customerId: r.customerId!, guestName: r.guestName })}
+                                        >
+                                          {r.guestName}
+                                        </span>
+                                      ) : r.guestName}
+                                    </div>
+                                    <div style={{ fontSize: bk.micro, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, marginTop: 1 }}>
+                                      {r.partySize} {r.partySize === 1 ? 'guest' : 'guests'} · {location}
+                                    </div>
+                                  </td>
+
+                                  {/* Status */}
+                                  <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' as const }}>
+                                    <span style={{ display: 'inline-block', padding: '2px 6px', borderRadius: 999, background: sc.bg, color: sc.color, fontSize: 9, fontWeight: 700, whiteSpace: 'nowrap' as const }}>
+                                      {r.status === 'no-show' ? 'No-show' : r.status.charAt(0).toUpperCase() + r.status.slice(1)}
+                                    </span>
+                                  </td>
+
+                                  {/* Actions */}
+                                  <td style={{ padding: '7px 10px' }}>
+                                    <button
+                                      type="button"
+                                      title="More actions"
+                                      onClick={() => setEditReservation(r)}
+                                      style={{ width: 22, height: 22, borderRadius: 5, border: bk.border, background: '#ffffff', cursor: 'pointer', display: 'grid', placeItems: 'center', flexShrink: 0 }}
+                                    >
+                                      <svg width="12" height="3" viewBox="0 0 12 3" fill="none">
+                                        <circle cx="1.5" cy="1.5" r="1.2" fill="#94a3b8"/>
+                                        <circle cx="6" cy="1.5" r="1.2" fill="#94a3b8"/>
+                                        <circle cx="10.5" cy="1.5" r="1.2" fill="#94a3b8"/>
+                                      </svg>
+                                    </button>
+                                  </td>
+                                </tr>
+                              )
+                            })
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Load more */}
+                    {!loading && filteredTableReservations.length > tableVisibleCount && (
+                      <div style={{ padding: '12px', borderTop: '1px solid #f1f5f9', textAlign: 'center' as const }}>
+                        <button
+                          type="button"
+                          onClick={() => setTableVisibleCount((c) => c + 10)}
+                          style={{ padding: '8px 20px', background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 12, fontWeight: 500, color: '#64748b', cursor: 'pointer' }}
+                        >
+                          Load more ↓
+                        </button>
+                      </div>
+                    )}
+                  </>
                 </div>
+
+
               </motion.div>
+              </>
             )}
 
             {/* ── MODAL ── */}

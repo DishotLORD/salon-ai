@@ -6,15 +6,34 @@ import { useSearchParams } from 'next/navigation'
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
 
 import { DashboardOceanNav } from '@/components/dashboard-ocean-nav'
-import { oceanTransition, tabContent } from '@/lib/ocean-motion'
+import {
+  SETTINGS_CATEGORIES,
+  SettingsCategoryNav,
+  type SettingsCategoryId,
+} from '@/components/settings-category-nav'
+import { WorkingHoursPanel } from '@/components/working-hours-panel'
+import { oceanTransition, settingsPanelHeavy } from '@/lib/ocean-motion'
+import {
+  DEFAULT_OPERATING_HOURS,
+  parseOperatingHours,
+  validateOperatingHours,
+  type OperatingHours,
+} from '@/lib/operating-hours'
 import { supabase } from '@/lib/supabase'
+import {
+  isOperatingHoursSchemaError,
+  OPERATING_HOURS_MIGRATION_HINT,
+} from '@/lib/supabase-schema'
 import { card, t } from '@/lib/dashboard-theme'
 
+const BUSINESS_SELECT_WITH_HOURS =
+  'id, name, email, phone, business_type, address, system_prompt, agent_name, language, menu_pdf_text, operating_hours'
+const BUSINESS_SELECT_BASE =
+  'id, name, email, phone, business_type, address, system_prompt, agent_name, language, menu_pdf_text'
+
 type TabId = 'general' | 'ai' | 'menu' | 'notifications' | 'widget' | 'billing'
-type CategoryId = 'restaurant' | 'ai' | 'menu' | 'integrations' | 'team' | 'billing' | 'security'
+type CategoryId = SettingsCategoryId
 type BusinessType = 'restaurant' | 'cafe' | 'bar' | 'bakery' | 'other'
-type DayKey = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun'
-type DayHours = { open: string; close: string; closed: boolean }
 type MenuCategory = 'Starters' | 'Mains' | 'Desserts' | 'Drinks'
 type MenuItem = {
   id: string
@@ -39,26 +58,6 @@ type FloatingSelectProps = {
   value: string
   onChange: (value: string) => void
   options: { label: string; value: string }[]
-}
-
-const dayOrder: { key: DayKey; label: string }[] = [
-  { key: 'mon', label: 'Monday' },
-  { key: 'tue', label: 'Tuesday' },
-  { key: 'wed', label: 'Wednesday' },
-  { key: 'thu', label: 'Thursday' },
-  { key: 'fri', label: 'Friday' },
-  { key: 'sat', label: 'Saturday' },
-  { key: 'sun', label: 'Sunday' },
-]
-
-const initialHours: Record<DayKey, DayHours> = {
-  mon: { open: '17:00', close: '22:30', closed: false },
-  tue: { open: '17:00', close: '22:30', closed: false },
-  wed: { open: '17:00', close: '22:30', closed: false },
-  thu: { open: '17:00', close: '23:00', closed: false },
-  fri: { open: '17:00', close: '23:30', closed: false },
-  sat: { open: '11:30', close: '23:30', closed: false },
-  sun: { open: '11:30', close: '21:30', closed: false },
 }
 
 const MENU_CATEGORIES: MenuCategory[] = ['Starters', 'Mains', 'Desserts', 'Drinks']
@@ -92,24 +91,6 @@ const s = {
   shadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)',
 } as const
 
-type SettingsCategory = {
-  id: CategoryId
-  icon: string
-  title: string
-  description: string
-  placeholder?: boolean
-}
-
-const SETTINGS_CATEGORIES: SettingsCategory[] = [
-  { id: 'restaurant', icon: '🌐', title: 'Restaurant', description: 'Name, hours, location' },
-  { id: 'ai', icon: '✨', title: 'AI Personality', description: 'Voice, tone, guardrails' },
-  { id: 'menu', icon: '🍽️', title: 'Menu', description: 'Dishes and pricing' },
-  { id: 'integrations', icon: '🔗', title: 'Integrations', description: 'Channels & POS' },
-  { id: 'team', icon: '👥', title: 'Team', description: 'Members & access', placeholder: true },
-  { id: 'billing', icon: '💳', title: 'Billing', description: 'Plan & invoices' },
-  { id: 'security', icon: '🔒', title: 'Security', description: 'Password & 2FA', placeholder: true },
-]
-
 function tabToCategory(tab: TabId): CategoryId {
   if (tab === 'general') return 'restaurant'
   if (tab === 'ai') return 'ai'
@@ -119,86 +100,45 @@ function tabToCategory(tab: TabId): CategoryId {
   return 'restaurant'
 }
 
-function CategoryRow({
-  icon,
+function SettingsPlaceholder({
   title,
   description,
-  active,
-  onClick,
+  reduceMotion,
 }: {
-  icon: string
   title: string
   description: string
-  active: boolean
-  onClick: () => void
+  reduceMotion: boolean | null
 }) {
-  const [hovered, setHovered] = useState(false)
-
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{
-        display: 'flex',
-        alignItems: 'flex-start',
-        gap: 14,
-        width: '100%',
-        textAlign: 'left',
-        padding: '12px 14px',
-        borderRadius: 12,
-        border: `1px solid ${active ? s.activeBorder : 'transparent'}`,
-        background: active ? s.activeBg : hovered ? s.hover : 'transparent',
-        cursor: 'pointer',
-        transition: 'background 0.15s ease, border-color 0.15s ease',
-        fontFamily: settingsFont,
-      }}
-    >
-      <span
-        style={{
-          width: 40,
-          height: 40,
-          borderRadius: 8,
-          background: s.iconBg,
-          display: 'grid',
-          placeItems: 'center',
-          fontSize: 20,
-          flexShrink: 0,
-          lineHeight: 1,
-        }}
-      >
-        {icon}
-      </span>
-      <span style={{ minWidth: 0 }}>
-        <span style={{ display: 'block', fontSize: 15, fontWeight: 700, color: s.text, lineHeight: 1.3 }}>
-          {title}
-        </span>
-        <span style={{ display: 'block', marginTop: 2, fontSize: 13, color: s.textMuted, lineHeight: 1.4 }}>
-          {description}
-        </span>
-      </span>
-    </button>
-  )
-}
-
-function SettingsPlaceholder({ title, description }: { title: string; description: string }) {
-  return (
-    <div
+    <motion.div
+      initial={reduceMotion ? false : { opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={oceanTransition(reduceMotion, { type: 'spring', stiffness: 320, damping: 30 })}
       style={{
         display: 'grid',
         justifyItems: 'center',
-        gap: 12,
-        padding: '64px 24px',
+        gap: 14,
+        padding: '56px 28px',
         textAlign: 'center',
+        borderRadius: 14,
+        border: '1px dashed rgba(56, 189, 248, 0.35)',
+        background: 'linear-gradient(180deg, rgba(56,189,248,0.04) 0%, transparent 100%)',
       }}
     >
-      <div style={{ fontSize: 40, lineHeight: 1 }}>🚧</div>
+      <div
+        style={{
+          width: 48,
+          height: 4,
+          borderRadius: 999,
+          background: s.accent,
+          opacity: 0.5,
+        }}
+      />
       <div style={{ fontSize: 18, fontWeight: 700, color: s.text }}>{title}</div>
       <p style={{ margin: 0, maxWidth: 360, fontSize: 14, color: s.textMuted, lineHeight: 1.6 }}>
         {description}
       </p>
-    </div>
+    </motion.div>
   )
 }
 
@@ -370,8 +310,8 @@ function SettingsPageInner() {
     }
   }, [tabParam])
   const [saveError, setSaveError] = useState('')
-  const [showSaveToast, setShowSaveToast] = useState(false)
-  const saveToastTimerRef = useRef<number | null>(null)
+  const [saveSucceeded, setSaveSucceeded] = useState(false)
+  const saveSuccessTimerRef = useRef<number | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [businessRowId, setBusinessRowId] = useState<string | null>(null)
@@ -382,7 +322,8 @@ function SettingsPageInner() {
   const [businessPhone, setBusinessPhone] = useState('')
   const [businessEmail, setBusinessEmail] = useState('')
   const [businessAddress, setBusinessAddress] = useState('')
-  const [hours, setHours] = useState<Record<DayKey, DayHours>>(initialHours)
+  const [hours, setHours] = useState<OperatingHours>(DEFAULT_OPERATING_HOURS)
+  const [hoursSchemaReady, setHoursSchemaReady] = useState(true)
 
   const [systemPrompt, setSystemPrompt] = useState(
     'You are the AI Concierge for this restaurant. Be warm, attentive, and concise. Help guests with reservations, menu inquiries, dietary requirements, and special-occasion notes. Confirm party size, date, time, and guest name before treating a reservation as final. Escalate complaints or unusual requests to a manager.',
@@ -428,6 +369,7 @@ function SettingsPageInner() {
   )
 
   const categoryIndex = SETTINGS_CATEGORIES.findIndex((category) => category.id === activeCategory)
+  const [panelDirection, setPanelDirection] = useState(1)
 
   const showSaveActions = activeCategory === 'restaurant' || activeCategory === 'ai' || activeCategory === 'integrations'
 
@@ -442,23 +384,47 @@ function SettingsPageInner() {
     let isMounted = true
 
     async function hydrateForUserId(userId: string) {
-      const { data, error } = await supabase
+      let data: Record<string, unknown> | null = null
+      let schemaReady = true
+
+      const withHours = await supabase
         .from('businesses')
-        .select('id, name, email, phone, business_type, address, system_prompt, agent_name, language, menu_pdf_text')
+        .select(BUSINESS_SELECT_WITH_HOURS)
         .eq('user_id', userId)
         .maybeSingle()
+
       if (!isMounted) return
-      if (!error && data) {
-        setBusinessRowId(data.id ?? null)
-        setBusinessName(data.name ?? '')
-        setBusinessEmail(data.email ?? '')
-        setBusinessPhone(data.phone ?? '')
+
+      if (!withHours.error && withHours.data) {
+        data = withHours.data as Record<string, unknown>
+      } else if (isOperatingHoursSchemaError(withHours.error?.message)) {
+        schemaReady = false
+        const fallback = await supabase
+          .from('businesses')
+          .select(BUSINESS_SELECT_BASE)
+          .eq('user_id', userId)
+          .maybeSingle()
+        if (!isMounted) return
+        if (!fallback.error && fallback.data) {
+          data = fallback.data as Record<string, unknown>
+        }
+      }
+
+      if (data) {
+        setHoursSchemaReady(schemaReady)
+        setBusinessRowId((data.id as string) ?? null)
+        setBusinessName((data.name as string) ?? '')
+        setBusinessEmail((data.email as string) ?? '')
+        setBusinessPhone((data.phone as string) ?? '')
         setBusinessType((data.business_type as BusinessType) ?? 'restaurant')
-        setBusinessAddress(data.address ?? '')
-        if (data.system_prompt) setSystemPrompt(data.system_prompt)
-        if (data.agent_name) setAgentName(data.agent_name)
-        setLanguage(data.language ?? 'English (US)')
-        setMenuPdfText((data as Record<string, unknown>).menu_pdf_text as string | null ?? null)
+        setBusinessAddress((data.address as string) ?? '')
+        if (data.system_prompt) setSystemPrompt(data.system_prompt as string)
+        if (data.agent_name) setAgentName(data.agent_name as string)
+        setLanguage((data.language as string) ?? 'English (US)')
+        setMenuPdfText((data.menu_pdf_text as string | null) ?? null)
+        if (schemaReady) {
+          setHours(parseOperatingHours(data.operating_hours))
+        }
       }
       setIsLoading(false)
     }
@@ -496,8 +462,8 @@ function SettingsPageInner() {
 
   useEffect(() => {
     return () => {
-      if (saveToastTimerRef.current) {
-        window.clearTimeout(saveToastTimerRef.current)
+      if (saveSuccessTimerRef.current) {
+        window.clearTimeout(saveSuccessTimerRef.current)
       }
     }
   }, [])
@@ -528,8 +494,16 @@ function SettingsPageInner() {
 
     setIsSaving(true)
     setSaveError('')
+    setSaveSucceeded(false)
 
-    const payload = {
+    const hoursError = activeCategory === 'restaurant' ? validateOperatingHours(hours) : null
+    if (hoursError) {
+      setSaveError(hoursError)
+      setIsSaving(false)
+      return
+    }
+
+    const basePayload = {
       user_id: userId,
       name: businessName,
       email: businessEmail,
@@ -541,22 +515,36 @@ function SettingsPageInner() {
       language,
     }
 
-    let requestError: { message?: string } | null = null
+    const payloadWithHours = { ...basePayload, operating_hours: hours }
 
-    if (businessRowId) {
-      const { error } = await supabase.from('businesses').update(payload).eq('id', businessRowId)
-      requestError = error
-    } else {
-      const { data, error } = await supabase.from('businesses').insert(payload).select('id').maybeSingle()
-      requestError = error
-      if (!error) {
-        if (data?.id) {
-          setBusinessRowId(data.id)
-        } else {
-          const { data: row } = await supabase.from('businesses').select('id').eq('user_id', userId).maybeSingle()
-          if (row?.id) {
-            setBusinessRowId(row.id)
-          }
+    let requestError: { message?: string } | null = null
+    let hoursSaveSkipped = false
+
+    const persist = async (payload: typeof basePayload & { operating_hours?: OperatingHours }) => {
+      if (businessRowId) {
+        return supabase.from('businesses').update(payload).eq('id', businessRowId)
+      }
+      return supabase.from('businesses').insert(payload).select('id').maybeSingle()
+    }
+
+    let result = await persist(hoursSchemaReady ? payloadWithHours : basePayload)
+
+    if (result.error && isOperatingHoursSchemaError(result.error.message)) {
+      setHoursSchemaReady(false)
+      hoursSaveSkipped = true
+      result = await persist(basePayload)
+    }
+
+    requestError = result.error
+
+    if (!requestError && !businessRowId && 'data' in result) {
+      const insertData = result.data as { id?: string } | null
+      if (insertData?.id) {
+        setBusinessRowId(insertData.id)
+      } else {
+        const { data: row } = await supabase.from('businesses').select('id').eq('user_id', userId).maybeSingle()
+        if (row?.id) {
+          setBusinessRowId(row.id)
         }
       }
     }
@@ -567,14 +555,24 @@ function SettingsPageInner() {
       return
     }
 
-    if (saveToastTimerRef.current) {
-      window.clearTimeout(saveToastTimerRef.current)
+    if (hoursSaveSkipped) {
+      setSaveError(
+        `Other settings saved. ${OPERATING_HOURS_MIGRATION_HINT}`,
+      )
+      setIsSaving(false)
+      return
     }
-    setShowSaveToast(true)
-    saveToastTimerRef.current = window.setTimeout(() => {
-      setShowSaveToast(false)
-      saveToastTimerRef.current = null
-    }, 3000)
+
+    setHoursSchemaReady(true)
+
+    setSaveSucceeded(true)
+    if (saveSuccessTimerRef.current) {
+      window.clearTimeout(saveSuccessTimerRef.current)
+    }
+    saveSuccessTimerRef.current = window.setTimeout(() => {
+      setSaveSucceeded(false)
+      saveSuccessTimerRef.current = null
+    }, 2200)
 
     setIsSaving(false)
   }
@@ -749,6 +747,7 @@ function SettingsPageInner() {
     if (activeCategory === 'team') {
       return (
         <SettingsPlaceholder
+          reduceMotion={reduceMotion}
           title="Team management"
           description="Invite staff, assign roles, and control who can access your dashboard. Coming soon."
         />
@@ -758,6 +757,7 @@ function SettingsPageInner() {
     if (activeCategory === 'security') {
       return (
         <SettingsPlaceholder
+          reduceMotion={reduceMotion}
           title="Security"
           description="Password changes and two-factor authentication will live here. Coming soon."
         />
@@ -800,81 +800,23 @@ function SettingsPageInner() {
             >
               Working Hours
             </div>
-            <div style={{ display: 'grid', gap: 8 }}>
-              {dayOrder.map((day) => {
-                const row = hours[day.key]
-                return (
-                  <div
-                    key={day.key}
-                    style={{
-                      borderRadius: 10,
-                      border: `1px solid ${t.borderSoft}`,
-                      background: t.bgSurface,
-                      padding: 12,
-                      display: 'grid',
-                      gridTemplateColumns: 'minmax(100px, 1fr) auto minmax(120px, 1fr) minmax(120px, 1fr)',
-                      gap: 12,
-                      alignItems: 'center',
-                    }}
-                  >
-                    <div style={{ color: t.text, fontSize: 14, fontWeight: 600 }}>{day.label}</div>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, color: t.textMuted, fontSize: 13 }}>
-                      <input
-                        type="checkbox"
-                        checked={row.closed}
-                        onChange={(event) =>
-                          setHours((prev) => ({
-                            ...prev,
-                            [day.key]: { ...prev[day.key], closed: event.target.checked },
-                          }))
-                        }
-                      />
-                      Closed
-                    </label>
-                    <input
-                      type="time"
-                      disabled={row.closed}
-                      value={row.open}
-                      onChange={(event) =>
-                        setHours((prev) => ({
-                          ...prev,
-                          [day.key]: { ...prev[day.key], open: event.target.value },
-                        }))
-                      }
-                      style={{
-                        borderRadius: 8,
-                        border: `1px solid ${t.border}`,
-                        background: t.bgSurface,
-                        color: t.text,
-                        padding: '10px 12px',
-                        opacity: row.closed ? 0.45 : 1,
-                        outline: 'none',
-                      }}
-                    />
-                    <input
-                      type="time"
-                      disabled={row.closed}
-                      value={row.close}
-                      onChange={(event) =>
-                        setHours((prev) => ({
-                          ...prev,
-                          [day.key]: { ...prev[day.key], close: event.target.value },
-                        }))
-                      }
-                      style={{
-                        borderRadius: 8,
-                        border: `1px solid ${t.border}`,
-                        background: t.bgSurface,
-                        color: t.text,
-                        padding: '10px 12px',
-                        opacity: row.closed ? 0.45 : 1,
-                        outline: 'none',
-                      }}
-                    />
-                  </div>
-                )
-              })}
-            </div>
+            {!hoursSchemaReady ? (
+              <div
+                style={{
+                  marginBottom: 12,
+                  padding: '10px 12px',
+                  borderRadius: 8,
+                  border: '1px solid rgba(220, 38, 38, 0.35)',
+                  background: 'rgba(220, 38, 38, 0.06)',
+                  color: '#b91c1c',
+                  fontSize: 12,
+                  lineHeight: 1.5,
+                }}
+              >
+                {OPERATING_HOURS_MIGRATION_HINT}
+              </div>
+            ) : null}
+            <WorkingHoursPanel hours={hours} onChange={setHours} reduceMotion={reduceMotion} />
           </div>
         </div>
       )
@@ -1437,6 +1379,7 @@ function SettingsPageInner() {
           <section style={{ display: 'grid', gap: 12, paddingTop: 8, borderTop: `1px solid ${s.border}` }}>
             <div style={{ color: s.text, fontSize: 18, fontWeight: 700 }}>POS & channels</div>
             <SettingsPlaceholder
+              reduceMotion={reduceMotion}
               title="More integrations coming soon"
               description="Connect your POS, reservation platforms, and messaging channels in one place."
             />
@@ -1477,35 +1420,14 @@ function SettingsPageInner() {
   })()
 
   const selectCategory = (categoryId: CategoryId, mobile: boolean) => {
+    const nextIndex = SETTINGS_CATEGORIES.findIndex((c) => c.id === categoryId)
+    setPanelDirection(nextIndex >= categoryIndex ? 1 : -1)
     setActiveCategory(categoryId)
     if (mobile) setMobileShowDetail(true)
   }
 
   return (
     <>
-      {showSaveToast ? (
-        <div
-          role="status"
-          style={{
-            position: 'fixed',
-            top: 20,
-            right: 24,
-            zIndex: 9999,
-            padding: '12px 18px',
-            borderRadius: 12,
-            background: 'rgba(56,189,248,0.10)',
-            border: '1px solid rgba(56,189,248,0.25)',
-            color: '#0ea5e9',
-            fontSize: 14,
-            fontWeight: 600,
-            boxShadow: s.shadow,
-            fontFamily: settingsFont,
-          }}
-        >
-          Saved!
-        </div>
-      ) : null}
-
       <DashboardOceanNav activeNav="Settings">
         {({ isMobile, openNav }) => (
           <div
@@ -1560,36 +1482,39 @@ function SettingsPageInner() {
                     paddingTop: isMobile ? 52 : 0,
                   }}
                 >
-                  <div style={{ marginBottom: 24 }}>
+                  <div style={{ marginBottom: 20, paddingLeft: 2 }}>
                     <h1
                       style={{
                         margin: 0,
-                        fontSize: isMobile ? 28 : 32,
-                        fontWeight: 800,
+                        fontSize: isMobile ? 22 : 24,
+                        fontWeight: 700,
                         color: s.text,
-                        letterSpacing: '-0.03em',
-                        lineHeight: 1.15,
+                        letterSpacing: '-0.02em',
+                        lineHeight: 1.2,
                       }}
                     >
                       Settings
                     </h1>
-                    <p style={{ margin: '8px 0 0', fontSize: 14, color: s.textMuted, lineHeight: 1.5 }}>
-                      Tune how OceanCore represents {businessName.trim() || 'your restaurant'}
-                    </p>
+                    {businessName.trim() ? (
+                      <p
+                        style={{
+                          margin: '6px 0 0',
+                          fontSize: 13,
+                          fontWeight: 500,
+                          color: s.accent,
+                          lineHeight: 1.3,
+                        }}
+                      >
+                        {businessName.trim()}
+                      </p>
+                    ) : null}
                   </div>
 
-                  <nav style={{ display: 'grid', gap: 4 }}>
-                    {SETTINGS_CATEGORIES.map((category) => (
-                      <CategoryRow
-                        key={category.id}
-                        icon={category.icon}
-                        title={category.title}
-                        description={category.description}
-                        active={activeCategory === category.id}
-                        onClick={() => selectCategory(category.id, isMobile)}
-                      />
-                    ))}
-                  </nav>
+                  <SettingsCategoryNav
+                    activeId={activeCategory}
+                    onSelect={(id) => selectCategory(id, isMobile)}
+                    reduceMotion={reduceMotion}
+                  />
                 </aside>
               )}
 
@@ -1613,13 +1538,13 @@ function SettingsPageInner() {
                       display: 'flex',
                       alignItems: isMobile ? 'flex-start' : 'center',
                       justifyContent: 'space-between',
-                      gap: 16,
-                      padding: '20px 24px',
+                      gap: 12,
+                      padding: isMobile ? '16px 18px' : '18px 22px',
                       borderBottom: `1px solid ${s.border}`,
                       flexDirection: isMobile ? 'column' : 'row',
                     }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                       {isMobile ? (
                         <button
                           type="button"
@@ -1628,7 +1553,7 @@ function SettingsPageInner() {
                             border: 'none',
                             background: 'transparent',
                             color: s.accent,
-                            fontSize: 14,
+                            fontSize: 13,
                             fontWeight: 600,
                             cursor: 'pointer',
                             padding: 0,
@@ -1639,12 +1564,19 @@ function SettingsPageInner() {
                         </button>
                       ) : null}
                       <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: 20, fontWeight: 700, color: s.text, lineHeight: 1.2 }}>
-                          {activeCategoryMeta.title}
-                        </div>
-                        <div style={{ marginTop: 4, fontSize: 13, color: s.textMuted }}>
-                          {activeCategoryMeta.description}
-                        </div>
+                        <motion.div
+                          key={activeCategory}
+                          initial={reduceMotion ? false : { opacity: 0, y: 6 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={oceanTransition(reduceMotion, { type: 'spring', stiffness: 360, damping: 32 })}
+                        >
+                          <div style={{ fontSize: 18, fontWeight: 700, color: s.text, lineHeight: 1.25 }}>
+                            {activeCategoryMeta.title}
+                          </div>
+                          <div style={{ marginTop: 3, fontSize: 12, color: s.textMuted, lineHeight: 1.4 }}>
+                            {activeCategoryMeta.description}
+                          </div>
+                        </motion.div>
                       </div>
                     </div>
 
@@ -1657,32 +1589,114 @@ function SettingsPageInner() {
                           type="button"
                           onClick={() => void handleSave()}
                           disabled={isLoading || isSaving}
-                          whileHover={isLoading || isSaving || reduceMotion ? undefined : { y: -1 }}
-                          whileTap={isLoading || isSaving || reduceMotion ? undefined : { scale: 0.98 }}
+                          aria-live="polite"
+                          whileHover={
+                            isLoading || isSaving || saveSucceeded || reduceMotion ? undefined : { y: -1 }
+                          }
+                          whileTap={
+                            isLoading || isSaving || saveSucceeded || reduceMotion ? undefined : { scale: 0.98 }
+                          }
+                          animate={{
+                            backgroundColor: saveSucceeded
+                              ? '#0f766e'
+                              : isLoading || isSaving
+                                ? '#e2e8f0'
+                                : '#38bdf8',
+                            color: saveSucceeded
+                              ? '#ffffff'
+                              : isLoading || isSaving
+                                ? '#64748b'
+                                : '#0f172a',
+                          }}
+                          transition={{ duration: reduceMotion ? 0 : 0.28, ease: [0.22, 1, 0.36, 1] }}
                           style={{
                             border: 'none',
                             borderRadius: 10,
-                            padding: '11px 18px',
-                            background: isLoading || isSaving ? s.hover : s.accent,
-                            color: isLoading || isSaving ? s.textMuted : '#0f172a',
+                            padding: '11px 20px',
+                            minWidth: 132,
                             fontWeight: 600,
                             fontSize: 13,
                             cursor: isLoading || isSaving ? 'not-allowed' : 'pointer',
                             width: isMobile ? '100%' : 'auto',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: 7,
+                            boxShadow: saveSucceeded
+                              ? '0 4px 14px rgba(15, 118, 110, 0.28)'
+                              : '0 1px 2px rgba(15, 23, 42, 0.06)',
                           }}
                         >
-                          {isLoading ? 'Loading…' : isSaving ? 'Saving…' : 'Save Changes'}
+                          <AnimatePresence mode="wait" initial={false}>
+                            {isLoading ? (
+                              <motion.span
+                                key="loading"
+                                initial={{ opacity: 0, y: 4 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, y: -4 }}
+                                transition={{ duration: 0.15 }}
+                              >
+                                Loading…
+                              </motion.span>
+                            ) : isSaving ? (
+                              <motion.span
+                                key="saving"
+                                initial={{ opacity: 0, y: 4 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, y: -4 }}
+                                transition={{ duration: 0.15 }}
+                              >
+                                Saving…
+                              </motion.span>
+                            ) : saveSucceeded ? (
+                              <motion.span
+                                key="saved"
+                                initial={{ opacity: 0, scale: 0.92 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                                exit={{ opacity: 0, scale: 0.96 }}
+                                transition={{ duration: 0.2 }}
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                              >
+                                <span
+                                  aria-hidden
+                                  style={{
+                                    width: 16,
+                                    height: 16,
+                                    borderRadius: '50%',
+                                    background: 'rgba(255,255,255,0.22)',
+                                    display: 'grid',
+                                    placeItems: 'center',
+                                    fontSize: 11,
+                                    lineHeight: 1,
+                                  }}
+                                >
+                                  ✓
+                                </span>
+                                Saved
+                              </motion.span>
+                            ) : (
+                              <motion.span
+                                key="idle"
+                                initial={{ opacity: 0, y: 4 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, y: -4 }}
+                                transition={{ duration: 0.15 }}
+                              >
+                                Save Changes
+                              </motion.span>
+                            )}
+                          </AnimatePresence>
                         </motion.button>
                       </div>
                     ) : null}
                   </div>
 
                   <div style={{ flex: 1, padding: '24px', overflowY: 'auto' }}>
-                    <AnimatePresence mode="wait" custom={categoryIndex}>
+                    <AnimatePresence mode="wait" custom={panelDirection}>
                       <motion.div
                         key={activeCategory}
-                        custom={categoryIndex}
-                        variants={tabContent}
+                        custom={panelDirection}
+                        variants={settingsPanelHeavy}
                         initial="initial"
                         animate="animate"
                         exit="exit"

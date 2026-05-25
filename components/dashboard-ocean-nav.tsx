@@ -15,6 +15,8 @@ export type OceanDashboardNavId = 'Dashboard' | 'Chats' | 'Bookings' | 'CRM' | '
 type DashboardOceanNavProps = {
   activeNav: OceanDashboardNavId
   fillViewport?: boolean
+  /** Solid app background without aurora blobs (e.g. light bookings layout) */
+  flatBackground?: string
   children: (props: OceanNavRenderProps) => ReactNode
 }
 
@@ -197,7 +199,7 @@ function IconMoon() {
   )
 }
 
-export function DashboardOceanNav({ activeNav, fillViewport, children }: DashboardOceanNavProps) {
+export function DashboardOceanNav({ activeNav, fillViewport, flatBackground, children }: DashboardOceanNavProps) {
   const [isMobile, setIsMobile] = useState(false)
   const [isDrawerOpen, setDrawerOpen] = useState(false)
   const [userEmail, setUserEmail] = useState<string | null>(null)
@@ -534,7 +536,7 @@ export function DashboardOceanNav({ activeNav, fillViewport, children }: Dashboa
     height: fillViewport ? '100vh' : undefined,
     overflow: fillViewport ? 'hidden' : undefined,
     position: 'relative',
-    background: t.bgApp,
+    background: flatBackground ?? t.bgApp,
     color: t.text,
   }
 
@@ -550,8 +552,9 @@ export function DashboardOceanNav({ activeNav, fillViewport, children }: Dashboa
 
   return (
     <div style={outerStyle}>
-      {/* Aurora background — pure CSS, no JS */}
-      <div className="aurora-bg"><div className="blob3"/><div className="grain"/></div>
+      {!flatBackground ? (
+        <div className="aurora-bg"><div className="blob3"/><div className="grain"/></div>
+      ) : null}
 
       {!isMobile && (
         <div style={{ position: 'fixed', left: 0, top: 0, width: SIDEBAR_WIDTH, height: '100vh', zIndex: 100 }}>

@@ -129,3 +129,79 @@ export const iconPop: Variants = {
   },
   tap: { scale: 0.96 },
 }
+
+export const settingsNavPillSpring = {
+  type: 'spring' as const,
+  stiffness: 380,
+  damping: 28,
+}
+
+export const settingsNavStagger: Variants = {
+  hidden: {},
+  visible: {
+    transition: { staggerChildren: 0.05, delayChildren: 0.08 },
+  },
+}
+
+export const settingsNavItem: Variants = {
+  hidden: { opacity: 0, y: 12 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    transition: { type: 'spring', stiffness: 400, damping: 32 },
+  },
+}
+
+/** Settings right panel: pass custom={1|-1} from category index delta */
+/** Bookings month grid — stagger day cells on month change */
+export const calendarDayStagger: Variants = {
+  hidden: {},
+  visible: {
+    transition: { staggerChildren: 0.018, delayChildren: 0.04 },
+  },
+}
+
+export const calendarDayCell: Variants = {
+  hidden: { opacity: 0, y: 6, scale: 0.92 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    scale: 1,
+    transition: { type: 'spring', stiffness: 420, damping: 28 },
+  },
+}
+
+/** Month title + grid slide — custom: 1 | -1 */
+export const calendarMonthSlide: Variants = {
+  initial: (dir: number) => ({ opacity: 0, x: dir >= 0 ? 18 : -18 }),
+  animate: {
+    opacity: 1,
+    x: 0,
+    transition: { type: 'spring', stiffness: 380, damping: 32 },
+  },
+  exit: (dir: number) => ({
+    opacity: 0,
+    x: dir >= 0 ? -14 : 14,
+    transition: { duration: oceanDurations.fast, ease: oceanEase.out },
+  }),
+}
+
+export const settingsPanelHeavy: Variants = {
+  initial: (direction: number) => ({
+    opacity: 0,
+    x: direction >= 0 ? 28 : -28,
+    scale: 0.98,
+  }),
+  animate: {
+    opacity: 1,
+    x: 0,
+    scale: 1,
+    transition: settingsNavPillSpring,
+  },
+  exit: (direction: number) => ({
+    opacity: 0,
+    x: direction >= 0 ? -24 : 24,
+    scale: 0.99,
+    transition: { type: 'spring', stiffness: 400, damping: 35 },
+  }),
+}

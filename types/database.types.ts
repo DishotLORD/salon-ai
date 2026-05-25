@@ -20,6 +20,7 @@ export type Database = {
           system_prompt: string | null
           language: string | null
           menu_pdf_text: string | null
+          operating_hours: Json
           created_at: string
           updated_at: string
         }
@@ -35,6 +36,7 @@ export type Database = {
           system_prompt?: string | null
           language?: string | null
           menu_pdf_text?: string | null
+          operating_hours?: Json
           created_at?: string
           updated_at?: string
         }
