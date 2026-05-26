@@ -12,6 +12,7 @@ import {
 
 export type SettingsCategoryId =
   | 'restaurant'
+  | 'reservations'
   | 'ai'
   | 'menu'
   | 'integrations'
@@ -28,6 +29,7 @@ export type SettingsCategoryDef = {
 
 export const SETTINGS_CATEGORIES: SettingsCategoryDef[] = [
   { id: 'restaurant', title: 'Restaurant', description: 'Name, hours, location' },
+  { id: 'reservations', title: 'Reservations', description: 'Capacity, zones, turns' },
   { id: 'ai', title: 'AI Personality', description: 'Voice, tone, guardrails' },
   { id: 'menu', title: 'Menu', description: 'Dishes and pricing' },
   { id: 'integrations', title: 'Integrations', description: 'Channels & POS' },

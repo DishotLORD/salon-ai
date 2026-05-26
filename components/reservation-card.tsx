@@ -20,6 +20,8 @@ export type Reservation = {
   specialRequests: string
   customerId?: string | null
   conversationId?: string | null
+  zoneId?: string | null
+  zoneName?: string | null
 }
 
 export type ReservationCardProps = {
@@ -319,6 +321,20 @@ export function ReservationCard({
             {r.tableNumber !== '—' && (
               <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                 <IconTable /> {r.tableNumber}
+              </span>
+            )}
+            {r.zoneName && (
+              <span
+                style={{
+                  fontSize: 10,
+                  fontWeight: 600,
+                  padding: '2px 8px',
+                  borderRadius: 999,
+                  background: t.accentSoftBg,
+                  color: t.accent,
+                }}
+              >
+                {r.zoneName}
               </span>
             )}
           </span>

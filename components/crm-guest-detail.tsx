@@ -5,6 +5,7 @@ import { motion, useReducedMotion } from 'framer-motion'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { parsePartySizeFromServiceName } from '@/lib/appointment-service-name'
+import { parseDiningZoneRow } from '@/lib/dining-zones'
 import { bk } from '@/lib/bookings-compact-ui'
 import type { CrmCustomer } from '@/lib/crm-customer'
 import {
@@ -27,6 +28,8 @@ type AppointmentRow = {
   scheduled_at: string
   status: string | null
   service_name: string | null
+  party_size?: number | null
+  zone_id?: string | null
 }
 
 function statusLabel(raw: string | null): string {
@@ -121,6 +124,7 @@ export function CrmGuestDetail({
   const [notesSaving, setNotesSaving] = useState(false)
   const [appointments, setAppointments] = useState<AppointmentRow[]>([])
   const [appointmentsLoading, setAppointmentsLoading] = useState(true)
+  const [zoneNameById, setZoneNameById] = useState<Map<string, string>>(new Map())
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -142,7 +146,7 @@ export function CrmGuestDetail({
     void (async () => {
       const { data } = await supabase
         .from('appointments')
-        .select('id, scheduled_at, status, service_name')
+        .select('id, scheduled_at, status, service_name, party_size, zone_id')
         .eq('customer_id', customer.id)
         .order('scheduled_at', { ascending: false })
       if (!cancelled) {
@@ -154,6 +158,27 @@ export function CrmGuestDetail({
       cancelled = true
     }
   }, [customer.id])
+
+  useEffect(() => {
+    if (!businessId) return
+    let cancelled = false
+    void (async () => {
+      const { data } = await supabase
+        .from('dining_zones')
+        .select('id, name')
+        .eq('business_id', businessId)
+      if (!cancelled) {
+        const m = new Map<string, string>()
+        for (const row of data ?? []) {
+          m.set(String(row.id), String(row.name))
+        }
+        setZoneNameById(m)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [businessId])
 
   useEffect(() => {
     let cancelled = false
@@ -384,7 +409,11 @@ export function CrmGuestDetail({
           <div style={{ display: 'grid', gap: 6, maxHeight: 280, overflowY: 'auto' }}>
             {appointments.map((a) => {
               const d = new Date(a.scheduled_at)
-              const party = parsePartySizeFromServiceName(a.service_name)
+              const party =
+                a.party_size != null && a.party_size > 0
+                  ? a.party_size
+                  : parsePartySizeFromServiceName(a.service_name)
+              const zoneLabel = a.zone_id ? zoneNameById.get(a.zone_id) : null
               const sc = statusColors(a.status)
               return (
                 <div
@@ -405,8 +434,12 @@ export function CrmGuestDetail({
                       {' · '}
                       {d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </div>
-                    {party != null && (
-                      <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>Party of {party}</div>
+                    {(party != null || zoneLabel) && (
+                      <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+                        {party != null ? `Party of ${party}` : null}
+                        {party != null && zoneLabel ? ' · ' : null}
+                        {zoneLabel ? zoneLabel : null}
+                      </div>
                     )}
                   </div>
                   <span

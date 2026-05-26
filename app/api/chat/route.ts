@@ -7,9 +7,15 @@ import {
   buildAvailabilityPromptSection,
   inferDateKeyFromText,
   isSlotAvailable,
+  pickZoneForSlot,
   preferredWallClockFromText,
   type ExistingBooking,
 } from '@/lib/booking-availability'
+import {
+  formatZoneNamesList,
+  resolveZoneFromConversation,
+  type DiningZone,
+} from '@/lib/dining-zones'
 import type { BookingSettings } from '@/lib/booking-settings'
 import { formatWallClock, getCalgaryNowParts, wallClockFromDate } from '@/lib/booking-wall-clock'
 import { loadBusinessBookingContext } from '@/lib/booking-load'
@@ -28,14 +34,15 @@ type ChatMessage = { role: string; content: string }
 // ─── Conversation-flow system prompt injection ────────────────────────────────
 
 const BOOKING_FLOW_RULES = `
-RESERVATION FLOW — follow this order strictly. Never skip a step.
-1. If the guest mentions wanting a table, ask for their preferred date and time first.
-2. Once date/time is clear, ask: "How many guests will be joining you?"
-3. Once party size is clear, ask: "May I have your name for the reservation?"
-4. Once you have their name, ask: "And a phone number or email so we can send a confirmation?"
+RESERVATION FLOW — follow this order. Skip any step already satisfied (see RESERVATION PROGRESS below).
+1. If the guest mentions wanting a table, ask for their preferred date and time first — unless they already gave both.
+2. Ask how many guests will be joining — ONLY if party size is not already stated in the conversation (e.g. "table for 2", "party of 4", "2 people"). Never ask again if RESERVATION PROGRESS marks party size as already stated.
+3. SEATING AREA — if RESERVATION PROGRESS lists multiple dining zones and zone is NOT yet chosen, ask where they would like to sit. Offer the zone names from DINING ZONES AVAILABLE (e.g. Patio, Bar, Main dining). If they say "no preference", "anywhere", "whatever works", etc., accept that and proceed — you will assign the best open zone at their time and tell them which area they got (e.g. "We've got you on the Patio at 7pm"). Skip this step if only one zone exists or guest already chose a specific zone or no preference.
+4. Once party size is clear (and seating area when required), ask: "May I have your name for the reservation?"
+5. Once you have their name, ask: "And a phone number or email so we can send a confirmation?"
    (Make clear this is optional but preferred.)
-5. Only AFTER collecting name, date, time, and party size: confirm the reservation details
-   back to the guest by name and say it's been placed.
+6. Only AFTER collecting name, date, time, party size, and seating area when applicable: confirm the reservation details
+   back to the guest by name, including the dining area when assigned, and say it's been placed.
 
 CANCELLATION FLOW:
 - If the guest asks to cancel their reservation, confirm you have cancelled it and say goodbye warmly.
@@ -52,6 +59,7 @@ AVAILABILITY RULES (when AVAILABLE RESERVATION TIMES are listed below):
 - If the guest's preferred time is NOT available, apologize briefly and offer 2–3 alternatives from the list.
 - Never invent open times. If no times are listed, ask for another date or time window.
 - For "around 7pm", pick the closest available slot from the list and offer it.
+- Slot labels may include a zone in parentheses — use that zone only after the guest chose it (or said no preference).
 
 RESCHEDULE FLOW:
 - If the guest wants to change their reservation time, confirm the new time only if it is in AVAILABLE RESERVATION TIMES.
@@ -565,26 +573,144 @@ function extractPartySize(text: string): number | null {
     eleven: 11,
     twelve: 12,
   }
-  const m1 = text.match(/\b(?:party\s+of|table\s+for|for)\s+(\d{1,2})\b/i)
-  if (m1) {
-    const n = parseInt(m1[1], 10)
-    if (n >= 1 && n <= 30) return n
+
+  const tryNum = (raw: string) => {
+    const n = parseInt(raw, 10)
+    return n >= 1 && n <= 30 ? n : null
   }
-  const m2 = text.match(
+
+  const patterns: RegExp[] = [
+    /\b(?:party\s+of|table\s+for|reservation\s+for|book(?:ing)?\s+(?:a\s+)?table\s+for)\s+(\d{1,2})\b/i,
+    /\bfor\s+(\d{1,2})\s+(?:guests?|people|persons|pax)\b/i,
+    /\b(\d{1,2})\s+(?:guests?|people|persons|pax)\b/i,
     /\b(?:party\s+of|table\s+for|for)\s+(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/i,
-  )
-  if (m2) return numWords[m2[1].toLowerCase()] ?? null
-  const m3 = text.match(/\b(\d{1,2})\s+(?:people|guests|persons|pax)\b/i)
-  if (m3) {
-    const n = parseInt(m3[1], 10)
-    if (n >= 1 && n <= 30) return n
+    /\ba\s+party\s+of\s+(\d{1,2})\b/i,
+  ]
+
+  for (const re of patterns) {
+    const m = text.match(re)
+    if (!m?.[1]) continue
+    const token = m[1]
+    if (/^\d{1,2}$/.test(token)) {
+      const n = tryNum(token)
+      if (n != null) return n
+    } else {
+      const w = numWords[token.toLowerCase()]
+      if (w != null) return w
+    }
   }
+
   const m4 = text.match(/^\s*(\d{1,2})\s*$/m)
-  if (m4) {
-    const n = parseInt(m4[1], 10)
-    if (n >= 1 && n <= 20) return n
-  }
+  if (m4) return tryNum(m4[1])
+
   return null
+}
+
+function resolvePartySizeFromConversation(messages: ChatMessage[]): {
+  partySize: number
+  known: boolean
+} {
+  const allUserText = getUserMessagesCombined(messages)
+  const lastUser = getLastUserMessageContent(messages) ?? ''
+  const fromLast = extractPartySize(lastUser)
+  if (fromLast != null) return { partySize: fromLast, known: true }
+  const fromAll = extractPartySize(allUserText)
+  if (fromAll != null) return { partySize: fromAll, known: true }
+  return { partySize: 2, known: false }
+}
+
+function userSpecifiedReservationDate(text: string): boolean {
+  const lower = text.toLowerCase()
+  return (
+    /\btomorrow\b/.test(lower) ||
+    /\btonight\b/.test(lower) ||
+    /\btoday\b/.test(lower) ||
+    /\d{4}-\d{2}-\d{2}/.test(text) ||
+    /\b(?:next|this)\s+(?:sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/i.test(
+      lower,
+    )
+  )
+}
+
+function userSpecifiedReservationTime(text: string): boolean {
+  return (
+    /\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/i.test(text) ||
+    /\b(?:at\s+)?\d{1,2}:\d{2}\b/i.test(text)
+  )
+}
+
+function buildReservationProgressSection(
+  chatMessages: ChatMessage[],
+  bookingCtx: BookingEngineContext,
+): string {
+  const allUserText = getUserMessagesCombined(chatMessages)
+  const lastUser = getLastUserMessageContent(chatMessages) ?? ''
+  const combined = `${allUserText}\n${lastUser}`
+
+  const { partySize, known: partyKnown } = resolvePartySizeFromConversation(chatMessages)
+  const dateKnown = userSpecifiedReservationDate(combined)
+  const timeKnown = userSpecifiedReservationTime(combined)
+
+  const assistantSnippet = chatMessages
+    .filter((m) => m.role === 'assistant')
+    .slice(-3)
+    .map((m) => m.content)
+    .join('\n')
+
+  const zoneResolution = resolveZoneFromConversation(
+    bookingCtx.zones,
+    partyKnown ? partySize : 2,
+    combined,
+    assistantSnippet,
+  )
+
+  const lines: string[] = []
+
+  if (partyKnown) {
+    lines.push(
+      `- Party size: ${partySize} guest${partySize === 1 ? '' : 's'} — ALREADY STATED. Do NOT ask "how many guests" or party size again.`,
+    )
+  } else {
+    lines.push('- Party size: not provided yet — ask once when date/time are clear (if still needed).')
+  }
+
+  if (dateKnown) {
+    lines.push('- Date: already mentioned — do not ask for the date again unless unclear.')
+  } else {
+    lines.push('- Date: not yet clear — ask for preferred date.')
+  }
+
+  if (timeKnown) {
+    lines.push('- Time: already mentioned — do not ask for the time again unless unclear.')
+  } else if (dateKnown) {
+    lines.push('- Time: not yet clear — ask for preferred time.')
+  }
+
+  if (zoneResolution.eligibleZones.length <= 1) {
+    if (zoneResolution.zoneName) {
+      lines.push(`- Dining area: ${zoneResolution.zoneName} (only option) — no need to ask.`)
+    }
+  } else if (zoneResolution.known && zoneResolution.zoneId && zoneResolution.zoneName) {
+    lines.push(
+      `- Dining area: ${zoneResolution.zoneName} — ALREADY CHOSEN. Do NOT ask where to sit again; use slots for that zone when confirming.`,
+    )
+  } else if (zoneResolution.known && !zoneResolution.zoneId) {
+    lines.push(
+      `- Dining area: no preference (anywhere is fine) — ALREADY SETTLED. Do NOT ask again. At confirmation, state which zone they received based on availability (first open zone at their time).`,
+    )
+  } else {
+    lines.push(
+      `- Dining area: NOT chosen — you MUST ask the guest their seating preference before confirming. Offer: ${formatZoneNamesList(zoneResolution.eligibleZones)}. They may say "no preference".`,
+    )
+  }
+
+  const progress = `RESERVATION PROGRESS (honor "ALREADY STATED" — skip those booking-flow steps):\n${lines.join('\n')}`
+
+  if (zoneResolution.eligibleZones.length > 1) {
+    return `${progress}\n\nDINING ZONES AVAILABLE (for party of ${partyKnown ? partySize : '?'}): ${formatZoneNamesList(zoneResolution.eligibleZones)}`
+  }
+
+  return progress
 }
 
 // Calgary is always the business timezone — dates/times are wall-clock local to Calgary
@@ -737,6 +863,7 @@ type BookingEngineContext = {
   operatingHours: OperatingHours
   bookingSettings: BookingSettings
   existingBookings: ExistingBooking[]
+  zones: DiningZone[]
 }
 
 async function tryCreateReservationFromChat(params: {
@@ -786,11 +913,8 @@ async function tryCreateReservationFromChat(params: {
   const guestName = extractGuestNameFromConversation(chatMessages, assistantText)
   if (!guestName || /^(guest|website visitor)$/i.test(guestName.trim())) return false
 
-  const partySize =
-    extractPartySize(lastUserContent) ??
-    extractPartySize(allUserText) ??
-    extractPartySize(assistantText) ??
-    2
+  const { partySize: partyFromThread } = resolvePartySizeFromConversation(chatMessages)
+  const partySize = extractPartySize(assistantText) ?? partyFromThread
 
   const parsedTime =
     parseScheduledAt(lastUserContent) ??
@@ -801,19 +925,55 @@ async function tryCreateReservationFromChat(params: {
   const wallClock = formatWallClock(wallClockFromDate(scheduledAt))
   const nowParts = getCalgaryNowParts()
 
+  const combinedText = `${lastUserContent}\n${allUserText}\n${assistantText}`
+  const zoneResolution = resolveZoneFromConversation(
+    bookingCtx.zones,
+    partySize,
+    `${lastUserContent}\n${allUserText}`,
+    assistantText,
+  )
+
+  if (!zoneResolution.known && zoneResolution.eligibleZones.length > 1) {
+    console.log('[booking] Seating zone not chosen yet, skipping insert')
+    return false
+  }
+
+  const preferredZoneId = zoneResolution.zoneId
+
   const available = isSlotAvailable({
     wallClock,
     operatingHours: bookingCtx.operatingHours,
     existing: bookingCtx.existingBookings,
     settings: bookingCtx.bookingSettings,
-    durationMinutes: bookingCtx.bookingSettings.default_duration_minutes,
     now: nowParts,
+    zones: bookingCtx.zones,
+    partySize,
+    zoneId: preferredZoneId,
   })
 
   if (!available) {
     console.log('[booking] Slot not available, skipping insert:', wallClock)
     return false
   }
+
+  const assignedZone = pickZoneForSlot(
+    wallClock,
+    bookingCtx.zones,
+    partySize,
+    bookingCtx.operatingHours,
+    bookingCtx.existingBookings,
+    bookingCtx.bookingSettings,
+    preferredZoneId,
+    nowParts,
+  )
+  const zoneId = assignedZone?.id ?? preferredZoneId ?? null
+
+  if (!zoneId) {
+    console.log('[booking] Could not assign dining zone for slot')
+    return false
+  }
+  const durationMinutes =
+    assignedZone?.turnover_minutes ?? bookingCtx.bookingSettings.default_duration_minutes
 
   // Pack reservation details into service_name (schema-compatible).
   const svcParts = [guestName, `Party of ${partySize}`]
@@ -830,8 +990,6 @@ async function tryCreateReservationFromChat(params: {
 
   const notes = extractSpecialRequests(chatMessages)
 
-  const durationMinutes = bookingCtx.bookingSettings.default_duration_minutes
-
   const { error } = await supabaseAdmin
     .from('appointments')
     .insert({
@@ -843,6 +1001,8 @@ async function tryCreateReservationFromChat(params: {
       status: 'pending' as const,
       notes,
       duration_minutes: durationMinutes,
+      party_size: partySize,
+      zone_id: zoneId,
     })
     .select('id')
     .maybeSingle()
@@ -953,7 +1113,7 @@ async function tryRescheduleReservationFromChat(params: {
 
   const { data: appt } = await supabaseAdmin
     .from('appointments')
-    .select('id, scheduled_at, status')
+    .select('id, scheduled_at, status, zone_id')
     .eq('conversation_id', conversation_id)
     .in('status', ['pending', 'confirmed', 'seated'])
     .order('scheduled_at', { ascending: true })
@@ -995,14 +1155,29 @@ async function tryRescheduleReservationFromChat(params: {
   const wallClock = formatWallClock(wallClockFromDate(parsedTime))
   const nowParts = getCalgaryNowParts()
 
+  const { partySize: resolvedPartySize } = resolvePartySizeFromConversation(chatMessages)
+  const partyFromAssistant = extractPartySize(assistantText)
+  const partySize = partyFromAssistant ?? resolvedPartySize
+
+  const zoneResolution = resolveZoneFromConversation(
+    bookingCtx.zones,
+    partySize,
+    `${lastUserContent}\n${allUserText}`,
+    assistantText,
+  )
+  const existingZoneId = appt?.zone_id != null ? String(appt.zone_id) : null
+  const preferredZoneId = zoneResolution.zoneId ?? existingZoneId
+
   const available = isSlotAvailable({
     wallClock,
     operatingHours: bookingCtx.operatingHours,
     existing: bookingCtx.existingBookings,
     settings: bookingCtx.bookingSettings,
-    durationMinutes: bookingCtx.bookingSettings.default_duration_minutes,
     now: nowParts,
     excludeAppointmentId: appointmentId,
+    zones: bookingCtx.zones,
+    partySize,
+    zoneId: preferredZoneId,
   })
 
   if (!available) {
@@ -1010,11 +1185,26 @@ async function tryRescheduleReservationFromChat(params: {
     return false
   }
 
+  const assignedZone = pickZoneForSlot(
+    wallClock,
+    bookingCtx.zones,
+    partySize,
+    bookingCtx.operatingHours,
+    bookingCtx.existingBookings,
+    bookingCtx.bookingSettings,
+    preferredZoneId,
+    nowParts,
+  )
+  const durationMinutes =
+    assignedZone?.turnover_minutes ?? bookingCtx.bookingSettings.default_duration_minutes
+
   const { error } = await supabaseAdmin
     .from('appointments')
     .update({
       scheduled_at: wallClock,
-      duration_minutes: bookingCtx.bookingSettings.default_duration_minutes,
+      duration_minutes: durationMinutes,
+      zone_id: assignedZone?.id ?? preferredZoneId,
+      party_size: partySize,
     })
     .eq('id', appointmentId)
     .eq('business_id', business_id)
@@ -1040,22 +1230,41 @@ function buildChatAvailabilitySection(
     return null
   }
 
-  const partySize =
-    extractPartySize(lastUser) ?? extractPartySize(allUserText) ?? 2
+  const { partySize, known: partySizeKnown } = resolvePartySizeFromConversation(chatMessages)
 
   const nowParts = getCalgaryNowParts()
   const dateKey = inferDateKeyFromText(combined, nowParts)
   const preferred = preferredWallClockFromText(combined, dateKey, nowParts)
 
-  return buildAvailabilityPromptSection({
+  const assistantSnippet = chatMessages
+    .filter((m) => m.role === 'assistant')
+    .slice(-3)
+    .map((m) => m.content)
+    .join('\n')
+
+  const zoneResolution = resolveZoneFromConversation(
+    bookingCtx.zones,
+    partySize,
+    combined,
+    assistantSnippet,
+  )
+
+  const progress = buildReservationProgressSection(chatMessages, bookingCtx)
+  const availability = buildAvailabilityPromptSection({
     operatingHours: bookingCtx.operatingHours,
     existing: bookingCtx.existingBookings,
     settings: bookingCtx.bookingSettings,
     targetDateKey: dateKey,
     partySize,
+    partySizeKnown,
     preferredWallClock: preferred,
     now: nowParts,
+    zones: bookingCtx.zones,
+    preferredZoneId: zoneResolution.zoneId,
+    zoneResolution,
   })
+
+  return `${progress}\n\n${availability}`
 }
 
 // ─── Notification email ───────────────────────────────────────────────────────

@@ -25,6 +25,8 @@ import { supabase } from '@/lib/supabase'
 import { card, t } from '@/lib/dashboard-theme'
 import { bk, bkCard } from '@/lib/bookings-compact-ui'
 import { computeBookingKpi, isInDisplayMonth } from '@/lib/booking-kpi'
+import { parsePartySizeFromServiceName } from '@/lib/appointment-service-name'
+import { parseDiningZoneRow, type DiningZone } from '@/lib/dining-zones'
 import { toDateIso, toWallClock } from '@/lib/reservation-schedule'
 import {
   buildTimeSlots,
@@ -42,6 +44,8 @@ type DbRow = {
   customer_id: string | null
   conversation_id: string | null
   notes: string | null
+  zone_id?: string | null
+  party_size?: number | null
 }
 
 type AdvancedFilters = {
@@ -87,10 +91,20 @@ function normalizeStatus(raw: string | null | undefined): ResStatus {
 
 // service_name encoding: "Guest Name · Party of N · Table T · Notes: special text"
 // All segments after the first two are optional extras packed in for now (until schema updated).
-function parseReservation(row: DbRow, customerName?: string): Reservation {
+function parseReservation(
+  row: DbRow,
+  customerName?: string,
+  zoneNameById?: Map<string, string>,
+): Reservation {
   const parts = (row.service_name ?? '').split(' \u00b7 ') // split on " · "
   const guestName = customerName?.trim() || parts[0]?.trim() || 'Guest'
-  const partySize = parseInt((parts[1] ?? '').replace(/\D/g, ''), 10) || 1
+  const partySize =
+    row.party_size != null && row.party_size > 0
+      ? row.party_size
+      : (parsePartySizeFromServiceName(row.service_name) ??
+          parseInt((parts[1] ?? '').replace(/\D/g, ''), 10)) || 1
+  const zoneId = row.zone_id ?? null
+  const zoneName = zoneId && zoneNameById ? zoneNameById.get(zoneId) ?? null : null
 
   const tablePart = parts.find((p) => /^Table /i.test(p.trim()))
   const tableNumber = tablePart ? tablePart.replace(/^Table /i, '').trim() : '—'
@@ -109,6 +123,8 @@ function parseReservation(row: DbRow, customerName?: string): Reservation {
     specialRequests,
     customerId: row.customer_id ?? null,
     conversationId: row.conversation_id ?? null,
+    zoneId,
+    zoneName,
   }
 }
 
@@ -525,7 +541,7 @@ function ReservationListView({
           <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 680 }}>
             <thead>
               <tr style={{ borderBottom: `1px solid ${t.border}`, background: t.bgSurfaceMuted }}>
-                {['Time', 'Guest', 'Party Size', 'Table', 'Status', 'Actions'].map((col) => (
+                {['Time', 'Guest', 'Party Size', 'Zone', 'Table', 'Status', 'Actions'].map((col) => (
                   <th
                     key={col}
                     style={{
@@ -548,7 +564,7 @@ function ReservationListView({
               {loading ? (
                 Array.from({ length: 4 }).map((_, idx) => (
                   <tr key={idx} style={{ borderBottom: `1px solid ${t.borderSoft}` }}>
-                    {Array.from({ length: 6 }).map((__, c) => (
+                    {Array.from({ length: 7 }).map((__, c) => (
                       <td key={c} style={{ padding: '16px 18px' }}>
                         <div
                           style={{
@@ -564,7 +580,7 @@ function ReservationListView({
               ) : reservations.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={6}
+                    colSpan={7}
                     style={{
                       padding: 32,
                       textAlign: 'center',
@@ -620,6 +636,15 @@ function ReservationListView({
                         }}
                       >
                         {r.partySize}
+                      </td>
+                      <td
+                        style={{
+                          padding: '14px 18px',
+                          color: t.textMuted,
+                          fontSize: 13,
+                        }}
+                      >
+                        {r.zoneName ?? '—'}
                       </td>
                       <td
                         style={{
@@ -871,6 +896,7 @@ function ReservationModal({
   editReservation,
   onClose,
   businessId,
+  diningZones,
   onAdded,
   onUpdated,
   initialDate,
@@ -879,6 +905,7 @@ function ReservationModal({
   editReservation: Reservation | null
   onClose: () => void
   businessId: string | null
+  diningZones: DiningZone[]
   onAdded: (r: Reservation) => void
   onUpdated: (r: Reservation) => void
   initialDate?: string
@@ -904,6 +931,7 @@ function ReservationModal({
   const [focusedField, setFocusedField] = useState<string | null>(null)
   const dateInputRef = useRef<HTMLInputElement>(null)
   const [operatingHours, setOperatingHours] = useState<OperatingHours>(DEFAULT_OPERATING_HOURS)
+  const [zoneId, setZoneId] = useState<string>('')
 
   const dayHours = useMemo(() => getDayHoursForDate(operatingHours, date), [operatingHours, date])
   const timeRange = useMemo(() => timelineRangeFromDayHours(dayHours), [dayHours])
@@ -946,8 +974,9 @@ function ReservationModal({
       setTableNumber(r.tableNumber !== '—' ? r.tableNumber : '')
       setSpecialRequests(r.specialRequests)
       setEditStatus(r.status)
+      setZoneId(r.zoneId ?? diningZones[0]?.id ?? '')
     },
-    [operatingHours],
+    [operatingHours, diningZones],
   )
 
   useEffect(() => {
@@ -965,6 +994,7 @@ function ReservationModal({
         setTableNumber('')
         setSpecialRequests('')
         setEditStatus('pending')
+        setZoneId(diningZones[0]?.id ?? '')
       }
       setHydrating(false)
       return
@@ -977,7 +1007,7 @@ function ReservationModal({
     void (async () => {
       const { data, error: fetchError } = await supabase
         .from('appointments')
-        .select('id, service_name, scheduled_at, status, customer_id, notes')
+        .select('id, service_name, scheduled_at, status, customer_id, notes, zone_id, party_size')
         .eq('id', appointmentId)
         .single()
 
@@ -1023,6 +1053,39 @@ function ReservationModal({
     const notesValue = specialRequests.trim() || null
     const serviceName = buildServiceName(guestName, partySize, tableNumber, specialRequests)
 
+    if (businessId) {
+      const params = new URLSearchParams({
+        business_id: businessId,
+        date,
+        partySize: String(partySize),
+      })
+      if (zoneId) params.set('zoneId', zoneId)
+      try {
+        const availRes = await fetch(`/api/bookings/availability?${params}`)
+        const availJson = (await availRes.json()) as {
+          slots?: { wallClock: string }[]
+          error?: string
+        }
+        if (availRes.ok && availJson.slots) {
+          const slotOk = availJson.slots.some((s) => s.wallClock === wallClock)
+          if (!slotOk) {
+            setSaving(false)
+            setError(
+              'That time is not available for this party size and zone. Choose another slot or adjust zones in Settings → Reservations.',
+            )
+            return
+          }
+        }
+      } catch {
+        /* availability API optional if migrations pending */
+      }
+    }
+
+    const selectedZone = diningZones.find((z) => z.id === zoneId)
+    const durationMinutes = selectedZone?.turnover_minutes ?? 90
+    const resolvedZoneId = zoneId || null
+    const zoneName = selectedZone?.name ?? null
+
     if (isEdit && editReservation) {
       const { error: updateError } = await supabase
         .from('appointments')
@@ -1031,6 +1094,9 @@ function ReservationModal({
           scheduled_at: wallClock,
           status: editStatus,
           notes: notesValue,
+          party_size: partySize,
+          zone_id: resolvedZoneId,
+          duration_minutes: durationMinutes,
         })
         .eq('id', editReservation.id)
 
@@ -1048,6 +1114,8 @@ function ReservationModal({
         scheduledAt,
         status: editStatus,
         specialRequests: specialRequests.trim(),
+        zoneId: resolvedZoneId,
+        zoneName,
       })
       return
     }
@@ -1060,8 +1128,11 @@ function ReservationModal({
         scheduled_at: wallClock,
         status: 'confirmed',
         notes: notesValue,
+        party_size: partySize,
+        zone_id: resolvedZoneId,
+        duration_minutes: durationMinutes,
       })
-      .select('id, service_name, scheduled_at, status, customer_id, notes')
+      .select('id, service_name, scheduled_at, status, customer_id, notes, zone_id, party_size')
       .single()
 
     setSaving(false)
@@ -1070,7 +1141,8 @@ function ReservationModal({
       return
     }
 
-    onAdded(parseReservation(data as DbRow))
+    const zoneMap = new Map(diningZones.map((z) => [z.id, z.name]))
+    onAdded(parseReservation(data as DbRow, undefined, zoneMap))
   }
 
   const guestFloating = focusedField === 'guest' || guestName.length > 0
@@ -1280,6 +1352,38 @@ function ReservationModal({
                 <span style={sectionLabel}>Party size</span>
                 <PartySizeCompact value={partySize} onChange={setPartySize} reduceMotion={reduceMotion} />
               </motion.div>
+
+              {diningZones.length > 0 && (
+                <motion.div variants={{ hidden: { opacity: 0, y: 8 }, visible: { opacity: 1, y: 0 } }}>
+                  <span style={sectionLabel}>Dining zone</span>
+                  <select
+                    value={zoneId}
+                    onChange={(e) => setZoneId(e.target.value)}
+                    style={{
+                      width: '100%',
+                      height: 42,
+                      borderRadius: 10,
+                      border: `1px solid ${t.border}`,
+                      padding: '0 12px',
+                      fontSize: 13,
+                      fontFamily: MODAL_FONT.jakarta,
+                      background: t.bgSurface,
+                      color: t.text,
+                    }}
+                  >
+                    {diningZones.map((z) => (
+                      <option key={z.id} value={z.id}>
+                        {z.name} (max {z.max_concurrent_parties} parties)
+                      </option>
+                    ))}
+                  </select>
+                  <p style={{ margin: '6px 0 0', fontSize: 11, color: t.textMuted }}>
+                    <a href="/dashboard/settings?category=reservations" style={{ color: t.accent }}>
+                      Manage zones
+                    </a>
+                  </p>
+                </motion.div>
+              )}
 
               <motion.div variants={{ hidden: { opacity: 0, y: 8 }, visible: { opacity: 1, y: 0 } }}>
                 <span style={sectionLabel}>Date</span>
@@ -1707,6 +1811,7 @@ export default function BookingsPage() {
   const [statusFilter, setStatusFilter] = useState<'all' | 'confirmed' | 'pending' | 'cancelled'>('all')
   const [calendarView, setCalendarView] = useState<'month' | 'day'>('month')
   const [operatingHours, setOperatingHours] = useState<OperatingHours>(DEFAULT_OPERATING_HOURS)
+  const [diningZones, setDiningZones] = useState<DiningZone[]>([])
   const [tableVisibleCount, setTableVisibleCount] = useState(10)
   const [advancedFilters, setAdvancedFilters] = useState<AdvancedFilters>(DEFAULT_ADVANCED_FILTERS)
   const [filtersOpen, setFiltersOpen] = useState(false)
@@ -1762,6 +1867,12 @@ export default function BookingsPage() {
     setMonthOffset(monthDiff)
   }
 
+  const zoneNameById = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const z of diningZones) m.set(z.id, z.name)
+    return m
+  }, [diningZones])
+
   // ─── Load data ─────────────────────────────────────────────────────────────
   const [loadError, setLoadError] = useState<string | null>(null)
   const [updateError, setUpdateError] = useState<string | null>(null)
@@ -1812,7 +1923,7 @@ export default function BookingsPage() {
 
       const { data: rows, error } = await supabase
         .from('appointments')
-        .select('id, service_name, scheduled_at, status, customer_id, conversation_id, notes')
+        .select('id, service_name, scheduled_at, status, customer_id, conversation_id, notes, zone_id, party_size')
         .eq('business_id', business.id)
         .gte('scheduled_at', startStr)
         .lt('scheduled_at', endStr)
@@ -1855,7 +1966,11 @@ export default function BookingsPage() {
 
       if (!isCancelled()) {
         const next = typed.map((r) =>
-          parseReservation(r, r.customer_id ? nameById.get(r.customer_id) : undefined),
+          parseReservation(
+            r,
+            r.customer_id ? nameById.get(r.customer_id) : undefined,
+            zoneNameById,
+          ),
         )
         setReservations((prev) => {
           if (
@@ -1874,7 +1989,7 @@ export default function BookingsPage() {
         if (!silent) setLoading(false)
       }
     },
-    [loadMonthYear, loadMonthIndex],
+    [loadMonthYear, loadMonthIndex, zoneNameById],
   )
 
   const fetchReservationsRef = useRef(fetchReservations)
@@ -1953,6 +2068,25 @@ export default function BookingsPage() {
         setOperatingHours(
           parseOperatingHours((data as { operating_hours?: unknown }).operating_hours),
         )
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [businessId])
+
+  useEffect(() => {
+    if (!businessId) return
+    let cancelled = false
+    void (async () => {
+      const { data } = await supabase
+        .from('dining_zones')
+        .select('*')
+        .eq('business_id', businessId)
+        .eq('is_active', true)
+        .order('sort_order', { ascending: true })
+      if (!cancelled) {
+        setDiningZones((data ?? []).map((r) => parseDiningZoneRow(r as Record<string, unknown>)))
       }
     })()
     return () => {
@@ -3019,6 +3153,7 @@ export default function BookingsPage() {
                 <ReservationModal
                   mode={editReservation ? 'edit' : 'add'}
                   editReservation={editReservation}
+                  diningZones={diningZones}
                   initialDate={editReservation ? undefined : prefilledDate}
                   onClose={() => {
                     setShowAddModal(false)

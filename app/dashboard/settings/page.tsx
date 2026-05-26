@@ -11,7 +11,15 @@ import {
   SettingsCategoryNav,
   type SettingsCategoryId,
 } from '@/components/settings-category-nav'
+import { BookingSettingsPanel } from '@/components/booking-settings-panel'
+import { DiningZonesPanel, type DiningZoneDraft } from '@/components/dining-zones-panel'
 import { WorkingHoursPanel } from '@/components/working-hours-panel'
+import {
+  DEFAULT_BOOKING_SETTINGS,
+  parseBookingSettings,
+  type BookingSettings,
+} from '@/lib/booking-settings'
+import { defaultMainDiningZone, parseDiningZoneRow, slugifyZoneName } from '@/lib/dining-zones'
 import { oceanTransition, settingsPanelHeavy } from '@/lib/ocean-motion'
 import {
   DEFAULT_OPERATING_HOURS,
@@ -21,11 +29,17 @@ import {
 } from '@/lib/operating-hours'
 import { supabase } from '@/lib/supabase'
 import {
+  BOOKING_SETTINGS_MIGRATION_HINT,
+  DINING_ZONES_MIGRATION_HINT,
+  isBookingSettingsSchemaError,
+  isDiningZonesSchemaError,
   isOperatingHoursSchemaError,
   OPERATING_HOURS_MIGRATION_HINT,
 } from '@/lib/supabase-schema'
 import { card, t } from '@/lib/dashboard-theme'
 
+const BUSINESS_SELECT_WITH_BOOKING =
+  'id, name, email, phone, business_type, address, system_prompt, agent_name, language, menu_pdf_text, operating_hours, booking_settings'
 const BUSINESS_SELECT_WITH_HOURS =
   'id, name, email, phone, business_type, address, system_prompt, agent_name, language, menu_pdf_text, operating_hours'
 const BUSINESS_SELECT_BASE =
@@ -74,6 +88,17 @@ function catStyle(category: string | null) {
 }
 
 const glassCard = card
+
+const migrationHintBox: React.CSSProperties = {
+  marginBottom: 12,
+  padding: '10px 12px',
+  borderRadius: 8,
+  border: '1px solid rgba(220, 38, 38, 0.35)',
+  background: 'rgba(220, 38, 38, 0.06)',
+  color: '#b91c1c',
+  fontSize: 12,
+  lineHeight: 1.5,
+}
 
 const settingsFont = 'var(--font-plus-jakarta, system-ui, sans-serif)'
 
@@ -284,6 +309,7 @@ function FloatingSelect({ label, value, onChange, options }: FloatingSelectProps
 function SettingsPageInner() {
   const searchParams = useSearchParams()
   const tabParam = searchParams.get('tab')
+  const categoryParam = searchParams.get('category')
   const initialTab: TabId =
     tabParam === 'ai' ||
     tabParam === 'menu' ||
@@ -293,7 +319,10 @@ function SettingsPageInner() {
     tabParam === 'general'
       ? tabParam
       : 'general'
-  const [activeCategory, setActiveCategory] = useState<CategoryId>(() => tabToCategory(initialTab))
+  const [activeCategory, setActiveCategory] = useState<CategoryId>(() => {
+    if (categoryParam === 'reservations') return 'reservations'
+    return tabToCategory(initialTab)
+  })
   const [mobileShowDetail, setMobileShowDetail] = useState(false)
 
   useEffect(() => {
@@ -309,6 +338,12 @@ function SettingsPageInner() {
       setActiveCategory(tabToCategory(tabParam))
     }
   }, [tabParam])
+
+  useEffect(() => {
+    if (categoryParam === 'reservations') {
+      setActiveCategory('reservations')
+    }
+  }, [categoryParam])
   const [saveError, setSaveError] = useState('')
   const [saveSucceeded, setSaveSucceeded] = useState(false)
   const saveSuccessTimerRef = useRef<number | null>(null)
@@ -324,6 +359,13 @@ function SettingsPageInner() {
   const [businessAddress, setBusinessAddress] = useState('')
   const [hours, setHours] = useState<OperatingHours>(DEFAULT_OPERATING_HOURS)
   const [hoursSchemaReady, setHoursSchemaReady] = useState(true)
+  const [bookingSettings, setBookingSettings] = useState<BookingSettings>({
+    ...DEFAULT_BOOKING_SETTINGS,
+  })
+  const [bookingSettingsSchemaReady, setBookingSettingsSchemaReady] = useState(true)
+  const [zonesSchemaReady, setZonesSchemaReady] = useState(true)
+  const [zoneDrafts, setZoneDrafts] = useState<DiningZoneDraft[]>([])
+  const [zonesLoading, setZonesLoading] = useState(false)
 
   const [systemPrompt, setSystemPrompt] = useState(
     'You are the AI Concierge for this restaurant. Be warm, attentive, and concise. Help guests with reservations, menu inquiries, dietary requirements, and special-occasion notes. Confirm party size, date, time, and guest name before treating a reservation as final. Escalate complaints or unusual requests to a manager.',
@@ -371,7 +413,11 @@ function SettingsPageInner() {
   const categoryIndex = SETTINGS_CATEGORIES.findIndex((category) => category.id === activeCategory)
   const [panelDirection, setPanelDirection] = useState(1)
 
-  const showSaveActions = activeCategory === 'restaurant' || activeCategory === 'ai' || activeCategory === 'integrations'
+  const showSaveActions =
+    activeCategory === 'restaurant' ||
+    activeCategory === 'reservations' ||
+    activeCategory === 'ai' ||
+    activeCategory === 'integrations'
 
   const widgetEmbedSnippet = useMemo(() => {
     if (!businessRowId || !widgetOrigin) {
@@ -387,18 +433,45 @@ function SettingsPageInner() {
       let data: Record<string, unknown> | null = null
       let schemaReady = true
 
-      const withHours = await supabase
+      const withBooking = await supabase
         .from('businesses')
-        .select(BUSINESS_SELECT_WITH_HOURS)
+        .select(BUSINESS_SELECT_WITH_BOOKING)
         .eq('user_id', userId)
         .maybeSingle()
 
       if (!isMounted) return
 
-      if (!withHours.error && withHours.data) {
-        data = withHours.data as Record<string, unknown>
-      } else if (isOperatingHoursSchemaError(withHours.error?.message)) {
+      if (!withBooking.error && withBooking.data) {
+        data = withBooking.data as Record<string, unknown>
+        setBookingSettingsSchemaReady(true)
+        setBookingSettings(parseBookingSettings(data.booking_settings))
+      } else if (isBookingSettingsSchemaError(withBooking.error?.message)) {
+        setBookingSettingsSchemaReady(false)
+        const withHours = await supabase
+          .from('businesses')
+          .select(BUSINESS_SELECT_WITH_HOURS)
+          .eq('user_id', userId)
+          .maybeSingle()
+        if (!isMounted) return
+        if (!withHours.error && withHours.data) {
+          data = withHours.data as Record<string, unknown>
+        } else if (isOperatingHoursSchemaError(withHours.error?.message)) {
+          schemaReady = false
+          const fallback = await supabase
+            .from('businesses')
+            .select(BUSINESS_SELECT_BASE)
+            .eq('user_id', userId)
+            .maybeSingle()
+          if (!isMounted) return
+          if (!fallback.error && fallback.data) {
+            data = fallback.data as Record<string, unknown>
+          }
+        } else if (withHours.data) {
+          data = withHours.data as Record<string, unknown>
+        }
+      } else if (isOperatingHoursSchemaError(withBooking.error?.message)) {
         schemaReady = false
+        setBookingSettingsSchemaReady(false)
         const fallback = await supabase
           .from('businesses')
           .select(BUSINESS_SELECT_BASE)
@@ -468,6 +541,121 @@ function SettingsPageInner() {
     }
   }, [])
 
+  const loadZonesForBusiness = async (bizId: string) => {
+    setZonesLoading(true)
+    const { data, error } = await supabase
+      .from('dining_zones')
+      .select('*')
+      .eq('business_id', bizId)
+      .order('sort_order', { ascending: true })
+
+    if (error && isDiningZonesSchemaError(error.message)) {
+      setZonesSchemaReady(false)
+      setZoneDrafts([])
+    } else if (!error) {
+      setZonesSchemaReady(true)
+      const rows = (data ?? []).map((r) => parseDiningZoneRow(r as Record<string, unknown>))
+      if (rows.length === 0) {
+        setZoneDrafts([defaultMainDiningZone(bizId, bookingSettings)])
+      } else {
+        setZoneDrafts(rows)
+      }
+    }
+    setZonesLoading(false)
+  }
+
+  useEffect(() => {
+    if (!businessRowId || activeCategory !== 'reservations') return
+    void loadZonesForBusiness(businessRowId)
+  }, [businessRowId, activeCategory])
+
+  const saveReservations = async (bizId: string) => {
+    if (!bookingSettingsSchemaReady) {
+      setSaveError(BOOKING_SETTINGS_MIGRATION_HINT)
+      return false
+    }
+
+    const { error: bizErr } = await supabase
+      .from('businesses')
+      .update({ booking_settings: bookingSettings })
+      .eq('id', bizId)
+
+    if (bizErr) {
+      if (isBookingSettingsSchemaError(bizErr.message)) {
+        setBookingSettingsSchemaReady(false)
+        setSaveError(BOOKING_SETTINGS_MIGRATION_HINT)
+      } else {
+        setSaveError(bizErr.message ?? 'Failed to save booking settings')
+      }
+      return false
+    }
+
+    if (!zonesSchemaReady) {
+      setSaveError(DINING_ZONES_MIGRATION_HINT)
+      return false
+    }
+
+    const existingIds = new Set(zoneDrafts.filter((z) => z.id).map((z) => z.id!))
+    const { data: existingRows } = await supabase
+      .from('dining_zones')
+      .select('id')
+      .eq('business_id', bizId)
+
+    for (const row of existingRows ?? []) {
+      const id = String((row as { id: string }).id)
+      if (!existingIds.has(id)) {
+        await supabase.from('dining_zones').update({ is_active: false }).eq('id', id)
+      }
+    }
+
+    const nextDrafts = [...zoneDrafts]
+    for (let i = 0; i < nextDrafts.length; i++) {
+      const z = nextDrafts[i]
+      const payload = {
+        business_id: bizId,
+        name: z.name.trim() || 'Zone',
+        slug: z.slug?.trim() || slugifyZoneName(z.name),
+        max_concurrent_parties: z.max_concurrent_parties,
+        min_party_size: z.min_party_size,
+        max_party_size: z.max_party_size,
+        turnover_minutes: z.turnover_minutes,
+        is_active: z.is_active,
+        sort_order: i,
+        updated_at: new Date().toISOString(),
+      }
+
+      if (z.id) {
+        const { error } = await supabase.from('dining_zones').update(payload).eq('id', z.id)
+        if (error) {
+          setSaveError(error.message ?? 'Failed to update zone')
+          return false
+        }
+      } else {
+        const { data: inserted, error } = await supabase
+          .from('dining_zones')
+          .insert(payload)
+          .select('*')
+          .maybeSingle()
+        if (error) {
+          if (isDiningZonesSchemaError(error.message)) {
+            setZonesSchemaReady(false)
+            setSaveError(DINING_ZONES_MIGRATION_HINT)
+          } else {
+            setSaveError(error.message ?? 'Failed to create zone')
+          }
+          return false
+        }
+        if (inserted) {
+          nextDrafts[i] = parseDiningZoneRow(inserted as Record<string, unknown>)
+        }
+      }
+    }
+
+    setZoneDrafts(nextDrafts)
+    await loadZonesForBusiness(bizId)
+    return true
+  }
+
   const handleSave = async () => {
     if (isSaving || isLoading) {
       return
@@ -495,6 +683,31 @@ function SettingsPageInner() {
     setIsSaving(true)
     setSaveError('')
     setSaveSucceeded(false)
+
+    if (activeCategory === 'reservations') {
+      let bizId = businessRowId
+      if (!bizId) {
+        const { data: row } = await supabase.from('businesses').select('id').eq('user_id', userId).maybeSingle()
+        bizId = row?.id ?? null
+        if (bizId) setBusinessRowId(bizId)
+      }
+      if (!bizId) {
+        setSaveError('Save restaurant profile first (Restaurant tab).')
+        setIsSaving(false)
+        return
+      }
+      const ok = await saveReservations(bizId)
+      setIsSaving(false)
+      if (ok) {
+        setSaveSucceeded(true)
+        if (saveSuccessTimerRef.current) window.clearTimeout(saveSuccessTimerRef.current)
+        saveSuccessTimerRef.current = window.setTimeout(() => {
+          setSaveSucceeded(false)
+          saveSuccessTimerRef.current = null
+        }, 2200)
+      }
+      return
+    }
 
     const hoursError = activeCategory === 'restaurant' ? validateOperatingHours(hours) : null
     if (hoursError) {
@@ -761,6 +974,62 @@ function SettingsPageInner() {
           title="Security"
           description="Password changes and two-factor authentication will live here. Coming soon."
         />
+      )
+    }
+
+    if (activeCategory === 'reservations') {
+      return (
+        <div style={{ display: 'grid', gap: 16 }}>
+          <div style={{ ...glassCard, padding: 16 }}>
+            <div
+              style={{
+                color: t.textMuted,
+                fontSize: 11,
+                fontWeight: 700,
+                letterSpacing: '0.16em',
+                textTransform: 'uppercase',
+                marginBottom: 14,
+              }}
+            >
+              Booking defaults
+            </div>
+            {!bookingSettingsSchemaReady ? (
+              <div style={migrationHintBox}>{BOOKING_SETTINGS_MIGRATION_HINT}</div>
+            ) : null}
+            <BookingSettingsPanel
+              settings={bookingSettings}
+              onChange={setBookingSettings}
+              disabled={!bookingSettingsSchemaReady || isSaving}
+            />
+          </div>
+
+          <div style={{ ...glassCard, padding: 16 }}>
+            <div
+              style={{
+                color: t.textMuted,
+                fontSize: 11,
+                fontWeight: 700,
+                letterSpacing: '0.16em',
+                textTransform: 'uppercase',
+                marginBottom: 14,
+              }}
+            >
+              Dining zones
+            </div>
+            {!zonesSchemaReady ? (
+              <div style={migrationHintBox}>{DINING_ZONES_MIGRATION_HINT}</div>
+            ) : zonesLoading ? (
+              <p style={{ margin: 0, fontSize: 13, color: t.textMuted }}>Loading zones…</p>
+            ) : (
+              <DiningZonesPanel
+                zones={zoneDrafts}
+                bookingSettings={bookingSettings}
+                onChange={setZoneDrafts}
+                disabled={!zonesSchemaReady || isSaving}
+              />
+            )}
+          </div>
+        </div>
       )
     }
 
