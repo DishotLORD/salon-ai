@@ -1,6 +1,7 @@
 'use client'
 
 import { motion, useReducedMotion } from 'framer-motion'
+import { useSearchParams } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { DashboardOceanNav } from '@/components/dashboard-ocean-nav'
@@ -142,6 +143,7 @@ function getInitials(name: string) {
 }
 
 export default function ChatsInboxPage() {
+  const searchParams = useSearchParams()
   const [conversationList, setConversationList] = useState<Conversation[]>([])
   const [selectedId, setSelectedId] = useState('')
   const [draft, setDraft] = useState('')
@@ -275,14 +277,17 @@ export default function ChatsInboxPage() {
 
       const mapped = data.map((row) => mapDbConversationToConversation(row as DbConversationRow))
       setConversationList(mapped)
-      setSelectedId(mapped[0].id)
+      const deepLink = searchParams.get('conversation')
+      const initialId =
+        deepLink && mapped.some((c) => c.id === deepLink) ? deepLink : (mapped[0]?.id ?? '')
+      setSelectedId(initialId)
     }
 
     void loadConversations()
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [searchParams])
 
   const selectedConversation = useMemo(() => {
     if (!selectedId) {

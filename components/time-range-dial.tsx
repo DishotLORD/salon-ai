@@ -4,6 +4,7 @@ import type { CSSProperties, PointerEvent } from 'react'
 import { useCallback, useMemo, useRef, useState } from 'react'
 
 import { t } from '@/lib/dashboard-theme'
+import { BOOKING_SLOT_MINUTES } from '@/lib/operating-hours'
 import {
   buildTimeSlots,
   formatDigitalClock,
@@ -18,7 +19,7 @@ const DIAL_FONT = 'var(--font-plus-jakarta, system-ui, sans-serif)'
 export const HOURS_TIMELINE_RANGE: TimelineRange = {
   start: 6 * 60,
   end: 26 * 60,
-  step: 30,
+  step: BOOKING_SLOT_MINUTES,
   wrapAfterMidnight: true,
 }
 

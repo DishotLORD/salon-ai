@@ -2,9 +2,9 @@
 
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import type { CSSProperties } from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
-import { BookingsDayChips } from '@/components/bookings-day-chips'
+import { BookingsDayChips, BookingsDayEmptyStrip } from '@/components/bookings-day-chips'
 import { BookingsLightCalendar } from '@/components/bookings-light-calendar'
 import { BookingsDayTimeline } from '@/components/bookings-day-timeline'
 import { DashboardOceanNav } from '@/components/dashboard-ocean-nav'
@@ -24,6 +24,7 @@ import { oceanTransition } from '@/lib/ocean-motion'
 import { supabase } from '@/lib/supabase'
 import { card, t } from '@/lib/dashboard-theme'
 import { bk, bkCard } from '@/lib/bookings-compact-ui'
+import { computeBookingKpi, isInDisplayMonth } from '@/lib/booking-kpi'
 import { toDateIso, toWallClock } from '@/lib/reservation-schedule'
 import {
   buildTimeSlots,
@@ -39,7 +40,35 @@ type DbRow = {
   scheduled_at: string
   status: string | null
   customer_id: string | null
+  conversation_id: string | null
   notes: string | null
+}
+
+type AdvancedFilters = {
+  minPartySize: number | null
+  source: 'all' | 'chat' | 'manual'
+}
+
+const DEFAULT_ADVANCED_FILTERS: AdvancedFilters = {
+  minPartySize: null,
+  source: 'all',
+}
+
+function applyAdvancedFilters(list: Reservation[], filters: AdvancedFilters): Reservation[] {
+  let out = list
+  if (filters.minPartySize != null && filters.minPartySize > 0) {
+    out = out.filter((r) => r.partySize >= filters.minPartySize!)
+  }
+  if (filters.source === 'chat') {
+    out = out.filter((r) => Boolean(r.conversationId))
+  } else if (filters.source === 'manual') {
+    out = out.filter((r) => !r.conversationId)
+  }
+  return out
+}
+
+function advancedFiltersActive(filters: AdvancedFilters) {
+  return filters.minPartySize != null || filters.source !== 'all'
 }
 
 type ListFilter = 'today' | 'week' | 'all'
@@ -79,6 +108,7 @@ function parseReservation(row: DbRow, customerName?: string): Reservation {
     status: normalizeStatus(row.status),
     specialRequests,
     customerId: row.customer_id ?? null,
+    conversationId: row.conversation_id ?? null,
   }
 }
 
@@ -122,6 +152,7 @@ function MonthCalendar({
   selectedDay,
   onSelectDay,
   today,
+  operatingHours,
   bare,
 }: {
   displayMonth: Date
@@ -129,6 +160,7 @@ function MonthCalendar({
   selectedDay: Date | null
   onSelectDay: (d: Date) => void
   today: Date
+  operatingHours: OperatingHours
   bare?: boolean
 }) {
   const year = displayMonth.getFullYear()
@@ -198,26 +230,30 @@ function MonthCalendar({
           const fillPct = count / maxCount
           const isToday = isSameDay(date, today)
           const isSelected = selectedDay ? isSameDay(date, selectedDay) : false
+          const closed = inMonth && getDayHoursForDate(operatingHours, toDateIso(date)).closed
+          const showTodayRing = isToday && !isSelected
 
           return (
             <button
               key={idx}
               type="button"
               onClick={() => onSelectDay(date)}
+              title={closed ? 'Closed' : count > 0 ? `${count} bookings, ${covers} guests` : undefined}
               style={{
                 minHeight: 44,
                 padding: 0,
-                background: isSelected ? t.accentSoftBg : t.bgSurface,
+                background: closed ? t.bgSurfaceMuted : isSelected ? t.accentSoftBg : t.bgSurface,
                 border: 'none',
                 borderTop: idx >= 7 ? `1px solid ${t.borderSoft}` : 'none',
                 borderRight: (idx + 1) % 7 !== 0 ? `1px solid ${t.borderSoft}` : 'none',
-                outline: isToday
-                  ? `2px solid ${t.accent}`
-                  : isSelected
+                outline: isSelected
                   ? `2px solid ${t.accentSoftBorder}`
-                  : 'none',
+                  : showTodayRing
+                    ? `1px solid ${t.accent}`
+                    : 'none',
                 outlineOffset: -2,
                 cursor: 'pointer',
+                opacity: closed && inMonth ? 0.7 : 1,
                 textAlign: 'left',
                 display: 'flex',
                 flexDirection: 'column',
@@ -1672,14 +1708,30 @@ export default function BookingsPage() {
   const [calendarView, setCalendarView] = useState<'month' | 'day'>('month')
   const [operatingHours, setOperatingHours] = useState<OperatingHours>(DEFAULT_OPERATING_HOURS)
   const [tableVisibleCount, setTableVisibleCount] = useState(10)
+  const [advancedFilters, setAdvancedFilters] = useState<AdvancedFilters>(DEFAULT_ADVANCED_FILTERS)
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const [mobileCalendarView, setMobileCalendarView] = useState<'month' | 'day'>('month')
   const reduceMotion = useReducedMotion()
+  const rightPanelRef = useRef<HTMLDivElement>(null)
+  const filtersRef = useRef<HTMLDivElement>(null)
+  const realtimeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const now = new Date()
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  const displayMonth = new Date(today.getFullYear(), today.getMonth() + monthOffset, 1)
+  const [today] = useState(() => {
+    const n = new Date()
+    return new Date(n.getFullYear(), n.getMonth(), n.getDate())
+  })
+  const displayMonth = useMemo(
+    () => new Date(today.getFullYear(), today.getMonth() + monthOffset, 1),
+    [today, monthOffset],
+  )
+  const loadMonthYear = displayMonth.getFullYear()
+  const loadMonthIndex = displayMonth.getMonth()
   const monthLabel = displayMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
   const effectiveDay = selectedDay ?? today
-  const effectiveDayIso = toDateIso(effectiveDay)
+  const effectiveDayIso = useMemo(
+    () => toDateIso(effectiveDay),
+    [selectedDay, today],
+  )
 
   const dayHours = useMemo(
     () => getDayHoursForDate(operatingHours, effectiveDayIso),
@@ -1696,7 +1748,7 @@ export default function BookingsPage() {
 
   const dayPanelReservations = useMemo(
     () => reservations.filter((r) => isSameDay(r.scheduledAt, effectiveDay)),
-    [reservations, effectiveDay],
+    [reservations, effectiveDayIso],
   )
 
   function navigateDayOffset(offset: number) {
@@ -1714,13 +1766,9 @@ export default function BookingsPage() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [updateError, setUpdateError] = useState<string | null>(null)
 
-  useEffect(() => {
-    let cancelled = false
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset loading + error on month change before async refetch
-    setLoading(true)
-    setLoadError(null)
-
-    async function load() {
+  const fetchReservations = useCallback(
+    async (isCancelled: () => boolean, options?: { silent?: boolean }) => {
+      const silent = options?.silent ?? false
       const {
         data: { user: userFromGet },
       } = await supabase.auth.getUser()
@@ -1730,10 +1778,10 @@ export default function BookingsPage() {
       const user = userFromGet ?? session?.user ?? null
 
       if (!user) {
-        if (!cancelled) {
+        if (!isCancelled()) {
           setReservations([])
           setBusinessId(null)
-          setLoading(false)
+          if (!silent) setLoading(false)
         }
         return
       }
@@ -1745,43 +1793,47 @@ export default function BookingsPage() {
         .maybeSingle()
 
       if (!business?.id) {
-        if (!cancelled) {
+        if (!isCancelled()) {
           setReservations([])
           setBusinessId(null)
-          setLoading(false)
+          if (!silent) setLoading(false)
         }
         return
       }
 
-      if (!cancelled) setBusinessId(business.id)
+      if (!isCancelled()) {
+        setBusinessId((prev) => (prev === business.id ? prev : business.id))
+      }
 
       const p2 = (n: number) => String(n).padStart(2, '0')
-      const y = displayMonth.getFullYear()
-      const mo = displayMonth.getMonth()
-      const startStr = `${y}-${p2(mo + 1)}-01T00:00:00`
-      const endDate = new Date(y, mo + 1, 1)
+      const startStr = `${loadMonthYear}-${p2(loadMonthIndex + 1)}-01T00:00:00`
+      const endDate = new Date(loadMonthYear, loadMonthIndex + 1, 1)
       const endStr = `${endDate.getFullYear()}-${p2(endDate.getMonth() + 1)}-01T00:00:00`
 
       const { data: rows, error } = await supabase
         .from('appointments')
-        .select('id, service_name, scheduled_at, status, customer_id, notes')
+        .select('id, service_name, scheduled_at, status, customer_id, conversation_id, notes')
         .eq('business_id', business.id)
         .gte('scheduled_at', startStr)
         .lt('scheduled_at', endStr)
         .order('scheduled_at', { ascending: true })
 
-      if (cancelled) return
+      if (isCancelled()) return
 
       if (error) {
-        setReservations([])
-        setLoadError("We couldn't load reservations.")
-        setLoading(false)
+        if (!isCancelled()) {
+          setReservations([])
+          setLoadError("We couldn't load reservations.")
+          if (!silent) setLoading(false)
+        }
         return
       }
 
       if (!rows) {
-        setReservations([])
-        setLoading(false)
+        if (!isCancelled()) {
+          setReservations([])
+          if (!silent) setLoading(false)
+        }
         return
       }
 
@@ -1801,27 +1853,92 @@ export default function BookingsPage() {
         }
       }
 
-      if (!cancelled) {
-        setReservations(
-          typed.map((r) =>
-            parseReservation(r, r.customer_id ? nameById.get(r.customer_id) : undefined),
-          ),
+      if (!isCancelled()) {
+        const next = typed.map((r) =>
+          parseReservation(r, r.customer_id ? nameById.get(r.customer_id) : undefined),
         )
-        setLoading(false)
+        setReservations((prev) => {
+          if (
+            prev.length === next.length &&
+            prev.every(
+              (r, i) =>
+                r.id === next[i].id &&
+                r.status === next[i].status &&
+                r.scheduledAt.getTime() === next[i].scheduledAt.getTime(),
+            )
+          ) {
+            return prev
+          }
+          return next
+        })
+        if (!silent) setLoading(false)
       }
-    }
+    },
+    [loadMonthYear, loadMonthIndex],
+  )
 
-    void load()
+  const fetchReservationsRef = useRef(fetchReservations)
+  fetchReservationsRef.current = fetchReservations
+
+  useEffect(() => {
+    let cancelled = false
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset loading + error on month change before async refetch
+    setLoading(true)
+    setLoadError(null)
+    void fetchReservationsRef.current(() => cancelled)
+    return () => {
+      cancelled = true
+    }
+  }, [loadMonthYear, loadMonthIndex])
+
+  useEffect(() => {
     const { data: sub } = supabase.auth.onAuthStateChange((event) => {
       if (event === 'SIGNED_IN' || event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED') {
-        if (!cancelled) void load()
+        setLoading(true)
+        void fetchReservationsRef.current(() => false)
       }
     })
     return () => {
-      cancelled = true
       sub.subscription.unsubscribe()
     }
-  }, [monthOffset]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    if (!businessId) return
+    const channel = supabase
+      .channel(`appointments:${businessId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'appointments',
+          filter: `business_id=eq.${businessId}`,
+        },
+        () => {
+          if (realtimeDebounceRef.current) clearTimeout(realtimeDebounceRef.current)
+          realtimeDebounceRef.current = setTimeout(() => {
+            void fetchReservationsRef.current(() => false, { silent: true })
+          }, 500)
+        },
+      )
+      .subscribe()
+    return () => {
+      if (realtimeDebounceRef.current) clearTimeout(realtimeDebounceRef.current)
+      void supabase.removeChannel(channel)
+    }
+  }, [businessId])
+
+  useEffect(() => {
+    if (!filtersOpen) return
+    function onDocClick(e: MouseEvent) {
+      if (filtersRef.current && !filtersRef.current.contains(e.target as Node)) {
+        setFiltersOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [filtersOpen])
 
   useEffect(() => {
     if (!businessId) return
@@ -1890,45 +2007,50 @@ export default function BookingsPage() {
     }
   }
 
-  // ─── Stats ─────────────────────────────────────────────────────────────────
-  const stats = useMemo(() => {
-    const todayRes = reservations.filter(
-      (r) =>
-        isSameDay(r.scheduledAt, today) &&
-        r.status !== 'cancelled' &&
-        r.status !== 'no-show',
-    )
-    const todayCovers = todayRes.reduce((s, r) => s + r.partySize, 0)
+  const pendingBadgeCount = useMemo(
+    () => reservations.filter((r) => r.status === 'pending').length,
+    [reservations],
+  )
 
-    const weekStart = startOfWeekMon(today)
-    const weekEnd = new Date(weekStart)
-    weekEnd.setDate(weekEnd.getDate() + 7)
-    const weekCount = reservations.filter(
-      (r) =>
-        r.scheduledAt >= weekStart &&
-        r.scheduledAt < weekEnd &&
-        r.status !== 'cancelled',
-    ).length
+  const bookingKpi = useMemo(
+    () =>
+      computeBookingKpi(reservations, {
+        selectedDay,
+        monthOffset,
+        today,
+        displayMonth,
+      }),
+    [reservations, selectedDay, monthOffset, today, displayMonth],
+  )
 
-    const pending = reservations.filter((r) => r.status === 'pending').length
-    return { todayCovers, weekCount, pending }
-  }, [reservations]) // eslint-disable-line react-hooks/exhaustive-deps
+  const monthScopedReservations = useMemo(
+    () => reservations.filter((r) => isInDisplayMonth(r.scheduledAt, displayMonth)),
+    [reservations, displayMonth],
+  )
 
-  const newStats = useMemo(() => {
-    const now2 = new Date()
-    const todayAll = reservations.filter((r) => isSameDay(r.scheduledAt, today))
-    const todayCount = todayAll.length
-    const upcomingList = todayAll
-      .filter((r) => r.scheduledAt > now2 && r.status !== 'cancelled' && r.status !== 'no-show')
-      .sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime())
-    const upcomingCount = upcomingList.length
-    const nextUpcomingTime = upcomingList.length > 0 ? fmtTime(upcomingList[0].scheduledAt) : null
-    const nextUpcomingId = upcomingList.length > 0 ? upcomingList[0].id : null
-    const confirmedCount = todayAll.filter((r) => r.status === 'confirmed').length
-    const confirmedPct = todayCount > 0 ? Math.round((confirmedCount / todayCount) * 100) : 0
-    const cancelledCount = todayAll.filter((r) => r.status === 'cancelled').length
-    return { todayCount, upcomingCount, nextUpcomingTime, nextUpcomingId, confirmedCount, confirmedPct, cancelledCount }
-  }, [reservations]) // eslint-disable-line react-hooks/exhaustive-deps
+  const tableScopeReservations = useMemo(() => {
+    const base = selectedDay
+      ? reservations.filter((r) => isSameDay(r.scheduledAt, selectedDay))
+      : monthScopedReservations
+    let list = base
+    if (statusFilter !== 'all') {
+      list = list.filter((r) => r.status === (statusFilter as ResStatus))
+    }
+    return applyAdvancedFilters(list, advancedFilters)
+  }, [reservations, selectedDay, monthScopedReservations, statusFilter, advancedFilters])
+
+  const tableListTitle = useMemo(() => {
+    const count = tableScopeReservations.length
+    const noun = count === 1 ? 'reservation' : 'reservations'
+    if (selectedDay) {
+      const label = selectedDay.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+      })
+      return `${label} · ${count} ${noun}`
+    }
+    return `All in ${monthLabel} · ${count} ${noun}`
+  }, [selectedDay, tableScopeReservations.length, monthLabel])
 
   // ─── Right panel reservations ───────────────────────────────────────────────
   const rightReservations = useMemo(() => {
@@ -1943,22 +2065,43 @@ export default function BookingsPage() {
   }, [reservations, rightTab, effectiveDay]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const filteredTableReservations = useMemo(() => {
-    let list = selectedDay
-      ? reservations.filter((r) => isSameDay(r.scheduledAt, selectedDay))
-      : reservations
-    if (statusFilter !== 'all') {
-      list = list.filter((r) => r.status === (statusFilter as ResStatus))
-    }
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase()
-      list = list.filter(
-        (r) =>
-          r.guestName.toLowerCase().includes(q) ||
-          (r.specialRequests ?? '').toLowerCase().includes(q),
-      )
-    }
-    return list
-  }, [reservations, selectedDay, statusFilter, searchQuery])
+    if (!searchQuery.trim()) return tableScopeReservations
+    const q = searchQuery.toLowerCase()
+    return tableScopeReservations.filter(
+      (r) =>
+        r.guestName.toLowerCase().includes(q) ||
+        (r.specialRequests ?? '').toLowerCase().includes(q),
+    )
+  }, [tableScopeReservations, searchQuery])
+
+  const tableSearchHint =
+    searchQuery.trim() && filteredTableReservations.length !== tableScopeReservations.length
+      ? `Showing ${filteredTableReservations.length} of ${tableScopeReservations.length}`
+      : filteredTableReservations.length > 0
+        ? `${filteredTableReservations.length} shown`
+        : null
+
+  function focusRightPanel() {
+    rightPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  }
+
+  function handleViewAllCancelled() {
+    setStatusFilter('cancelled')
+    setSelectedDay(null)
+    setTableVisibleCount(10)
+    focusRightPanel()
+  }
+
+  function handleBellClick() {
+    setStatusFilter('pending')
+    setTableVisibleCount(10)
+    focusRightPanel()
+  }
+
+  function handleShowAllMonth() {
+    setSelectedDay(null)
+    setTableVisibleCount(10)
+  }
 
   const lightStatusColors: Record<ResStatus, { bg: string; color: string }> = {
     confirmed: { bg: '#dcfce7', color: '#16a34a' },
@@ -1970,8 +2113,204 @@ export default function BookingsPage() {
 
   const showModal = showAddModal || editReservation !== null
 
+  const visibleTableRows = filteredTableReservations.slice(0, tableVisibleCount)
+
+  function renderDesktopTableRow(r: Reservation) {
+    const isNext = r.id === bookingKpi.nextUpcomingId
+    const sc = lightStatusColors[r.status]
+    const location =
+      r.tableNumber !== '—' ? `Table ${r.tableNumber}` : r.specialRequests || 'Main Dining'
+    return (
+      <tr
+        key={r.id}
+        style={{
+          borderBottom: '1px solid #f1f5f9',
+          borderLeft: `3px solid ${isNext ? '#6366f1' : 'transparent'}`,
+          transition: 'background 0.1s',
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = '#f8fafc'
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = 'transparent'
+        }}
+      >
+        <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' as const }}>
+          <span style={{ fontSize: bk.body, fontWeight: 700, color: '#0f172a' }}>
+            {fmtTime(r.scheduledAt)}
+          </span>
+        </td>
+        <td style={{ padding: '7px 10px', maxWidth: 0 }}>
+          <div
+            style={{
+              fontSize: bk.body,
+              fontWeight: 700,
+              color: '#0f172a',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap' as const,
+            }}
+          >
+            {r.customerId ? (
+              <span
+                style={{ cursor: 'pointer', borderBottom: '1px dashed #cbd5e1' }}
+                onClick={() =>
+                  setGuestDrawer({ customerId: r.customerId!, guestName: r.guestName })
+                }
+              >
+                {r.guestName}
+              </span>
+            ) : (
+              r.guestName
+            )}
+          </div>
+          <div
+            style={{
+              fontSize: bk.micro,
+              color: '#94a3b8',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap' as const,
+              marginTop: 1,
+            }}
+          >
+            {r.partySize} {r.partySize === 1 ? 'guest' : 'guests'} · {location}
+          </div>
+        </td>
+        <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' as const }}>
+          <span
+            style={{
+              display: 'inline-block',
+              padding: '2px 6px',
+              borderRadius: 999,
+              background: sc.bg,
+              color: sc.color,
+              fontSize: 9,
+              fontWeight: 700,
+              whiteSpace: 'nowrap' as const,
+            }}
+          >
+            {r.status === 'no-show' ? 'No-show' : r.status.charAt(0).toUpperCase() + r.status.slice(1)}
+          </span>
+        </td>
+        <td style={{ padding: '7px 10px' }}>
+          <div style={{ display: 'flex', gap: 4, alignItems: 'center', justifyContent: 'flex-end' }}>
+            {r.status === 'pending' && (
+              <button
+                type="button"
+                title="Confirm"
+                onClick={() => void updateStatus(r.id, 'confirmed')}
+                style={{
+                  padding: '3px 6px',
+                  borderRadius: 5,
+                  border: '1px solid #bbf7d0',
+                  background: '#f0fdf4',
+                  color: '#16a34a',
+                  fontSize: 9,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                ✓
+              </button>
+            )}
+            {r.status === 'confirmed' && (
+              <button
+                type="button"
+                title="Cancel"
+                onClick={() => void updateStatus(r.id, 'cancelled')}
+                style={{
+                  padding: '3px 6px',
+                  borderRadius: 5,
+                  border: '1px solid #fecaca',
+                  background: '#fef2f2',
+                  color: '#dc2626',
+                  fontSize: 9,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                ✕
+              </button>
+            )}
+            <button
+              type="button"
+              title="More actions"
+              onClick={() => setEditReservation(r)}
+              style={{
+                width: 22,
+                height: 22,
+                borderRadius: 5,
+                border: bk.border,
+                background: '#ffffff',
+                cursor: 'pointer',
+                display: 'grid',
+                placeItems: 'center',
+                flexShrink: 0,
+              }}
+            >
+              <svg width="12" height="3" viewBox="0 0 12 3" fill="none">
+                <circle cx="1.5" cy="1.5" r="1.2" fill="#94a3b8" />
+                <circle cx="6" cy="1.5" r="1.2" fill="#94a3b8" />
+                <circle cx="10.5" cy="1.5" r="1.2" fill="#94a3b8" />
+              </svg>
+            </button>
+          </div>
+        </td>
+      </tr>
+    )
+  }
+
+  const desktopTableBody = useMemo(() => {
+    if (selectedDay) {
+      return visibleTableRows.map((r) => renderDesktopTableRow(r))
+    }
+    const groups = new Map<string, Reservation[]>()
+    for (const r of visibleTableRows) {
+      const iso = toDateIso(r.scheduledAt)
+      const g = groups.get(iso) ?? []
+      g.push(r)
+      groups.set(iso, g)
+    }
+    const nodes: ReactNode[] = []
+    for (const [iso, items] of groups) {
+      const d = new Date(`${iso}T12:00:00`)
+      nodes.push(
+        <tr key={`hdr-${iso}`}>
+          <td
+            colSpan={4}
+            style={{
+              padding: '8px 10px',
+              background: '#fafafa',
+              fontSize: bk.caption,
+              fontWeight: 700,
+              color: '#64748b',
+              borderBottom: '1px solid #e2e8f0',
+            }}
+          >
+            {d.toLocaleDateString('en-US', {
+              weekday: 'short',
+              month: 'short',
+              day: 'numeric',
+            })}
+          </td>
+        </tr>,
+      )
+      for (const r of items) nodes.push(renderDesktopTableRow(r))
+    }
+    return nodes
+  }, [
+    selectedDay,
+    visibleTableRows,
+    bookingKpi.nextUpcomingId,
+    lightStatusColors,
+  ]) // eslint-disable-line react-hooks/exhaustive-deps
+
   function handleDaySelect(d: Date) {
-    setSelectedDay((prev) => (prev && isSameDay(prev, d) ? null : d))
+    setSelectedDay((prev) => {
+      if (prev && isSameDay(prev, d)) return prev
+      return d
+    })
     setRightTab('day')
     setTableVisibleCount(10)
   }
@@ -2022,11 +2361,41 @@ export default function BookingsPage() {
     display: 'grid', placeItems: 'center',
   }
 
-  const statRows = [
-    { label: 'Guests today', value: loading ? '—' : String(stats.todayCovers), hi: false },
-    { label: 'This week', value: loading ? '—' : String(stats.weekCount), hi: false },
-    { label: 'Awaiting', value: loading ? '—' : String(stats.pending), hi: !loading && stats.pending > 0 },
-  ]
+  const statRows = useMemo(() => {
+    if (bookingKpi.scope === 'day') {
+      return [
+        { label: 'Guests', value: loading ? '—' : String(bookingKpi.covers), hi: false },
+        { label: 'Total', value: loading ? '—' : String(bookingKpi.totalCount), hi: false },
+        {
+          label: 'Awaiting',
+          value: loading ? '—' : String(bookingKpi.pendingCount),
+          hi: !loading && bookingKpi.pendingCount > 0,
+        },
+      ]
+    }
+    const weekStart = startOfWeekMon(today)
+    const weekEnd = new Date(weekStart)
+    weekEnd.setDate(weekEnd.getDate() + 7)
+    const weekCount = reservations.filter(
+      (r) =>
+        r.scheduledAt >= weekStart &&
+        r.scheduledAt < weekEnd &&
+        r.status !== 'cancelled',
+    ).length
+    return [
+      {
+        label: bookingKpi.scope === 'month' ? 'Month guests' : 'Guests today',
+        value: loading ? '—' : String(bookingKpi.covers),
+        hi: false,
+      },
+      { label: 'This week', value: loading ? '—' : String(weekCount), hi: false },
+      {
+        label: 'Awaiting',
+        value: loading ? '—' : String(bookingKpi.pendingCount),
+        hi: !loading && bookingKpi.pendingCount > 0,
+      },
+    ]
+  }, [bookingKpi, loading, reservations, today])
 
   return (
     <>
@@ -2123,12 +2492,89 @@ export default function BookingsPage() {
                 </div>
 
                 {/* Filters */}
-                <button type="button" style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 12px', background: '#ffffff', border: bk.border, borderRadius: bk.radiusSm, fontSize: bk.body, fontWeight: 500, color: '#374151', cursor: 'pointer', whiteSpace: 'nowrap' as const }}>
-                  <svg width="14" height="10" viewBox="0 0 14 10" fill="none">
-                    <path d="M1 1.5h12M3 5h8M5 8.5h4" stroke="#64748b" strokeWidth="1.2" strokeLinecap="round"/>
-                  </svg>
-                  Filters
-                </button>
+                <div ref={filtersRef} style={{ position: 'relative' as const }}>
+                  <button
+                    type="button"
+                    onClick={() => setFiltersOpen((o) => !o)}
+                    style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 12px', background: '#ffffff', border: bk.border, borderRadius: bk.radiusSm, fontSize: bk.body, fontWeight: 500, color: '#374151', cursor: 'pointer', whiteSpace: 'nowrap' as const }}
+                  >
+                    <svg width="14" height="10" viewBox="0 0 14 10" fill="none">
+                      <path d="M1 1.5h12M3 5h8M5 8.5h4" stroke="#64748b" strokeWidth="1.2" strokeLinecap="round"/>
+                    </svg>
+                    Filters
+                    {advancedFiltersActive(advancedFilters) && (
+                      <span style={{ minWidth: 16, height: 16, borderRadius: 8, background: '#6366f1', color: '#fff', fontSize: 9, fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px' }}>!</span>
+                    )}
+                  </button>
+                  {filtersOpen && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        top: 'calc(100% + 6px)',
+                        right: 0,
+                        zIndex: 40,
+                        width: 240,
+                        padding: 12,
+                        background: '#ffffff',
+                        border: bk.border,
+                        borderRadius: bk.radiusSm,
+                        boxShadow: '0 8px 24px rgba(15,23,42,0.12)',
+                        display: 'grid',
+                        gap: 10,
+                      }}
+                    >
+                      <div style={{ fontSize: bk.micro, color: '#94a3b8' }}>Filters apply to loaded month</div>
+                      <label style={{ display: 'grid', gap: 4, fontSize: bk.caption, color: '#374151' }}>
+                        Min party size
+                        <select
+                          value={advancedFilters.minPartySize ?? ''}
+                          onChange={(e) => {
+                            const v = e.target.value
+                            setAdvancedFilters((f) => ({
+                              ...f,
+                              minPartySize: v === '' ? null : Number(v),
+                            }))
+                            setTableVisibleCount(10)
+                          }}
+                          style={{ padding: '6px 8px', border: bk.border, borderRadius: 6, fontSize: bk.body }}
+                        >
+                          <option value="">Any</option>
+                          {[2, 4, 6, 8, 10].map((n) => (
+                            <option key={n} value={n}>{n}+ guests</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label style={{ display: 'grid', gap: 4, fontSize: bk.caption, color: '#374151' }}>
+                        Source
+                        <select
+                          value={advancedFilters.source}
+                          onChange={(e) => {
+                            setAdvancedFilters((f) => ({
+                              ...f,
+                              source: e.target.value as AdvancedFilters['source'],
+                            }))
+                            setTableVisibleCount(10)
+                          }}
+                          style={{ padding: '6px 8px', border: bk.border, borderRadius: 6, fontSize: bk.body }}
+                        >
+                          <option value="all">All</option>
+                          <option value="chat">With chat</option>
+                          <option value="manual">Manual</option>
+                        </select>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAdvancedFilters(DEFAULT_ADVANCED_FILTERS)
+                          setTableVisibleCount(10)
+                        }}
+                        style={{ padding: '6px 10px', border: bk.border, borderRadius: 6, background: '#fff', fontSize: bk.caption, cursor: 'pointer', color: '#64748b' }}
+                      >
+                        Reset filters
+                      </button>
+                    </div>
+                  )}
+                </div>
 
                 {/* + New Reservation */}
                 <button type="button" onClick={() => setShowAddModal(true)} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 14px', background: '#0f172a', border: 'none', borderRadius: bk.radiusSm, fontSize: bk.body, fontWeight: 600, color: '#ffffff', cursor: 'pointer', whiteSpace: 'nowrap' as const }}>
@@ -2136,17 +2582,24 @@ export default function BookingsPage() {
                   New Reservation
                 </button>
 
-                {/* Notification bell */}
+                {/* Notification bell — pending count */}
                 <div style={{ position: 'relative' as const, flexShrink: 0 }}>
-                  <button type="button" style={{ width: bk.controlH, height: bk.controlH, borderRadius: '50%', border: bk.border, background: '#ffffff', cursor: 'pointer', display: 'grid', placeItems: 'center' }}>
+                  <button
+                    type="button"
+                    onClick={handleBellClick}
+                    title="Show pending reservations"
+                    style={{ width: bk.controlH, height: bk.controlH, borderRadius: '50%', border: bk.border, background: '#ffffff', cursor: 'pointer', display: 'grid', placeItems: 'center' }}
+                  >
                     <svg width="16" height="17" viewBox="0 0 16 17" fill="none">
                       <path d="M8 1.5C5.515 1.5 3.5 3.515 3.5 6v3.25L2 11v.75h12V11l-1.5-1.75V6C12.5 3.515 10.485 1.5 8 1.5z" stroke="#374151" strokeWidth="1.2" strokeLinejoin="round"/>
                       <path d="M6.5 12.25a1.5 1.5 0 0 0 3 0" stroke="#374151" strokeWidth="1.2" strokeLinecap="round"/>
                     </svg>
                   </button>
-                  <span style={{ position: 'absolute' as const, top: -1, right: -1, minWidth: 16, height: 16, borderRadius: 8, background: '#6366f1', color: '#fff', fontSize: 9, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px', border: '2px solid #f8fafc' }}>
-                    2
-                  </span>
+                  {!loading && pendingBadgeCount > 0 && (
+                    <span style={{ position: 'absolute' as const, top: -1, right: -1, minWidth: 16, height: 16, borderRadius: 8, background: '#6366f1', color: '#fff', fontSize: 9, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px', border: '2px solid #f8fafc' }}>
+                      {pendingBadgeCount > 9 ? '9+' : pendingBadgeCount}
+                    </span>
+                  )}
                 </div>
               </div>
             )}
@@ -2186,23 +2639,63 @@ export default function BookingsPage() {
                   <button type="button" onClick={() => setMonthOffset((o) => o + 1)} style={{ ...navPill, width: 32, height: 32, fontSize: 16, borderRadius: 8 }}>→</button>
                 </div>
 
-                {/* Calendar */}
-                <MonthCalendar
-                  displayMonth={displayMonth}
-                  reservations={reservations}
-                  selectedDay={selectedDay}
-                  onSelectDay={handleDaySelect}
-                  today={today}
-                />
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button
+                    type="button"
+                    onClick={() => setMobileCalendarView('month')}
+                    style={calendarToggleBtn(mobileCalendarView === 'month')}
+                  >
+                    Month
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMobileCalendarView('day')
+                      if (!selectedDay) setSelectedDay(effectiveDay)
+                    }}
+                    style={calendarToggleBtn(mobileCalendarView === 'day')}
+                  >
+                    Day
+                  </button>
+                </div>
 
-                <BookingsDayChips
-                  date={effectiveDay}
-                  reservations={dayPanelReservations}
-                  loading={loading}
-                  statusColors={lightStatusColors}
-                  onEdit={(r) => setEditReservation(r)}
-                  onAdd={handleAddForDay}
-                />
+                {mobileCalendarView === 'month' ? (
+                  <>
+                    <MonthCalendar
+                      displayMonth={displayMonth}
+                      reservations={reservations}
+                      selectedDay={selectedDay}
+                      onSelectDay={handleDaySelect}
+                      today={today}
+                      operatingHours={operatingHours}
+                    />
+                    <BookingsDayChips
+                      date={effectiveDay}
+                      reservations={dayPanelReservations}
+                      loading={loading}
+                      statusColors={lightStatusColors}
+                      onEdit={(r) => setEditReservation(r)}
+                      onAdd={handleAddForDay}
+                    />
+                    {!loading && dayPanelReservations.length === 0 && selectedDay && (
+                      <BookingsDayEmptyStrip date={effectiveDay} onAdd={handleAddForDay} />
+                    )}
+                  </>
+                ) : (
+                  <div style={{ maxHeight: 360, overflow: 'auto' }}>
+                    <BookingsDayTimeline
+                      date={effectiveDay}
+                      reservations={reservations}
+                      range={timeRange}
+                      peaks={dayPeaks}
+                      loading={loading}
+                      reduceMotion={reduceMotion}
+                      onReschedule={(id, newTime) => void rescheduleReservation(id, effectiveDayIso, newTime)}
+                      onEdit={(r) => setEditReservation(r)}
+                      onAdd={handleAddForDay}
+                    />
+                  </div>
+                )}
 
                 {/* Tabs */}
                 <div style={{ display: 'flex', padding: 3, borderRadius: 9, background: t.bgSurfaceMuted, border: `1px solid ${t.borderSoft}`, gap: 2 }}>
@@ -2230,10 +2723,10 @@ export default function BookingsPage() {
               <>
               {/* ── STAT CARDS ── */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: bk.gapMd, marginBottom: 12, fontFamily: bk.font }}>
-                {/* Today */}
+                {/* Card 1 — context label */}
                 <div style={{ ...bkCard, padding: bk.cardPad }}>
                   <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 8 }}>
-                    <span style={{ fontSize: bk.caption, fontWeight: 600, color: '#64748b' }}>Today</span>
+                    <span style={{ fontSize: bk.caption, fontWeight: 600, color: '#64748b' }}>{bookingKpi.card1Label}</span>
                     <div style={{ width: 28, height: 28, borderRadius: bk.radiusSm, background: '#ede9fe', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
                       <svg width="15" height="15" viewBox="0 0 18 18" fill="none">
                         <rect x="2" y="3.5" width="14" height="12" rx="2" stroke="#7c3aed" strokeWidth="1.4"/>
@@ -2243,10 +2736,10 @@ export default function BookingsPage() {
                     </div>
                   </div>
                   <div style={{ fontSize: bk.statValue, fontWeight: 700, color: '#0f172a', lineHeight: 1, letterSpacing: '-0.02em', marginBottom: 2 }}>
-                    {loading ? '—' : newStats.todayCount}
+                    {loading ? '—' : bookingKpi.totalCount}
                   </div>
                   <div style={{ fontSize: bk.caption, color: '#94a3b8', marginBottom: 6 }}>reservations</div>
-                  <div style={{ fontSize: bk.caption, fontWeight: 600, color: '#10b981' }}>↑ 18% vs yesterday</div>
+                  <div style={{ fontSize: bk.caption, fontWeight: 600, color: '#64748b' }}>{loading ? '—' : bookingKpi.subtitle1}</div>
                 </div>
 
                 {/* Upcoming */}
@@ -2261,11 +2754,11 @@ export default function BookingsPage() {
                     </div>
                   </div>
                   <div style={{ fontSize: bk.statValue, fontWeight: 700, color: '#0f172a', lineHeight: 1, letterSpacing: '-0.02em', marginBottom: 2 }}>
-                    {loading ? '—' : newStats.upcomingCount}
+                    {loading ? '—' : bookingKpi.upcomingCount}
                   </div>
                   <div style={{ fontSize: bk.caption, color: '#94a3b8', marginBottom: 6 }}>reservations</div>
                   <div style={{ fontSize: bk.caption, fontWeight: 600, color: '#2563eb' }}>
-                    {newStats.nextUpcomingTime ? `Next: ${newStats.nextUpcomingTime}` : 'No upcoming today'}
+                    {loading ? '—' : bookingKpi.subtitle2}
                   </div>
                 </div>
 
@@ -2281,14 +2774,16 @@ export default function BookingsPage() {
                     </div>
                   </div>
                   <div style={{ fontSize: bk.statValue, fontWeight: 700, color: '#0f172a', lineHeight: 1, letterSpacing: '-0.02em', marginBottom: 2 }}>
-                    {loading ? '—' : newStats.confirmedCount}
+                    {loading ? '—' : bookingKpi.confirmedCount}
                   </div>
                   <div style={{ fontSize: bk.caption, color: '#94a3b8', marginBottom: 6 }}>reservations</div>
                   <div>
                     <div style={{ height: 3, background: '#f1f5f9', borderRadius: 2, overflow: 'hidden', marginBottom: 4 }}>
-                      <div style={{ height: '100%', width: `${loading ? 0 : newStats.confirmedPct}%`, background: '#16a34a', borderRadius: 2, transition: 'width 0.4s ease' }} />
+                      <div style={{ height: '100%', width: `${loading ? 0 : bookingKpi.confirmedPct}%`, background: '#16a34a', borderRadius: 2, transition: 'width 0.4s ease' }} />
                     </div>
-                    <div style={{ fontSize: bk.micro, color: '#64748b' }}>{loading ? '—' : `${newStats.confirmedPct}%`} of today</div>
+                    <div style={{ fontSize: bk.micro, color: '#64748b' }}>
+                      {loading ? '—' : `${bookingKpi.confirmedPct}%`} of {bookingKpi.scope === 'day' ? 'day' : bookingKpi.scope === 'month' ? 'month' : 'today'}
+                    </div>
                   </div>
                 </div>
 
@@ -2297,7 +2792,13 @@ export default function BookingsPage() {
                   <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 8 }}>
                     <span style={{ fontSize: bk.caption, fontWeight: 600, color: '#64748b' }}>Cancelled</span>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontSize: bk.micro, fontWeight: 600, color: '#6366f1', cursor: 'pointer' }}>View all</span>
+                      <button
+                        type="button"
+                        onClick={handleViewAllCancelled}
+                        style={{ fontSize: bk.micro, fontWeight: 600, color: '#6366f1', cursor: 'pointer', background: 'none', border: 'none', padding: 0 }}
+                      >
+                        View all
+                      </button>
                       <div style={{ width: 28, height: 28, borderRadius: bk.radiusSm, background: '#fee2e2', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
                         <svg width="15" height="15" viewBox="0 0 18 18" fill="none">
                           <circle cx="9" cy="9" r="7" stroke="#dc2626" strokeWidth="1.4"/>
@@ -2307,10 +2808,10 @@ export default function BookingsPage() {
                     </div>
                   </div>
                   <div style={{ fontSize: bk.statValue, fontWeight: 700, color: '#0f172a', lineHeight: 1, letterSpacing: '-0.02em', marginBottom: 2 }}>
-                    {loading ? '—' : newStats.cancelledCount}
+                    {loading ? '—' : bookingKpi.cancelledCount}
                   </div>
                   <div style={{ fontSize: bk.caption, color: '#94a3b8', marginBottom: 6 }}>reservations</div>
-                  <div style={{ fontSize: bk.caption, fontWeight: 600, color: '#ef4444' }}>↓ 25% vs yesterday</div>
+                  <div style={{ fontSize: bk.caption, fontWeight: 600, color: '#ef4444' }}>{loading ? '—' : bookingKpi.subtitle4}</div>
                 </div>
               </div>
 
@@ -2349,8 +2850,9 @@ export default function BookingsPage() {
                         onMonthPrev={() => setMonthOffset((o) => o - 1)}
                         onMonthNext={() => setMonthOffset((o) => o + 1)}
                         onJumpToday={() => { setMonthOffset(0); setSelectedDay(today); setTableVisibleCount(10) }}
-                        onClearDay={() => { setSelectedDay(null); setTableVisibleCount(10) }}
+                        onClearDay={handleShowAllMonth}
                         today={today}
+                        operatingHours={operatingHours}
                         reduceMotion={reduceMotion}
                       />
                       <BookingsDayChips
@@ -2361,6 +2863,9 @@ export default function BookingsPage() {
                         onEdit={(r) => setEditReservation(r)}
                         onAdd={handleAddForDay}
                       />
+                      {!loading && dayPanelReservations.length === 0 && selectedDay && (
+                        <BookingsDayEmptyStrip date={effectiveDay} onAdd={handleAddForDay} />
+                      )}
                     </>
                   ) : (
                     <BookingsDayTimeline
@@ -2378,48 +2883,63 @@ export default function BookingsPage() {
                 </div>
 
                 {/* RIGHT MAIN PANEL */}
-                <div style={{ ...bkCard, overflow: 'hidden' }}>
+                <div ref={rightPanelRef} style={{ ...bkCard, overflow: 'hidden' }}>
 
-                  {/* Filter tabs + view toggle */}
-                  <div style={{ padding: '10px 12px', borderBottom: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                    <div style={{ display: 'flex', gap: 4 }}>
-                      {(['all', 'confirmed', 'pending', 'cancelled'] as const).map((f) => {
-                        const active = statusFilter === f
-                        return (
-                          <button
-                            key={f}
-                            type="button"
-                            onClick={() => { setStatusFilter(f); setTableVisibleCount(10) }}
-                            style={{
-                              padding: '5px 11px',
-                              borderRadius: 999,
-                              border: active ? 'none' : bk.border,
-                              background: active ? '#0f172a' : '#ffffff',
-                              color: active ? '#ffffff' : '#64748b',
-                              fontSize: bk.caption,
-                              fontWeight: active ? 600 : 500,
-                              cursor: 'pointer',
-                              transition: 'background 0.15s, color 0.15s',
-                            }}
-                          >
-                            {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
-                          </button>
-                        )
-                      })}
-                    </div>
-                    {selectedDay && (
-                      <span style={{ fontSize: bk.caption, color: '#6366f1', fontWeight: 600 }}>
-                        {selectedDay.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                        {' · '}
-                        <button
-                          type="button"
-                          onClick={() => { setSelectedDay(null); setTableVisibleCount(10) }}
-                          style={{ fontSize: 12, color: '#94a3b8', fontWeight: 500, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
-                        >
-                          Clear ×
-                        </button>
+                  {/* Filter tabs + list scope */}
+                  <div style={{ padding: '10px 12px', borderBottom: '1px solid #e2e8f0', display: 'grid', gap: 6 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' as const }}>
+                      <span style={{ fontSize: bk.body, fontWeight: 700, color: '#0f172a' }}>
+                        {loading ? '—' : tableListTitle}
                       </span>
-                    )}
+                      {selectedDay ? (
+                        <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                          <button
+                            type="button"
+                            onClick={handleShowAllMonth}
+                            style={{ fontSize: bk.caption, color: '#6366f1', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                          >
+                            All month
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleShowAllMonth}
+                            style={{ fontSize: bk.caption, color: '#94a3b8', fontWeight: 500, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                          >
+                            Clear ×
+                          </button>
+                        </span>
+                      ) : null}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' as const }}>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        {(['all', 'confirmed', 'pending', 'cancelled'] as const).map((f) => {
+                          const active = statusFilter === f
+                          return (
+                            <button
+                              key={f}
+                              type="button"
+                              onClick={() => { setStatusFilter(f); setTableVisibleCount(10) }}
+                              style={{
+                                padding: '5px 11px',
+                                borderRadius: 999,
+                                border: active ? 'none' : bk.border,
+                                background: active ? '#0f172a' : '#ffffff',
+                                color: active ? '#ffffff' : '#64748b',
+                                fontSize: bk.caption,
+                                fontWeight: active ? 600 : 500,
+                                cursor: 'pointer',
+                                transition: 'background 0.15s, color 0.15s',
+                              }}
+                            >
+                              {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
+                            </button>
+                          )
+                        })}
+                      </div>
+                      {tableSearchHint && (
+                        <span style={{ fontSize: bk.micro, color: '#94a3b8', fontWeight: 500 }}>{tableSearchHint}</span>
+                      )}
+                    </div>
                   </div>
 
                   {/* Table */}
@@ -2440,7 +2960,7 @@ export default function BookingsPage() {
                                   textTransform: 'uppercase' as const,
                                   letterSpacing: '0.08em',
                                   whiteSpace: 'nowrap' as const,
-                                  width: i === 0 ? 60 : i === 2 ? 72 : i === 3 ? 36 : 'auto',
+                                  width: i === 0 ? 60 : i === 2 ? 72 : i === 3 ? 88 : 'auto',
                                 }}
                               >
                                 {col}
@@ -2467,68 +2987,7 @@ export default function BookingsPage() {
                               </td>
                             </tr>
                           ) : (
-                            filteredTableReservations.slice(0, tableVisibleCount).map((r) => {
-                              const isNext = r.id === newStats.nextUpcomingId
-                              const sc = lightStatusColors[r.status]
-                              const location = r.tableNumber !== '—' ? `Table ${r.tableNumber}` : (r.specialRequests || 'Main Dining')
-                              return (
-                                <tr
-                                  key={r.id}
-                                  style={{
-                                    borderBottom: '1px solid #f1f5f9',
-                                    borderLeft: `3px solid ${isNext ? '#6366f1' : 'transparent'}`,
-                                    transition: 'background 0.1s',
-                                  }}
-                                  onMouseEnter={(e) => { e.currentTarget.style.background = '#f8fafc' }}
-                                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
-                                >
-                                  {/* Time */}
-                                  <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' as const }}>
-                                    <span style={{ fontSize: bk.body, fontWeight: 700, color: '#0f172a' }}>{fmtTime(r.scheduledAt)}</span>
-                                  </td>
-
-                                  {/* Guest + details */}
-                                  <td style={{ padding: '7px 10px', maxWidth: 0 }}>
-                                    <div style={{ fontSize: bk.body, fontWeight: 700, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>
-                                      {r.customerId ? (
-                                        <span
-                                          style={{ cursor: 'pointer', borderBottom: '1px dashed #cbd5e1' }}
-                                          onClick={() => setGuestDrawer({ customerId: r.customerId!, guestName: r.guestName })}
-                                        >
-                                          {r.guestName}
-                                        </span>
-                                      ) : r.guestName}
-                                    </div>
-                                    <div style={{ fontSize: bk.micro, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, marginTop: 1 }}>
-                                      {r.partySize} {r.partySize === 1 ? 'guest' : 'guests'} · {location}
-                                    </div>
-                                  </td>
-
-                                  {/* Status */}
-                                  <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' as const }}>
-                                    <span style={{ display: 'inline-block', padding: '2px 6px', borderRadius: 999, background: sc.bg, color: sc.color, fontSize: 9, fontWeight: 700, whiteSpace: 'nowrap' as const }}>
-                                      {r.status === 'no-show' ? 'No-show' : r.status.charAt(0).toUpperCase() + r.status.slice(1)}
-                                    </span>
-                                  </td>
-
-                                  {/* Actions */}
-                                  <td style={{ padding: '7px 10px' }}>
-                                    <button
-                                      type="button"
-                                      title="More actions"
-                                      onClick={() => setEditReservation(r)}
-                                      style={{ width: 22, height: 22, borderRadius: 5, border: bk.border, background: '#ffffff', cursor: 'pointer', display: 'grid', placeItems: 'center', flexShrink: 0 }}
-                                    >
-                                      <svg width="12" height="3" viewBox="0 0 12 3" fill="none">
-                                        <circle cx="1.5" cy="1.5" r="1.2" fill="#94a3b8"/>
-                                        <circle cx="6" cy="1.5" r="1.2" fill="#94a3b8"/>
-                                        <circle cx="10.5" cy="1.5" r="1.2" fill="#94a3b8"/>
-                                      </svg>
-                                    </button>
-                                  </td>
-                                </tr>
-                              )
-                            })
+                            desktopTableBody
                           )}
                         </tbody>
                       </table>

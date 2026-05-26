@@ -19,6 +19,7 @@ export type Reservation = {
   status: ResStatus
   specialRequests: string
   customerId?: string | null
+  conversationId?: string | null
 }
 
 export type ReservationCardProps = {

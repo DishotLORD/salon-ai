@@ -3,6 +3,18 @@ import type { ChatCompletionMessageParam } from 'openai/resources/chat/completio
 import { NextResponse } from 'next/server'
 import { Resend } from 'resend'
 
+import {
+  buildAvailabilityPromptSection,
+  inferDateKeyFromText,
+  isSlotAvailable,
+  preferredWallClockFromText,
+  type ExistingBooking,
+} from '@/lib/booking-availability'
+import type { BookingSettings } from '@/lib/booking-settings'
+import { formatWallClock, getCalgaryNowParts, wallClockFromDate } from '@/lib/booking-wall-clock'
+import { loadBusinessBookingContext } from '@/lib/booking-load'
+import { isPlausibleGuestName } from '@/lib/guest-display'
+import type { OperatingHours } from '@/lib/operating-hours'
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { verifyBusinessOwner } from '@/lib/verify-business-owner'
@@ -34,6 +46,16 @@ CRITICAL RULES:
 - Once the guest provides their name, address them by first name for the rest of the conversation.
 - If the guest skips the contact step, that is fine — proceed to confirmation.
 - Keep responses concise (2–4 sentences). Never repeat questions already answered.
+
+AVAILABILITY RULES (when AVAILABLE RESERVATION TIMES are listed below):
+- ONLY confirm a reservation at a time that appears in AVAILABLE RESERVATION TIMES, or marked as AVAILABLE for the requested time.
+- If the guest's preferred time is NOT available, apologize briefly and offer 2–3 alternatives from the list.
+- Never invent open times. If no times are listed, ask for another date or time window.
+- For "around 7pm", pick the closest available slot from the list and offer it.
+
+RESCHEDULE FLOW:
+- If the guest wants to change their reservation time, confirm the new time only if it is in AVAILABLE RESERVATION TIMES.
+- Use the word "rescheduled" when confirming a moved booking.
 `
 
 type MenuEntry = { name: string; price: number | null; description: string | null; category: string | null }
@@ -45,11 +67,15 @@ function buildSystemPrompt(
   menuItems?: MenuEntry[] | null,
   menuPdfText?: string | null,
   returningGuestContext?: string | null,
+  availabilitySection?: string | null,
 ): string {
   const base = customPrompt?.trim()
     ? customPrompt.trim()
     : `You are ${conciergeName}, the AI Concierge for ${restaurantName}. Help guests with reservations, menu inquiries, dietary requirements, and general questions. Be warm, attentive, and concise.`
   let prompt = `${base}\n\n${BOOKING_FLOW_RULES}`
+  if (availabilitySection?.trim()) {
+    prompt += `\n\n${availabilitySection.trim()}`
+  }
   if (returningGuestContext?.trim()) {
     prompt += `\n\n${returningGuestContext.trim()}`
   }
@@ -130,13 +156,22 @@ function extractGuestName(text: string): string | null {
     'hi', 'hey', 'great', 'good', 'nice', 'perfect', 'awesome', 'cool',
     'right', 'fine', 'absolutely', 'definitely', 'tonight', 'tomorrow',
     'today', 'table', 'reservation', 'book', 'menu', 'price', 'check',
+    'placing', 'place', 'confirm', 'confirmed', 'confirming', 'now', 'your',
+    'working', 'processing', 'moment', 'soon', 'hold', 'wait',
   ])
 
   for (const pattern of explicit) {
     const match = t.match(pattern)
     if (match?.[1]) {
       const name = match[1].replace(/\s+/g, ' ').trim()
-      if (name.length >= 2 && name.length <= 80 && !stopWords.has(name.toLowerCase())) return name
+      if (
+        name.length >= 2 &&
+        name.length <= 80 &&
+        !stopWords.has(name.toLowerCase()) &&
+        isPlausibleGuestName(name)
+      ) {
+        return name
+      }
     }
   }
 
@@ -169,7 +204,7 @@ function extractGuestNameFromConversation(
   ]
   for (const pat of aiNamePatterns) {
     const m = assistantText.match(pat)
-    if (m?.[1] && m[1].length >= 2 && m[1].length <= 80) return m[1].trim()
+    if (m?.[1] && isPlausibleGuestName(m[1].trim())) return m[1].trim()
   }
 
   return null
@@ -218,7 +253,9 @@ function normalizeGuestContact(fields: {
   email?: string | null
 }): { name?: string; phone?: string; email?: string } {
   const out: { name?: string; phone?: string; email?: string } = {}
-  if (fields.name?.trim()) out.name = normalizeName(fields.name)
+  if (fields.name?.trim() && isPlausibleGuestName(fields.name)) {
+    out.name = normalizeName(fields.name)
+  }
   if (fields.phone?.trim() && phoneDigitCount(fields.phone) >= 7) {
     out.phone = normalizePhone(fields.phone)
   }
@@ -479,7 +516,7 @@ async function syncGuestInfo(params: {
   }
 
   const displayName = name ?? existing?.name ?? returningGuest?.name
-  if (displayName && !placeholderName.test(displayName.trim())) {
+  if (displayName && !placeholderName.test(displayName.trim()) && isPlausibleGuestName(displayName)) {
     await supabaseAdmin
       .from('conversations')
       .update({ customer_name: normalizeName(displayName) })
@@ -696,6 +733,12 @@ function tonightAtSevenLocal(): Date {
  * Also checks the AI confirmation text — the AI must have confirmed the booking in
  * this turn (to prevent duplicate inserts on every subsequent message).
  */
+type BookingEngineContext = {
+  operatingHours: OperatingHours
+  bookingSettings: BookingSettings
+  existingBookings: ExistingBooking[]
+}
+
 async function tryCreateReservationFromChat(params: {
   lastUserContent: string
   chatMessages: ChatMessage[]
@@ -703,8 +746,17 @@ async function tryCreateReservationFromChat(params: {
   business_id: string
   customer_id: string
   conversation_id: string
+  bookingCtx: BookingEngineContext
 }) {
-  const { lastUserContent, chatMessages, assistantText, business_id, customer_id, conversation_id } = params
+  const {
+    lastUserContent,
+    chatMessages,
+    assistantText,
+    business_id,
+    customer_id,
+    conversation_id,
+    bookingCtx,
+  } = params
 
   const allUserText = getUserMessagesCombined(chatMessages)
 
@@ -746,17 +798,26 @@ async function tryCreateReservationFromChat(params: {
     parseScheduledAt(assistantText) ??
     parseScheduledAt(`${lastUserContent}\n${assistantText}`)
   const scheduledAt = parsedTime ?? tonightAtSevenLocal()
+  const wallClock = formatWallClock(wallClockFromDate(scheduledAt))
+  const nowParts = getCalgaryNowParts()
+
+  const available = isSlotAvailable({
+    wallClock,
+    operatingHours: bookingCtx.operatingHours,
+    existing: bookingCtx.existingBookings,
+    settings: bookingCtx.bookingSettings,
+    durationMinutes: bookingCtx.bookingSettings.default_duration_minutes,
+    now: nowParts,
+  })
+
+  if (!available) {
+    console.log('[booking] Slot not available, skipping insert:', wallClock)
+    return false
+  }
 
   // Pack reservation details into service_name (schema-compatible).
   const svcParts = [guestName, `Party of ${partySize}`]
   const serviceName = svcParts.join(' · ').slice(0, 500)
-
-  // Store as a "wall-clock" timestamp so bookings display shows the time the
-  // guest intended regardless of server/client timezone differences.
-  // Format: "2026-05-12T11:00:00" (no Z, no offset) — Supabase interprets
-  // bare timestamps as UTC which the client then displays directly.
-  const pad2 = (n: number) => String(n).padStart(2, '0')
-  const wallClock = `${scheduledAt.getFullYear()}-${pad2(scheduledAt.getMonth() + 1)}-${pad2(scheduledAt.getDate())}T${pad2(scheduledAt.getHours())}:${pad2(scheduledAt.getMinutes())}:00`
 
   console.log('[booking] Creating reservation:', {
     guestName,
@@ -769,6 +830,8 @@ async function tryCreateReservationFromChat(params: {
 
   const notes = extractSpecialRequests(chatMessages)
 
+  const durationMinutes = bookingCtx.bookingSettings.default_duration_minutes
+
   const { error } = await supabaseAdmin
     .from('appointments')
     .insert({
@@ -779,6 +842,7 @@ async function tryCreateReservationFromChat(params: {
       scheduled_at: wallClock,
       status: 'pending' as const,
       notes,
+      duration_minutes: durationMinutes,
     })
     .select('id')
     .maybeSingle()
@@ -861,6 +925,137 @@ async function tryCancelReservationFromChat(params: {
 
   console.log('[cancel] Reservation cancelled:', appointmentId)
   return true
+}
+
+// ─── Reservation reschedule ────────────────────────────────────────────────────
+
+async function tryRescheduleReservationFromChat(params: {
+  lastUserContent: string
+  chatMessages: ChatMessage[]
+  assistantText: string
+  business_id: string
+  customer_id: string
+  conversation_id: string
+  bookingCtx: BookingEngineContext
+}): Promise<boolean> {
+  const { lastUserContent, chatMessages, assistantText, business_id, customer_id, conversation_id, bookingCtx } =
+    params
+
+  const userWantsReschedule =
+    /\b(reschedule|re-schedule|change\s+(?:the\s+)?time|move\s+(?:it|my|the)\s+reservation|different\s+time|another\s+time)\b/i.test(
+      lastUserContent,
+    )
+  if (!userWantsReschedule) return false
+
+  const aiConfirms =
+    /\b(reschedul\w+|moved\s+your|new\s+time|see\s+you\s+(?:then|at))\b/i.test(assistantText)
+  if (!aiConfirms) return false
+
+  const { data: appt } = await supabaseAdmin
+    .from('appointments')
+    .select('id, scheduled_at, status')
+    .eq('conversation_id', conversation_id)
+    .in('status', ['pending', 'confirmed', 'seated'])
+    .order('scheduled_at', { ascending: true })
+    .limit(1)
+    .maybeSingle()
+
+  let appointmentId = appt?.id ?? null
+
+  if (!appointmentId) {
+    const nowParts = getCalgaryNowParts()
+    const pad2 = (n: number) => String(n).padStart(2, '0')
+    const nowWallClock = `${nowParts.year}-${pad2(nowParts.month)}-${pad2(nowParts.day)}T${pad2(nowParts.hour)}:${pad2(nowParts.minute)}:00`
+
+    const { data: byCustomer } = await supabaseAdmin
+      .from('appointments')
+      .select('id')
+      .eq('business_id', business_id)
+      .eq('customer_id', customer_id)
+      .in('status', ['pending', 'confirmed', 'seated'])
+      .gte('scheduled_at', nowWallClock)
+      .order('scheduled_at', { ascending: true })
+      .limit(1)
+      .maybeSingle()
+
+    appointmentId = byCustomer?.id ?? null
+  }
+
+  if (!appointmentId) return false
+
+  const allUserText = getUserMessagesCombined(chatMessages)
+  const parsedTime =
+    parseScheduledAt(lastUserContent) ??
+    parseScheduledAt(allUserText) ??
+    parseScheduledAt(assistantText) ??
+    null
+
+  if (!parsedTime) return false
+
+  const wallClock = formatWallClock(wallClockFromDate(parsedTime))
+  const nowParts = getCalgaryNowParts()
+
+  const available = isSlotAvailable({
+    wallClock,
+    operatingHours: bookingCtx.operatingHours,
+    existing: bookingCtx.existingBookings,
+    settings: bookingCtx.bookingSettings,
+    durationMinutes: bookingCtx.bookingSettings.default_duration_minutes,
+    now: nowParts,
+    excludeAppointmentId: appointmentId,
+  })
+
+  if (!available) {
+    console.log('[reschedule] New slot not available:', wallClock)
+    return false
+  }
+
+  const { error } = await supabaseAdmin
+    .from('appointments')
+    .update({
+      scheduled_at: wallClock,
+      duration_minutes: bookingCtx.bookingSettings.default_duration_minutes,
+    })
+    .eq('id', appointmentId)
+    .eq('business_id', business_id)
+
+  if (error) {
+    console.error('[reschedule] Update failed:', error.message)
+    return false
+  }
+
+  console.log('[reschedule] Reservation updated:', appointmentId, wallClock)
+  return true
+}
+
+function buildChatAvailabilitySection(
+  chatMessages: ChatMessage[],
+  bookingCtx: BookingEngineContext,
+): string | null {
+  const allUserText = getUserMessagesCombined(chatMessages)
+  const lastUser = getLastUserMessageContent(chatMessages) ?? ''
+  const combined = `${allUserText}\n${lastUser}`
+
+  if (!hasReservationIntent(combined) && !hasReservationIntent(lastUser)) {
+    return null
+  }
+
+  const partySize =
+    extractPartySize(lastUser) ?? extractPartySize(allUserText) ?? 2
+
+  const nowParts = getCalgaryNowParts()
+  const dateKey = inferDateKeyFromText(combined, nowParts)
+  const preferred = preferredWallClockFromText(combined, dateKey, nowParts)
+
+  return buildAvailabilityPromptSection({
+    operatingHours: bookingCtx.operatingHours,
+    existing: bookingCtx.existingBookings,
+    settings: bookingCtx.bookingSettings,
+    targetDateKey: dateKey,
+    partySize,
+    preferredWallClock: preferred,
+    now: nowParts,
+  })
 }
 
 // ─── Notification email ───────────────────────────────────────────────────────
@@ -1101,6 +1296,9 @@ export async function POST(request: Request) {
       }
     }
 
+    const bookingCtx = await loadBusinessBookingContext(supabaseAdmin, business_id)
+    const availabilitySection = buildChatAvailabilitySection(chatMessages, bookingCtx)
+
     const systemPrompt = buildSystemPrompt(
       conciergeName,
       restaurantName,
@@ -1108,6 +1306,7 @@ export async function POST(request: Request) {
       menuItems,
       (business as Record<string, unknown>).menu_pdf_text as string | null,
       returningGuestContext,
+      availabilitySection,
     )
 
     if (isNewConversation && resolvedCustomerId && !returningGuestContext) {
@@ -1178,6 +1377,7 @@ export async function POST(request: Request) {
     // ── Conditionally create or cancel reservation ────────────────────────────
     let bookingCreated = false
     let bookingCancelled = false
+    let bookingRescheduled = false
 
     if (resolvedCustomerId) {
       bookingCancelled = await tryCancelReservationFromChat({
@@ -1189,6 +1389,18 @@ export async function POST(request: Request) {
       })
 
       if (!bookingCancelled) {
+        bookingRescheduled = await tryRescheduleReservationFromChat({
+          lastUserContent: lastUserContent.trim(),
+          chatMessages,
+          assistantText,
+          business_id,
+          customer_id: resolvedCustomerId,
+          conversation_id: resolvedConversationId,
+          bookingCtx,
+        })
+      }
+
+      if (!bookingCancelled && !bookingRescheduled) {
         bookingCreated = await tryCreateReservationFromChat({
           lastUserContent: lastUserContent.trim(),
           chatMessages,
@@ -1196,6 +1408,7 @@ export async function POST(request: Request) {
           business_id,
           customer_id: resolvedCustomerId,
           conversation_id: resolvedConversationId,
+          bookingCtx,
         })
       }
     }
@@ -1206,6 +1419,7 @@ export async function POST(request: Request) {
       customer_id: resolvedCustomerId,
       booking_created: bookingCreated,
       booking_cancelled: bookingCancelled,
+      booking_rescheduled: bookingRescheduled,
     })
   } catch (e) {
     const message = e instanceof Error ? e.message : 'Unexpected error'

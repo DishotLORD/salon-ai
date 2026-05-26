@@ -27,6 +27,51 @@ export type BookingsDayChipsProps = {
   onAdd: () => void
 }
 
+export function BookingsDayEmptyStrip({
+  date,
+  onAdd,
+}: {
+  date: Date
+  onAdd: () => void
+}) {
+  const label = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 10,
+        padding: '10px 12px',
+        borderRadius: bk.radiusSm,
+        background: '#f8fafc',
+        border: bk.border,
+        fontFamily: bk.font,
+      }}
+    >
+      <span style={{ fontSize: bk.caption, color: '#64748b', fontWeight: 500 }}>
+        No bookings on {label}
+      </span>
+      <button
+        type="button"
+        onClick={onAdd}
+        style={{
+          padding: '6px 12px',
+          borderRadius: 999,
+          border: 'none',
+          background: '#0f172a',
+          color: '#fff',
+          fontSize: bk.micro,
+          fontWeight: 600,
+          cursor: 'pointer',
+        }}
+      >
+        + Add
+      </button>
+    </div>
+  )
+}
+
 export function BookingsDayChips({
   reservations,
   loading,

@@ -68,7 +68,10 @@ export function validateOperatingHours(hours: OperatingHours): string | null {
 
 const DAY_KEYS_BY_JS_DAY: DayKey[] = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
 
-const SLOT_STEP = 30
+/** Booking / timeline snap interval (minutes). */
+export const BOOKING_SLOT_MINUTES = 15
+
+const SLOT_STEP = BOOKING_SLOT_MINUTES
 
 const WEEKDAY_PEAKS: PeakBand[] = [
   { start: 12 * 60, end: 14 * 60, label: 'Lunch peak' },

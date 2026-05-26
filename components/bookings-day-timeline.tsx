@@ -218,7 +218,7 @@ export function BookingsDayTimeline({
         <div>
           <div style={{ fontSize: bk.title, fontWeight: 700, color: '#0f172a' }}>{dateLabel}</div>
           <div style={{ fontSize: bk.micro, color: '#94a3b8', marginTop: 2 }}>
-            Drag to reschedule · 30 min slots
+            Drag to reschedule · 15 min slots
           </div>
         </div>
         <button

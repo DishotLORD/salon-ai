@@ -312,10 +312,11 @@ export function TimeDialPicker({
           {slots.map((slot) => {
             const left = timelinePercent(slot.minutes, range)
             const isHour = slot.minutes % 60 === 0
+            const isHalfHour = !isHour && slot.minutes % 30 === 0
             const isActive = slot.value === snappedValue
             const inPeak = peaks?.some((p) => slot.minutes >= p.start && slot.minutes < p.end)
-            const tickH = isActive ? 24 : isHour ? 16 : 10
-            const top = isActive ? 6 : isHour ? 10 : 13
+            const tickH = isActive ? 24 : isHour ? 16 : isHalfHour ? 12 : 8
+            const top = isActive ? 6 : isHour ? 10 : isHalfHour ? 11 : 14
 
             return (
               <div

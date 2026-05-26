@@ -21,6 +21,9 @@ export const bk = {
   statValue: 24,
   cardPad: '12px 14px',
   controlH: 32,
+  /** Month grid — ~6 rows, slightly tall cells */
+  calCellMinH: 68,
+  calRowGap: 1,
 } as const
 
 export const bkCard: CSSProperties = {
