@@ -25,11 +25,20 @@ export type SettingsCategoryDef = {
   title: string
   description: string
   comingSoon?: boolean
+  subItems?: { id: string; title: string }[]
 }
 
 export const SETTINGS_CATEGORIES: SettingsCategoryDef[] = [
   { id: 'restaurant', title: 'Restaurant', description: 'Name, hours, location' },
-  { id: 'reservations', title: 'Reservations', description: 'Capacity, zones, turns' },
+  {
+    id: 'reservations',
+    title: 'Reservations',
+    description: 'Capacity, zones, turns',
+    subItems: [
+      { id: 'dining', title: 'Dining Zones' },
+      { id: 'activities', title: 'Activities' },
+    ],
+  },
   { id: 'ai', title: 'AI Personality', description: 'Voice, tone, guardrails' },
   { id: 'menu', title: 'Menu', description: 'Dishes and pricing' },
   { id: 'integrations', title: 'Integrations', description: 'Channels & POS' },
@@ -189,10 +198,14 @@ export function SettingsCategoryNav({
   activeId,
   onSelect,
   reduceMotion,
+  activeSubId,
+  onSelectSub,
 }: {
   activeId: SettingsCategoryId
   onSelect: (id: SettingsCategoryId) => void
   reduceMotion: boolean | null
+  activeSubId?: string
+  onSelectSub?: (id: string) => void
 }) {
   return (
     <LayoutGroup id="settings-category-nav">
@@ -210,16 +223,56 @@ export function SettingsCategoryNav({
           boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.7)',
         }}
       >
-        {SETTINGS_CATEGORIES.map((category) => (
-          <CategoryRow
-            key={category.id}
-            title={category.title}
-            active={activeId === category.id}
-            comingSoon={category.comingSoon}
-            onClick={() => onSelect(category.id)}
-            reduceMotion={reduceMotion}
-          />
-        ))}
+        {SETTINGS_CATEGORIES.map((category) => {
+          const isActive = activeId === category.id
+          const hasSubItems = isActive && category.subItems && category.subItems.length > 0
+          return (
+            <div key={category.id}>
+              <CategoryRow
+                title={category.title}
+                active={isActive}
+                comingSoon={category.comingSoon}
+                onClick={() => onSelect(category.id)}
+                reduceMotion={reduceMotion}
+              />
+              {hasSubItems && (
+                <div style={{ paddingLeft: 18, paddingTop: 2, paddingBottom: 4, display: 'grid', gap: 1, position: 'relative' }}>
+                  {/* vertical connector line */}
+                  <div style={{ position: 'absolute', left: 24, top: 0, bottom: 8, width: 1.5, background: 'rgba(56,189,248,0.25)', borderRadius: 999 }} />
+                  {category.subItems!.map((sub) => {
+                    const subActive = activeSubId === sub.id
+                    return (
+                      <button
+                        key={sub.id}
+                        type="button"
+                        onClick={() => onSelectSub?.(sub.id)}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          width: '100%',
+                          padding: '7px 10px 7px 20px',
+                          border: 'none',
+                          borderRadius: 8,
+                          background: subActive ? 'rgba(56,189,248,0.1)' : 'transparent',
+                          cursor: 'pointer',
+                          textAlign: 'left',
+                          fontFamily: navTheme.font,
+                          transition: 'background 0.15s',
+                        }}
+                      >
+                        <div style={{ width: 5, height: 5, borderRadius: '50%', background: subActive ? navTheme.accentDark : 'rgba(15,23,42,0.2)', flexShrink: 0, transition: 'background 0.15s' }} />
+                        <span style={{ fontSize: 12, fontWeight: subActive ? 600 : 500, color: subActive ? navTheme.accentDark : navTheme.textMuted, transition: 'color 0.15s' }}>
+                          {sub.title}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )
+        })}
       </motion.nav>
     </LayoutGroup>
   )

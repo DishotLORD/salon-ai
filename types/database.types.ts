@@ -81,6 +81,7 @@ export type Database = {
           total_spent: number | null
           visit_history: Json | null
           last_visit: string | null
+          notes: string | null
           created_at: string
           updated_at: string
         }
@@ -97,6 +98,7 @@ export type Database = {
           total_spent?: number | null
           visit_history?: Json | null
           last_visit?: string | null
+          notes?: string | null
           created_at?: string
           updated_at?: string
         }

@@ -5,6 +5,7 @@ import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
 import { useCallback, useMemo, useRef, useState } from 'react'
 
 import type { Reservation, ResStatus } from '@/components/reservation-card'
+import { formatCalgaryTime, isSameCalgaryCalendarDay } from '@/lib/booking-wall-clock'
 import { bk, bkCard } from '@/lib/bookings-compact-ui'
 import { timeFromDate, toDateIso } from '@/lib/reservation-schedule'
 import {
@@ -36,7 +37,7 @@ const STATUS_STYLE: Record<ResStatus, { bg: string; border: string; color: strin
 }
 
 function fmtTime(d: Date) {
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  return formatCalgaryTime(d)
 }
 
 type PlacedReservation = {
@@ -117,12 +118,7 @@ export function BookingsDayTimeline({
 
   const dayReservations = useMemo(
     () =>
-      reservations.filter(
-        (r) =>
-          r.scheduledAt.getFullYear() === date.getFullYear() &&
-          r.scheduledAt.getMonth() === date.getMonth() &&
-          r.scheduledAt.getDate() === date.getDate(),
-      ),
+      reservations.filter((r) => isSameCalgaryCalendarDay(r.scheduledAt, date)),
     [reservations, date],
   )
 

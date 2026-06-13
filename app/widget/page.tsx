@@ -59,6 +59,40 @@ function formatPhone(raw: string): string {
   return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`
 }
 
+/** Bot already placed the booking — do not show the contact form again. */
+function aiAlreadyConfirmedBooking(text: string): boolean {
+  const t = text.toLowerCase()
+  return (
+    /\b(confirmation (?:email )?has been|has been sent|been placed|it's been placed)\b/i.test(
+      t,
+    ) ||
+    /\b(booked for|all set|look forward to seeing)\b/i.test(t) ||
+    /\b(sent to [^\s]+@|confirmation email has been)\b/i.test(t) ||
+    /\b(your reservation (?:is|has been) (?:set|placed|confirmed))\b/i.test(t)
+  )
+}
+
+/** True when the bot is asking for contact — not when confirming a booking. */
+function aiAsksForContact(text: string): boolean {
+  const t = text.toLowerCase()
+  if (aiAlreadyConfirmedBooking(t)) return false
+  if (!/\b(phone|email|contact)\b/i.test(t)) return false
+  return (
+    /\b(phone number or email|phone or email|number or email)\b/i.test(t) ||
+    /\b(so we can send (?:a )?confirmation|send (?:you )?a confirmation)\b/i.test(t) ||
+    /\b(may i have|could i have|could i get|can i get|would you share).{0,60}(phone|email)/i.test(
+      t,
+    )
+  )
+}
+
+function looksLikeContactValue(text: string): boolean {
+  const trimmed = text.trim()
+  if (!trimmed) return false
+  if (/\S+@\S+\.\S+/.test(trimmed)) return true
+  return trimmed.replace(/\D/g, '').length >= 7
+}
+
 function WidgetPageInner() {
   const searchParams = useSearchParams()
   const businessId = searchParams.get('business_id')
@@ -71,6 +105,7 @@ function WidgetPageInner() {
   const [draft, setDraft] = useState('')
   const [contactPhone, setContactPhone] = useState('')
   const [contactEmail, setContactEmail] = useState('')
+  const [contactMode, setContactMode] = useState<'phone' | 'email' | null>(null)
   const [messages, setMessages] = useState<WidgetMessage[]>([
     buildWelcome(null, DEFAULT_CONCIERGE_NAME),
   ])
@@ -258,6 +293,7 @@ function WidgetPageInner() {
     if (!value) return
     setContactPhone('')
     setContactEmail('')
+    setContactMode(null)
     await handleSend(value)
   }
 
@@ -269,13 +305,24 @@ function WidgetPageInner() {
 
   const headerTitle = businessName ?? conciergeName
 
-  const lastBotPhoneEmailIdx = [...messages].reduce(
-    (found, m, i) => (m.sender === 'ai' && /phone|email/i.test(m.text) ? i : found),
+  const lastContactAskIdx = [...messages].reduce(
+    (found, m, i) => (m.sender === 'ai' && aiAsksForContact(m.text) ? i : found),
     -1,
   )
   const showContactStep =
-    lastBotPhoneEmailIdx !== -1 &&
-    !messages.slice(lastBotPhoneEmailIdx + 1).some((m) => m.sender === 'customer')
+    lastContactAskIdx !== -1 &&
+    !messages
+      .slice(lastContactAskIdx + 1)
+      .some((m) => m.sender === 'customer' && looksLikeContactValue(m.text))
+
+  // Scroll to bottom when the contact card appears or a chip is selected so the
+  // input field is always visible. Declared here, after showContactStep is defined.
+  useEffect(() => {
+    if (!isOpen) return
+    const el = messagesContainerRef.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+  }, [showContactStep, contactMode, isOpen])
 
   const handleSend = async (textOverride?: string) => {
     const text = (textOverride ?? draft).trim()
@@ -529,82 +576,122 @@ function WidgetPageInner() {
                 </div>
               )}
 
-              {showContactStep && !isLoading && (
-                <div
-                  style={{
-                    margin: '4px 0 8px',
-                    background: 'var(--ocean-surface)',
-                    border: '1px solid var(--ocean-border)',
-                    borderRadius: 14,
-                    padding: '12px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 8,
-                  }}
-                >
-                  <p style={{ margin: 0, fontSize: 12, color: 'var(--ocean-text-muted)', fontWeight: 500 }}>
-                    Enter your contact to look up your profile
-                  </p>
-                  <input
-                    type="tel"
-                    value={contactPhone}
-                    onChange={(e) => setContactPhone(formatPhone(e.target.value))}
-                    onKeyDown={(e) => { if (e.key === 'Enter') void handleContactSubmit() }}
-                    placeholder="(403) ___-____"
+              {showContactStep && !isLoading && (() => {
+                const phoneReady = contactPhone.replace(/\D/g, '').length >= 7
+                const emailReady = !!contactEmail.trim()
+                const canSubmit = contactMode === 'phone' ? phoneReady : emailReady
+                return (
+                  <motion.div
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ type: 'spring', stiffness: 340, damping: 28 }}
                     style={{
+                      margin: '4px 0 8px',
+                      background: 'var(--ocean-surface)',
                       border: '1px solid var(--ocean-border)',
-                      borderRadius: 8,
-                      padding: '8px 10px',
-                      fontSize: 14,
-                      outline: 'none',
-                      width: '100%',
-                      boxSizing: 'border-box',
-                    }}
-                  />
-                  <div style={{ textAlign: 'center', fontSize: 11, color: 'var(--ocean-text-subtle)' }}>or</div>
-                  <input
-                    type="email"
-                    value={contactEmail}
-                    onChange={(e) => setContactEmail(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') void handleContactSubmit() }}
-                    placeholder="name@email.com"
-                    style={{
-                      border: '1px solid var(--ocean-border)',
-                      borderRadius: 8,
-                      padding: '8px 10px',
-                      fontSize: 14,
-                      outline: 'none',
-                      width: '100%',
-                      boxSizing: 'border-box',
-                    }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => void handleContactSubmit()}
-                    disabled={isLoading || (contactPhone.replace(/\D/g, '').length < 7 && !contactEmail.trim())}
-                    style={{
-                      border: 'none',
-                      borderRadius: 8,
-                      padding: '9px',
-                      cursor: isLoading || (contactPhone.replace(/\D/g, '').length < 7 && !contactEmail.trim()) ? 'not-allowed' : 'pointer',
-                      background: isLoading || (contactPhone.replace(/\D/g, '').length < 7 && !contactEmail.trim())
-                        ? 'var(--ocean-border)'
-                        : 'linear-gradient(135deg, var(--ocean-sky) 0%, #0ea5e9 100%)',
-                      color: isLoading || (contactPhone.replace(/\D/g, '').length < 7 && !contactEmail.trim())
-                        ? 'var(--ocean-text-subtle)'
-                        : 'var(--ocean-black)',
-                      fontWeight: 600,
-                      fontSize: 13,
-                      transition: 'background 0.15s',
+                      borderRadius: 14,
+                      padding: '12px 12px 10px',
                     }}
                   >
-                    Find me →
-                  </button>
-                </div>
-              )}
+                    <p style={{ margin: '0 0 10px', fontSize: 12.5, color: 'var(--ocean-text-muted)', fontWeight: 500, lineHeight: 1.4 }}>
+                      How would you like us to reach you?
+                    </p>
+
+                    <div style={{ display: 'flex', gap: 7 }}>
+                      {(['phone', 'email'] as const).map((mode) => {
+                        const active = contactMode === mode
+                        return (
+                          <button
+                            key={mode}
+                            type="button"
+                            onClick={() => setContactMode(active ? null : mode)}
+                            style={{
+                              flex: 1,
+                              padding: '9px 0',
+                              borderRadius: 11,
+                              border: `1.5px solid ${active ? 'var(--ocean-sky)' : 'var(--ocean-border)'}`,
+                              background: active ? 'rgba(56, 189, 248, 0.12)' : 'transparent',
+                              color: active ? 'var(--ocean-sky)' : 'var(--ocean-text-muted)',
+                              fontWeight: 600,
+                              fontSize: 13,
+                              cursor: 'pointer',
+                              transition: 'border-color 0.18s, background 0.18s, color 0.18s',
+                            }}
+                          >
+                            {mode === 'phone' ? '📞  Phone' : '✉️  Email'}
+                          </button>
+                        )
+                      })}
+                    </div>
+
+                    <AnimatePresence initial={false} mode="wait">
+                      {contactMode && (
+                        <motion.div
+                          key={contactMode}
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: 'auto' }}
+                          exit={{ opacity: 0, height: 0 }}
+                          transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+                          style={{ overflow: 'hidden' }}
+                        >
+                          <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+                            <input
+                              autoFocus
+                              type={contactMode === 'phone' ? 'tel' : 'email'}
+                              value={contactMode === 'phone' ? contactPhone : contactEmail}
+                              onChange={(e) =>
+                                contactMode === 'phone'
+                                  ? setContactPhone(formatPhone(e.target.value))
+                                  : setContactEmail(e.target.value)
+                              }
+                              onKeyDown={(e) => { if (e.key === 'Enter' && canSubmit) void handleContactSubmit() }}
+                              placeholder={contactMode === 'phone' ? '(403) ___-____' : 'name@email.com'}
+                              style={{
+                                flex: 1,
+                                border: '1px solid var(--ocean-border)',
+                                borderRadius: 10,
+                                padding: '9px 11px',
+                                fontSize: 14,
+                                outline: 'none',
+                                background: 'var(--ocean-deep)',
+                                color: 'var(--ocean-text)',
+                                boxSizing: 'border-box',
+                              }}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => void handleContactSubmit()}
+                              disabled={isLoading || !canSubmit}
+                              aria-label="Submit contact"
+                              style={{
+                                border: 'none',
+                                borderRadius: 10,
+                                padding: '9px 14px',
+                                cursor: isLoading || !canSubmit ? 'not-allowed' : 'pointer',
+                                background: isLoading || !canSubmit
+                                  ? 'var(--ocean-border)'
+                                  : 'linear-gradient(135deg, var(--ocean-sky) 0%, #0ea5e9 100%)',
+                                color: isLoading || !canSubmit ? 'var(--ocean-text-subtle)' : 'var(--ocean-black)',
+                                fontWeight: 700,
+                                fontSize: 16,
+                                lineHeight: 1,
+                                transition: 'background 0.15s',
+                              }}
+                            >
+                              →
+                            </button>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+
+
+                  </motion.div>
+                )
+              })()}
             </div>
 
-            <footer style={{ borderTop: '1px solid var(--ocean-border)', padding: 10, background: 'var(--ocean-ink)' }}>
+            {!showContactStep && <footer style={{ borderTop: '1px solid var(--ocean-border)', padding: 10, background: 'var(--ocean-ink)' }}>
               <div style={{ display: 'flex', gap: 8 }}>
                 <input
                   type="text"
@@ -644,7 +731,7 @@ function WidgetPageInner() {
                   Send
                 </button>
               </div>
-            </footer>
+            </footer>}
           </motion.div>
         ) : null}
         </AnimatePresence>

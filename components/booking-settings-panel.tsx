@@ -97,7 +97,64 @@ export function BookingSettingsPanel({
             onChange={(e) => setNum('slot_interval_minutes', e.target.value, 5, 60)}
           />
         </label>
+        <label style={fieldStyle}>
+          <span style={labelStyle}>Minimum notice (min)</span>
+          <input
+            type="number"
+            min={0}
+            max={1440}
+            step={15}
+            disabled={disabled}
+            style={inputStyle}
+            value={settings.min_notice_minutes}
+            onChange={(e) => setNum('min_notice_minutes', e.target.value, 0, 1440)}
+          />
+        </label>
+        <label style={fieldStyle}>
+          <span style={labelStyle}>Book up to (days ahead)</span>
+          <input
+            type="number"
+            min={1}
+            max={365}
+            step={1}
+            disabled={disabled}
+            style={inputStyle}
+            value={settings.max_advance_days}
+            onChange={(e) => setNum('max_advance_days', e.target.value, 1, 365)}
+          />
+        </label>
       </div>
+      <label
+        style={{
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: 12,
+          padding: '12px 14px',
+          borderRadius: 10,
+          border: '1px solid rgba(15, 23, 42, 0.1)',
+          background: '#f8fafc',
+          cursor: disabled ? 'not-allowed' : 'pointer',
+        }}
+      >
+        <input
+          type="checkbox"
+          disabled={disabled}
+          checked={settings.require_contact_before_booking}
+          onChange={(e) =>
+            onChange({ ...settings, require_contact_before_booking: e.target.checked })
+          }
+          style={{ marginTop: 2, width: 16, height: 16, flexShrink: 0, cursor: 'inherit' }}
+        />
+        <span style={{ display: 'grid', gap: 3 }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: '#0f172a' }}>
+            Require contact before booking
+          </span>
+          <span style={{ fontSize: 12, color: '#64748b', lineHeight: 1.5 }}>
+            The AI concierge must collect a phone number or email before confirming a
+            reservation — so you can send confirmations and recognize returning guests.
+          </span>
+        </span>
+      </label>
       <button
         type="button"
         disabled={disabled}

@@ -3,6 +3,7 @@
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { useState } from 'react'
 
+import { formatCalgaryTimeParts } from '@/lib/booking-wall-clock'
 import { oceanTransition } from '@/lib/ocean-motion'
 import { t } from '@/lib/dashboard-theme'
 
@@ -51,13 +52,6 @@ const STATUS: Record<ResStatus, { label: string; color: string; bg: string; bord
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function formatTimeParts(date: Date): { hm: string; period: string } {
-  const str = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-  const match = str.match(/^(.+?)\s*([AP]M)$/i)
-  if (match) return { hm: match[1], period: match[2].toUpperCase() }
-  return { hm: str, period: '' }
-}
 
 // ─── Icons (project icon set: lucide-style, 1.8 stroke) ───────────────────────
 
@@ -250,7 +244,7 @@ export function ReservationCard({
   const [activeAction, setActiveAction] = useState<string | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
 
-  const { hm, period } = formatTimeParts(r.scheduledAt)
+  const { hm, period } = formatCalgaryTimeParts(r.scheduledAt)
   const hasActions = !isPast && (onConfirm ?? onCancel ?? onDelete ?? onEdit)
   const canEdit = onEdit && r.status !== 'cancelled' && r.status !== 'no-show'
 

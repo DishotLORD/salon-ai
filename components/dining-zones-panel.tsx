@@ -39,10 +39,10 @@ function newZoneDraft(settings: BookingSettings, sortOrder: number): DiningZoneD
     _localKey: `new-${Date.now()}`,
     name: 'Patio',
     slug: 'patio',
-    max_concurrent_parties: 4,
+    max_concurrent_parties: 150,
     min_party_size: base.min_party_size,
     max_party_size: base.max_party_size,
-    turnover_minutes: base.turnover_minutes,
+    turnover_minutes: 70,
     is_active: true,
     sort_order: sortOrder,
   }
@@ -91,10 +91,10 @@ export function DiningZonesPanel({
         _localKey: `new-${Date.now()}`,
         name,
         slug,
-        max_concurrent_parties: 4,
+        max_concurrent_parties: slug === 'main-dining' ? 150 : 60,
         min_party_size: slug === 'large-groups' ? 8 : base.min_party_size,
         max_party_size: slug === 'large-groups' ? 20 : base.max_party_size,
-        turnover_minutes: slug === 'large-groups' ? 120 : base.turnover_minutes,
+        turnover_minutes: slug === 'large-groups' ? 120 : 70,
         is_active: true,
         sort_order: zones.length,
       },
@@ -105,7 +105,7 @@ export function DiningZonesPanel({
   return (
     <div style={{ display: 'grid', gap: 14 }}>
       <p style={{ margin: 0, fontSize: 13, color: '#64748b', lineHeight: 1.55 }}>
-        Smart zones replace a floor plan. Each zone has its own capacity and table turn time.
+        Smart zones replace a floor plan. Each zone has its own guest capacity (covers) and average stay time.
         Deactivate a zone instead of deleting it if it has past bookings.
       </p>
 
@@ -176,22 +176,28 @@ export function DiningZonesPanel({
             }}
           >
             <label style={{ display: 'grid', gap: 4 }}>
-              <span style={labelStyle}>Max parties</span>
+              <span style={labelStyle}>Capacity (guests)</span>
               <input
                 type="number"
                 min={1}
                 disabled={disabled}
                 style={inputStyle}
-                value={zone.max_concurrent_parties}
-                onChange={(e) =>
-                  updateAt(index, {
-                    max_concurrent_parties: Math.max(1, parseInt(e.target.value, 10) || 1),
-                  })
-                }
+                value={zone.max_concurrent_parties || ''}
+                onChange={(e) => {
+                  const raw = e.target.value
+                  if (raw === '') {
+                    // Allow the owner to clear the field while typing; validation happens on save.
+                    updateAt(index, { max_concurrent_parties: 0 as number })
+                    return
+                  }
+                  const next = parseInt(raw, 10)
+                  if (Number.isNaN(next)) return
+                  updateAt(index, { max_concurrent_parties: Math.max(1, next) })
+                }}
               />
             </label>
             <label style={{ display: 'grid', gap: 4 }}>
-              <span style={labelStyle}>Turnover (min)</span>
+              <span style={labelStyle}>Avg stay (min)</span>
               <input
                 type="number"
                 min={15}
@@ -201,7 +207,7 @@ export function DiningZonesPanel({
                 value={zone.turnover_minutes}
                 onChange={(e) =>
                   updateAt(index, {
-                    turnover_minutes: Math.max(15, parseInt(e.target.value, 10) || 90),
+                    turnover_minutes: Math.max(15, parseInt(e.target.value, 10) || 70),
                   })
                 }
               />

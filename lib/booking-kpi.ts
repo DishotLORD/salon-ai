@@ -1,4 +1,5 @@
 import type { Reservation } from '@/components/reservation-card'
+import { formatCalgaryTime, isSameCalgaryCalendarDay } from '@/lib/booking-wall-clock'
 
 export type KpiScope = 'day' | 'today' | 'month'
 
@@ -21,11 +22,7 @@ export type BookingKpi = {
 }
 
 function isSameDay(a: Date, b: Date) {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  )
+  return isSameCalgaryCalendarDay(a, b)
 }
 
 export function isInDisplayMonth(d: Date, displayMonth: Date) {
@@ -33,7 +30,7 @@ export function isInDisplayMonth(d: Date, displayMonth: Date) {
 }
 
 function fmtTime(d: Date) {
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  return formatCalgaryTime(d)
 }
 
 export function computeBookingKpi(

@@ -3,7 +3,9 @@
 import type { CSSProperties } from 'react'
 
 import type { Reservation, ResStatus } from '@/components/reservation-card'
+import { formatCalgaryTime } from '@/lib/booking-wall-clock'
 import { bk } from '@/lib/bookings-compact-ui'
+
 const MAX_VISIBLE = 6
 
 const STATUS_LABEL: Record<ResStatus, string> = {
@@ -15,7 +17,7 @@ const STATUS_LABEL: Record<ResStatus, string> = {
 }
 
 function fmtTime(d: Date) {
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  return formatCalgaryTime(d)
 }
 
 export type BookingsDayChipsProps = {

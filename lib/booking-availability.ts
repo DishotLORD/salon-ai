@@ -7,18 +7,21 @@ import {
 } from '@/lib/dining-zones'
 import {
   addDaysToDateKey,
-  calgaryWeekdayIndex,
   formatWallClock,
   formatWallClockLabel,
   getCalgaryNowParts,
+  inferDateKeyFromText,
+  parseTimeFromText,
   parseWallClock,
   scheduledAtToWallClock,
+  snapWallClockToSlotInterval,
   wallClockDateKey,
   wallClockToMinutesOfDay,
   type WallClockParts,
 } from '@/lib/booking-wall-clock'
 import {
   BOOKING_SLOT_MINUTES,
+  formatHoursRangeLabel,
   getDayHoursForDate,
   timelineRangeFromDayHours,
   type OperatingHours,
@@ -137,7 +140,7 @@ function countOverlappingInZone(
   settings: BookingSettings,
   excludeId?: string,
 ): number {
-  let count = 0
+  let covers = 0
   for (const row of existing) {
     if (excludeId && row.id === excludeId) continue
     if (!isActiveStatus(row.status)) continue
@@ -147,9 +150,11 @@ function countOverlappingInZone(
       durationForBooking(row, settings, zone),
     )
     if (!interval) continue
-    if (intervalsOverlap(candidate, interval)) count += 1
+    if (intervalsOverlap(candidate, interval)) {
+      covers += row.party_size != null && row.party_size > 0 ? row.party_size : 2
+    }
   }
-  return count
+  return covers
 }
 
 function rangeForDate(hours: OperatingHours, dateKey: string): TimelineRange | null {
@@ -184,19 +189,29 @@ function wallClockPartsForSlot(dateKey: string, startMin: number): WallClockPart
   }
 }
 
+/** Whole-day difference toKey - fromKey (timezone-safe on YYYY-MM-DD). */
+function dateKeyDiffDays(fromKey: string, toKey: string): number {
+  const [fy, fm, fd] = fromKey.split('-').map(Number)
+  const [ty, tm, td] = toKey.split('-').map(Number)
+  return Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd)) / 86_400_000)
+}
+
 function slotPassesNowFilter(
   dateKey: string,
   startMin: number,
   now?: WallClockParts,
+  minNoticeMinutes = 0,
 ): boolean {
   if (!now) return true
   const nowKey = wallClockDateKey(now)
-  if (dateKey === nowKey) {
-    const nowMin = wallClockToMinutesOfDay(now)
-    if (startMin <= nowMin) return false
-  } else if (dateKey < nowKey) {
-    return false
-  }
+  const diffDays = dateKeyDiffDays(nowKey, dateKey)
+  if (diffDays < 0) return false
+
+  const absoluteNow = wallClockToMinutesOfDay(now)
+  const absoluteSlot = diffDays * 24 * 60 + startMin
+  // Must be strictly in the future and respect the minimum-notice window.
+  if (absoluteSlot <= absoluteNow) return false
+  if (absoluteSlot < absoluteNow + Math.max(0, minNoticeMinutes)) return false
   return true
 }
 
@@ -207,18 +222,22 @@ function collectSlotsForZone(params: {
   existing: ExistingBooking[]
   settings: BookingSettings
   zone: DiningZone
+  partySize: number
   now?: WallClockParts
   excludeAppointmentId?: string
 }): AvailableSlot[] {
-  const { dateKey, range, existing, settings, zone, now, excludeAppointmentId } = params
+  const { dateKey, range, existing, settings, zone, partySize, now, excludeAppointmentId } = params
   const durationMinutes = zone.turnover_minutes || settings.default_duration_minutes
   const slots = buildTimeSlots({ ...range, step: settings.slot_interval_minutes })
   const open: AvailableSlot[] = []
 
   for (const slot of slots) {
     const startMin = slot.minutes
-    if (!slotFitsClosing(startMin, durationMinutes, range)) continue
-    if (!slotPassesNowFilter(dateKey, startMin, now)) continue
+    // Use slot_interval_minutes for the closing-fit check so the last shown slot
+    // is one interval before closing — not (duration) minutes before closing.
+    // The overlap candidate still uses the full duration for conflict detection.
+    if (!slotFitsClosing(startMin, settings.slot_interval_minutes, range)) continue
+    if (!slotPassesNowFilter(dateKey, startMin, now, settings.min_notice_minutes)) continue
 
     const parts = wallClockPartsForSlot(dateKey, startMin)
     const candidate: BookingInterval = {
@@ -234,7 +253,7 @@ function collectSlotsForZone(params: {
       settings,
       excludeAppointmentId,
     )
-    if (overlaps >= zone.max_concurrent_parties) continue
+    if (overlaps + partySize > zone.max_concurrent_parties) continue
 
     const label = `${formatWallClockLabel(parts)} (${zone.name})`
     open.push({
@@ -273,6 +292,19 @@ export function getOpenSlotsForDate(params: {
     partySize = 2,
   } = params
 
+  // Beyond the booking horizon → no slots (guests cannot book that far ahead).
+  if (now) {
+    const aheadDays = dateKeyDiffDays(wallClockDateKey(now), dateKey)
+    if (aheadDays > settings.max_advance_days) {
+      logAvailabilityDebug('beyond_max_advance', {
+        queryDateKey: dateKey,
+        maxAdvanceDays: settings.max_advance_days,
+        aheadDays,
+      })
+      return []
+    }
+  }
+
   const range = rangeForDate(operatingHours, dateKey)
   if (!range) {
     logAvailabilityDebug('no_operating_hours', {
@@ -302,6 +334,7 @@ export function getOpenSlotsForDate(params: {
         existing,
         settings,
         zone,
+        partySize,
         now,
         excludeAppointmentId,
       })) {
@@ -336,8 +369,8 @@ export function getOpenSlotsForDate(params: {
 
   for (const slot of slots) {
     const startMin = slot.minutes
-    if (!slotFitsClosing(startMin, durationMinutes, range)) continue
-    if (!slotPassesNowFilter(dateKey, startMin, now)) continue
+    if (!slotFitsClosing(startMin, settings.slot_interval_minutes, range)) continue
+    if (!slotPassesNowFilter(dateKey, startMin, now, settings.min_notice_minutes)) continue
 
     const parts = wallClockPartsForSlot(dateKey, startMin)
     const candidate: BookingInterval = {
@@ -440,6 +473,8 @@ export function pickZoneForSlot(
     if (preferred) {
       return zones.find((z) => z.id === preferredZoneId) ?? null
     }
+    // Guest chose this zone — do not silently book another area.
+    return null
   }
   const first = matching[0]
   return zones.find((z) => z.id === first.zoneId) ?? null
@@ -514,6 +549,30 @@ export function formatSlotsListForPrompt(slots: AvailableSlot[], header?: string
   return `${title}:\n${lines.join('\n')}`
 }
 
+/** Slots to show in chat prompts: from "now" onward on the same day, capped. */
+function slotsForPromptDisplay(
+  open: AvailableSlot[],
+  dateKey: string,
+  now?: WallClockParts,
+  limit = 28,
+): AvailableSlot[] {
+  let list = open
+  if (now) {
+    const nowKey = wallClockDateKey(now)
+    if (nowKey === dateKey) {
+      const nowMin = wallClockToMinutesOfDay(now)
+      const afterNow = open.filter((s) => s.startMinutes > nowMin)
+      if (afterNow.length > 0) list = afterNow
+    }
+  }
+  if (list.length <= limit) return list
+  return list.slice(0, limit)
+}
+
+function lastBookableStartMinutes(range: TimelineRange, slotIntervalMinutes: number): number {
+  return range.end - slotIntervalMinutes
+}
+
 /** Build prompt block for chat from inferred date + party context. */
 export function buildAvailabilityPromptSection(params: {
   operatingHours: OperatingHours
@@ -545,6 +604,10 @@ export function buildAvailabilityPromptSection(params: {
     zoneId: params.preferredZoneId,
   })
 
+  const dayHours = getDayHoursForDate(params.operatingHours, params.targetDateKey)
+  const range = rangeForDate(params.operatingHours, params.targetDateKey)
+  const slotStep = params.settings.slot_interval_minutes
+
   const partyKnown = params.partySizeKnown !== false
 
   let section = hasZones
@@ -554,6 +617,25 @@ export function buildAvailabilityPromptSection(params: {
     : partyKnown
       ? `BOOKING CAPACITY: Party of ${params.partySize} (guest already stated). Typical table turn ${duration} minutes. Max ${params.settings.max_concurrent_reservations} overlapping reservations. Do NOT ask how many guests.\n`
       : `BOOKING CAPACITY: Party size not confirmed — availability below assumes ${params.partySize} for planning. Ask party size if still unknown. Typical turn ${duration} min.\n`
+
+  if (params.settings.min_notice_minutes > 0) {
+    const hrs = Math.floor(params.settings.min_notice_minutes / 60)
+    const mins = params.settings.min_notice_minutes % 60
+    const noticeLabel = hrs > 0 ? `${hrs}h${mins > 0 ? ` ${mins}m` : ''}` : `${mins}m`
+    section += `BOOKING WINDOW: requires at least ${noticeLabel} notice; guests may book up to ${params.settings.max_advance_days} days ahead.\n`
+  } else {
+    section += `BOOKING WINDOW: guests may book up to ${params.settings.max_advance_days} days ahead.\n`
+  }
+
+  if (dayHours.closed) {
+    section += 'RESTAURANT HOURS this day: Closed. Do not offer reservations for this date.\n'
+  } else if (range) {
+    const lastStart = lastBookableStartMinutes(range, slotStep)
+    const lastLabel = formatWallClockLabel(wallClockPartsForSlot(params.targetDateKey, lastStart))
+    section += `RESTAURANT HOURS this day: ${formatHoursRangeLabel(dayHours)}. Bookable start times use ${slotStep}-minute steps; last start about ${lastLabel}.\n`
+  } else {
+    section += `RESTAURANT HOURS this day: ${formatHoursRangeLabel(dayHours)}.\n`
+  }
 
   const zoneRes = params.zoneResolution
   const eligible =
@@ -580,9 +662,20 @@ export function buildAvailabilityPromptSection(params: {
       'Once party size is known, ask seating preference if multiple zones apply. Until then, do not confirm a reservation.\n'
   }
 
-  if (params.preferredWallClock) {
+  let preferredWallClock = params.preferredWallClock
+  let preferredRawLabel: string | null = null
+  if (preferredWallClock) {
+    const rawParts = parseWallClock(preferredWallClock)
+    if (rawParts) preferredRawLabel = formatWallClockLabel(rawParts)
+    const snapped = snapWallClockToSlotInterval(preferredWallClock, slotStep)
+    if (snapped && snapped !== preferredWallClock) {
+      preferredWallClock = snapped
+    }
+  }
+
+  if (preferredWallClock) {
     const available = isSlotAvailable({
-      wallClock: params.preferredWallClock,
+      wallClock: preferredWallClock,
       operatingHours: params.operatingHours,
       existing: params.existing,
       settings: params.settings,
@@ -592,13 +685,26 @@ export function buildAvailabilityPromptSection(params: {
       partySize: params.partySize,
       zoneId: params.preferredZoneId,
     })
-    const label = formatWallClockLabel(parseWallClock(params.preferredWallClock)!)
+    const label = formatWallClockLabel(parseWallClock(preferredWallClock)!)
+    if (preferredRawLabel && preferredRawLabel !== label) {
+      section += `Guest asked for ${preferredRawLabel}; bookable slots are every ${slotStep} minutes — use ${label} (nearest slot).\n`
+    }
     if (available) {
       section += `Requested time (${label}) is AVAILABLE. You may confirm this exact time.\n`
     } else {
-      section += `Requested time (${label}) is NOT available. Do NOT confirm that time. Offer alternatives from the list below (including other zones if listed).\n`
+      if (range) {
+        const latestStart = lastBookableStartMinutes(range, slotStep)
+        if (latestStart >= range.start) {
+          const latestParts = wallClockPartsForSlot(params.targetDateKey, latestStart)
+          section += `Requested time (${label}) is NOT available (only ${slotStep}-minute start times; we are open ${formatHoursRangeLabel(dayHours)}). Latest bookable start today is about ${formatWallClockLabel(latestParts)}. Offer NEARBY AVAILABLE TIMES — do NOT say the restaurant is fully booked if the list below has options.\n`
+        } else {
+          section += `Requested time (${label}) is NOT available. Do NOT confirm that time.\n`
+        }
+      } else {
+        section += `Requested time (${label}) is NOT available. Do NOT confirm that time.\n`
+      }
       const alts = findNearestOpenSlots({
-        targetWallClock: params.preferredWallClock,
+        targetWallClock: preferredWallClock,
         operatingHours: params.operatingHours,
         existing: params.existing,
         settings: params.settings,
@@ -614,57 +720,27 @@ export function buildAvailabilityPromptSection(params: {
     }
   }
 
-  section += formatSlotsListForPrompt(open.slice(0, 14))
+  const promptSlots = slotsForPromptDisplay(open, params.targetDateKey, params.now)
+  const slotHeader =
+    open.length > promptSlots.length
+      ? `AVAILABLE RESERVATION TIMES (${promptSlots.length} of ${open.length} open starts shown; only offer times from this list)`
+      : `AVAILABLE RESERVATION TIMES (${open.length} open starts; only offer times from this list)`
+  section += formatSlotsListForPrompt(promptSlots, slotHeader)
   return section
 }
 
-export function inferDateKeyFromText(
-  text: string,
-  now: WallClockParts,
-): string {
-  const combined = text.toLowerCase()
-  const pad2 = (n: number) => String(n).padStart(2, '0')
-  const todayKey = wallClockDateKey(now)
-
-  if (/\btomorrow\b/.test(combined)) {
-    return addDaysToDateKey(todayKey, 1)
-  }
-
-  const wdMatch = combined.match(
-    /\b(?:(next|this)\s+)?(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/,
-  )
-  if (wdMatch) {
-    const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
-    const target = WEEKDAYS.indexOf(wdMatch[2])
-    const todayWd = calgaryWeekdayIndex(now)
-    let daysAhead = target - todayWd
-    if (wdMatch[1] === 'next' || daysAhead <= 0) daysAhead += 7
-    return addDaysToDateKey(todayKey, daysAhead)
-  }
-
-  const iso = text.match(/(\d{4}-\d{2}-\d{2})/)
-  if (iso) return iso[1]
-
-  if (/\btoday\b|\btonight\b/.test(combined)) return todayKey
-
-  return todayKey
-}
+export { inferDateKeyFromText }
 
 export function preferredWallClockFromText(
   text: string,
   dateKey: string,
-  now: WallClockParts,
+  _now: WallClockParts,
 ): string | null {
-  const tm = text.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i)
-  if (!tm) return null
-  let h = parseInt(tm[1], 10)
-  const mi = tm[2] ? parseInt(tm[2], 10) : 0
-  const ap = tm[3].toUpperCase()
-  if (ap === 'PM' && h < 12) h += 12
-  if (ap === 'AM' && h === 12) h = 0
+  const clock = parseTimeFromText(text)
+  if (!clock) return null
   const pad2 = (n: number) => String(n).padStart(2, '0')
   const [y, m, d] = dateKey.split('-').map(Number)
-  return `${y}-${pad2(m)}-${pad2(d)}T${pad2(h)}:${pad2(mi)}:00`
+  return `${y}-${pad2(m)}-${pad2(d)}T${pad2(clock.hour)}:${pad2(clock.minute)}:00`
 }
 
 export { timeToMinutes }

@@ -15,6 +15,11 @@ import { BookingSettingsPanel } from '@/components/booking-settings-panel'
 import { DiningZonesPanel, type DiningZoneDraft } from '@/components/dining-zones-panel'
 import { WorkingHoursPanel } from '@/components/working-hours-panel'
 import {
+  ActivityResourcesPanel,
+  DEFAULT_ACTIVITY_RESOURCES,
+  type ActivityResource,
+} from '@/components/activity-resources-panel'
+import {
   DEFAULT_BOOKING_SETTINGS,
   parseBookingSettings,
   type BookingSettings,
@@ -366,6 +371,8 @@ function SettingsPageInner() {
   const [zonesSchemaReady, setZonesSchemaReady] = useState(true)
   const [zoneDrafts, setZoneDrafts] = useState<DiningZoneDraft[]>([])
   const [zonesLoading, setZonesLoading] = useState(false)
+  const [activityResources, setActivityResources] = useState<ActivityResource[]>(DEFAULT_ACTIVITY_RESOURCES)
+  const [reservationSubTab, setReservationSubTab] = useState<'dining' | 'activities'>('dining')
 
   const [systemPrompt, setSystemPrompt] = useState(
     'You are the AI Concierge for this restaurant. Be warm, attentive, and concise. Help guests with reservations, menu inquiries, dietary requirements, and special-occasion notes. Confirm party size, date, time, and guest name before treating a reservation as final. Escalate complaints or unusual requests to a manager.',
@@ -567,6 +574,10 @@ function SettingsPageInner() {
   useEffect(() => {
     if (!businessRowId || activeCategory !== 'reservations') return
     void loadZonesForBusiness(businessRowId)
+    const stored = localStorage.getItem(`activity_resources_${businessRowId}`)
+    if (stored) {
+      try { setActivityResources(JSON.parse(stored)) } catch { /* ignore */ }
+    }
   }, [businessRowId, activeCategory])
 
   const saveReservations = async (bizId: string) => {
@@ -653,6 +664,7 @@ function SettingsPageInner() {
 
     setZoneDrafts(nextDrafts)
     await loadZonesForBusiness(bizId)
+    localStorage.setItem(`activity_resources_${bizId}`, JSON.stringify(activityResources))
     return true
   }
 
@@ -1003,32 +1015,40 @@ function SettingsPageInner() {
             />
           </div>
 
-          <div style={{ ...glassCard, padding: 16 }}>
-            <div
-              style={{
-                color: t.textMuted,
-                fontSize: 11,
-                fontWeight: 700,
-                letterSpacing: '0.16em',
-                textTransform: 'uppercase',
-                marginBottom: 14,
-              }}
-            >
-              Dining zones
+          {reservationSubTab === 'dining' ? (
+            <div style={{ ...glassCard, padding: 16 }}>
+              <div style={{ color: t.textMuted, fontSize: 11, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', marginBottom: 14 }}>
+                Dining Zones
+              </div>
+              {!zonesSchemaReady ? (
+                <div style={migrationHintBox}>{DINING_ZONES_MIGRATION_HINT}</div>
+              ) : zonesLoading ? (
+                <p style={{ margin: 0, fontSize: 13, color: t.textMuted }}>Loading zones…</p>
+              ) : (
+                <DiningZonesPanel
+                  zones={zoneDrafts}
+                  bookingSettings={bookingSettings}
+                  onChange={setZoneDrafts}
+                  disabled={!zonesSchemaReady || isSaving}
+                />
+              )}
             </div>
-            {!zonesSchemaReady ? (
-              <div style={migrationHintBox}>{DINING_ZONES_MIGRATION_HINT}</div>
-            ) : zonesLoading ? (
-              <p style={{ margin: 0, fontSize: 13, color: t.textMuted }}>Loading zones…</p>
-            ) : (
-              <DiningZonesPanel
-                zones={zoneDrafts}
-                bookingSettings={bookingSettings}
-                onChange={setZoneDrafts}
-                disabled={!zonesSchemaReady || isSaving}
+          ) : (
+            <div style={{ ...glassCard, padding: 16 }}>
+              <div style={{ color: t.textMuted, fontSize: 11, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', marginBottom: 6 }}>
+                Activities
+              </div>
+              <p style={{ margin: '0 0 14px', fontSize: 12, color: t.textMuted, lineHeight: 1.5 }}>
+                Bookable activity resources — pool tables, tennis tables, and more.
+                Changes are saved with the rest of your Reservations settings.
+              </p>
+              <ActivityResourcesPanel
+                resources={activityResources}
+                onChange={setActivityResources}
+                disabled={isSaving}
               />
-            )}
-          </div>
+            </div>
+          )}
         </div>
       )
     }
@@ -1783,6 +1803,8 @@ function SettingsPageInner() {
                     activeId={activeCategory}
                     onSelect={(id) => selectCategory(id, isMobile)}
                     reduceMotion={reduceMotion}
+                    activeSubId={activeCategory === 'reservations' ? reservationSubTab : undefined}
+                    onSelectSub={(id) => setReservationSubTab(id as 'dining' | 'activities')}
                   />
                 </aside>
               )}

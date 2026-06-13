@@ -7,6 +7,7 @@ import type { Reservation } from '@/components/reservation-card'
 import { bk } from '@/lib/bookings-compact-ui'
 import { getDayHoursForDate, type OperatingHours } from '@/lib/operating-hours'
 import { calendarMonthSlide } from '@/lib/ocean-motion'
+import { calgaryCalendarDayKey } from '@/lib/booking-wall-clock'
 import { toDateIso } from '@/lib/reservation-schedule'
 
 function isSameDay(a: Date, b: Date) {
@@ -17,8 +18,10 @@ function isSameDay(a: Date, b: Date) {
   )
 }
 
-function dayKey(date: Date) {
-  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`
+/** Map UI calendar cell (local midnight) to YYYY-MM-DD for stats lookup. */
+function calendarCellDateKey(date: Date) {
+  const pad2 = (n: number) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
 }
 
 const water = {
@@ -110,7 +113,7 @@ export function BookingsLightCalendar({
   const dayStats = useMemo(() => {
     const map = new Map<string, DayCellStats>()
     for (const r of reservations) {
-      const k = dayKey(r.scheduledAt)
+      const k = calgaryCalendarDayKey(r.scheduledAt)
       const curr = map.get(k) ?? { count: 0, covers: 0, cancelledCount: 0, pendingCount: 0 }
       if (r.status === 'cancelled') {
         map.set(k, { ...curr, cancelledCount: curr.cancelledCount + 1 })
@@ -263,7 +266,7 @@ export function BookingsLightCalendar({
           style={{ ...gridStyle, padding: 1, background: 'rgba(56,189,248,0.06)' }}
         >
           {cells.map(({ date, inMonth }, idx) => {
-            const k = dayKey(date)
+            const k = calendarCellDateKey(date)
             const stats = dayStats.get(k) ?? {
               count: 0,
               covers: 0,

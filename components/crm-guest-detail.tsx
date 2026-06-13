@@ -2,11 +2,14 @@
 
 import Link from 'next/link'
 import { motion, useReducedMotion } from 'framer-motion'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { formatCalgaryTime } from '@/lib/booking-wall-clock'
 import { parsePartySizeFromServiceName } from '@/lib/appointment-service-name'
+import { appointmentInstantFromRaw } from '@/lib/reservation-schedule'
 import { parseDiningZoneRow } from '@/lib/dining-zones'
 import { bk } from '@/lib/bookings-compact-ui'
+import { parseGuestNotes, serializeGuestNotes } from '@/lib/guest-preferences'
 import type { CrmCustomer } from '@/lib/crm-customer'
 import {
   crmTagChipStyle,
@@ -30,6 +33,7 @@ type AppointmentRow = {
   service_name: string | null
   party_size?: number | null
   zone_id?: string | null
+  notes?: string | null
 }
 
 function statusLabel(raw: string | null): string {
@@ -104,6 +108,37 @@ function GuestAvatar({ name, isUnknown, size = 46 }: { name: string; isUnknown: 
   )
 }
 
+function PreferenceRow({ label, value, accent }: { label: string; value: string; accent: string }) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        gap: 10,
+        padding: '8px 10px',
+        borderRadius: 8,
+        border: bk.border,
+        background: '#fafafa',
+        borderLeft: `3px solid ${accent}`,
+      }}
+    >
+      <span
+        style={{
+          fontSize: 10,
+          fontWeight: 700,
+          color: '#64748b',
+          textTransform: 'uppercase',
+          letterSpacing: '0.06em',
+          flexShrink: 0,
+          minWidth: 96,
+        }}
+      >
+        {label}
+      </span>
+      <span style={{ fontSize: 12.5, color: '#0f172a', lineHeight: 1.45 }}>{value}</span>
+    </div>
+  )
+}
+
 export type CrmGuestDetailProps = {
   customer: CrmCustomer
   businessId: string | null
@@ -120,7 +155,9 @@ export function CrmGuestDetail({
   onDelete,
 }: CrmGuestDetailProps) {
   const reduceMotion = useReducedMotion()
-  const [notes, setNotes] = useState(customer.notes)
+  const guestPrefs = useMemo(() => parseGuestNotes(customer.notes), [customer.notes])
+  const ownerNotesBaseline = guestPrefs.ownerNotes ?? ''
+  const [notes, setNotes] = useState(ownerNotesBaseline)
   const [notesSaving, setNotesSaving] = useState(false)
   const [appointments, setAppointments] = useState<AppointmentRow[]>([])
   const [appointmentsLoading, setAppointmentsLoading] = useState(true)
@@ -135,10 +172,10 @@ export function CrmGuestDetail({
   const lastBookingLabel = customer.lastBooking === '—' ? 'Never' : customer.lastBooking
 
   useEffect(() => {
-    setNotes(customer.notes)
+    setNotes(ownerNotesBaseline)
     setConfirmDelete(false)
     setDeleteError(null)
-  }, [customer.id, customer.notes])
+  }, [customer.id, ownerNotesBaseline])
 
   useEffect(() => {
     let cancelled = false
@@ -146,7 +183,7 @@ export function CrmGuestDetail({
     void (async () => {
       const { data } = await supabase
         .from('appointments')
-        .select('id, scheduled_at, status, service_name, party_size, zone_id')
+        .select('id, scheduled_at, status, service_name, party_size, zone_id, notes')
         .eq('customer_id', customer.id)
         .order('scheduled_at', { ascending: false })
       if (!cancelled) {
@@ -201,19 +238,22 @@ export function CrmGuestDetail({
     async (value: string) => {
       if (!businessId) return
       setNotesSaving(true)
+      // Preserve any structured preferences captured by the AI concierge; only
+      // the owner's free-text portion is edited here.
+      const serialized = serializeGuestNotes({ ...guestPrefs, ownerNotes: value })
       const { error } = await supabase
         .from('customers')
-        .update({ notes: value || null })
+        .update({ notes: serialized })
         .eq('id', customer.id)
         .eq('business_id', businessId)
       setNotesSaving(false)
-      if (!error) onNotesSaved(customer.id, value)
+      if (!error) onNotesSaved(customer.id, serialized ?? '')
     },
-    [businessId, customer.id, onNotesSaved],
+    [businessId, customer.id, guestPrefs, onNotesSaved],
   )
 
   useEffect(() => {
-    if (notes === customer.notes) return
+    if (notes === ownerNotesBaseline) return
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(() => {
       void persistNotes(notes)
@@ -221,7 +261,7 @@ export function CrmGuestDetail({
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     }
-  }, [notes, customer.notes, persistNotes])
+  }, [notes, ownerNotesBaseline, persistNotes])
 
   async function handleDelete() {
     setDeleting(true)
@@ -408,7 +448,7 @@ export function CrmGuestDetail({
         ) : (
           <div style={{ display: 'grid', gap: 6, maxHeight: 280, overflowY: 'auto' }}>
             {appointments.map((a) => {
-              const d = new Date(a.scheduled_at)
+              const d = appointmentInstantFromRaw(a.scheduled_at)
               const party =
                 a.party_size != null && a.party_size > 0
                   ? a.party_size
@@ -432,13 +472,26 @@ export function CrmGuestDetail({
                     <div style={{ fontSize: 12, fontWeight: 600, color: '#0f172a' }}>
                       {d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
                       {' · '}
-                      {d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      {formatCalgaryTime(d)}
                     </div>
                     {(party != null || zoneLabel) && (
                       <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
                         {party != null ? `Party of ${party}` : null}
                         {party != null && zoneLabel ? ' · ' : null}
                         {zoneLabel ? zoneLabel : null}
+                      </div>
+                    )}
+                    {a.notes?.trim() && (
+                      <div
+                        style={{
+                          fontSize: 11,
+                          color: '#94a3b8',
+                          marginTop: 3,
+                          fontStyle: 'italic',
+                          lineHeight: 1.4,
+                        }}
+                      >
+                        {a.notes.trim()}
                       </div>
                     )}
                   </div>
@@ -461,6 +514,37 @@ export function CrmGuestDetail({
           </div>
         )}
       </div>
+
+      {(guestPrefs.allergies || guestPrefs.preferences || guestPrefs.occasions) && (
+        <div>
+          <div
+            style={{
+              fontSize: 10,
+              fontWeight: 700,
+              color: '#64748b',
+              textTransform: 'uppercase',
+              letterSpacing: '0.08em',
+              marginBottom: 8,
+            }}
+          >
+            Guest preferences
+          </div>
+          <div style={{ display: 'grid', gap: 6 }}>
+            {guestPrefs.allergies && (
+              <PreferenceRow label="Allergies / dietary" value={guestPrefs.allergies} accent="#dc2626" />
+            )}
+            {guestPrefs.preferences && (
+              <PreferenceRow label="Preferences" value={guestPrefs.preferences} accent="#2563eb" />
+            )}
+            {guestPrefs.occasions && (
+              <PreferenceRow label="Occasions" value={guestPrefs.occasions} accent="#d97706" />
+            )}
+          </div>
+          <div style={{ marginTop: 6, fontSize: 10, color: '#94a3b8' }}>
+            Captured automatically from guest conversations.
+          </div>
+        </div>
+      )}
 
       <div>
         <label

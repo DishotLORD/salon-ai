@@ -1,4 +1,10 @@
-/** Date/time helpers for appointment scheduling (wall-clock strings for Supabase). */
+/** Date/time helpers for appointment scheduling (Calgary wall-clock). */
+
+import {
+  appointmentInstantFromRaw,
+  calgaryTimeHmFromDate,
+  wallClockInCalgaryToUtcDate,
+} from '@/lib/booking-wall-clock'
 
 export function toDateIso(d: Date): string {
   const y = d.getFullYear()
@@ -11,8 +17,13 @@ export function toWallClock(dateIso: string, time: string): string {
   return `${dateIso}T${time}:00`
 }
 
-export function timeFromDate(d: Date): string {
-  const h = String(d.getHours()).padStart(2, '0')
-  const m = String(d.getMinutes()).padStart(2, '0')
-  return `${h}:${m}`
+/** Persist Calgary wall-clock as timestamptz ISO for Supabase. */
+export function wallClockToDbIso(wallClock: string): string {
+  return wallClockInCalgaryToUtcDate(wallClock).toISOString()
 }
+
+export function timeFromDate(d: Date): string {
+  return calgaryTimeHmFromDate(d)
+}
+
+export { appointmentInstantFromRaw }

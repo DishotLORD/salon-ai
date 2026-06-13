@@ -26,8 +26,21 @@ import { card, t } from '@/lib/dashboard-theme'
 import { bk, bkCard } from '@/lib/bookings-compact-ui'
 import { computeBookingKpi, isInDisplayMonth } from '@/lib/booking-kpi'
 import { parsePartySizeFromServiceName } from '@/lib/appointment-service-name'
-import { parseDiningZoneRow, type DiningZone } from '@/lib/dining-zones'
-import { toDateIso, toWallClock } from '@/lib/reservation-schedule'
+import { isLikelyDiningZoneLabel, parseDiningZoneRow, type DiningZone } from '@/lib/dining-zones'
+import {
+  calgaryCalendarDayKey,
+  calgaryTimeHmFromDate,
+  formatCalgaryTime,
+  getCalgaryPartsFromInstant,
+  isSameCalgaryCalendarDay,
+  wallClockInCalgaryToUtcDate,
+} from '@/lib/booking-wall-clock'
+import {
+  appointmentInstantFromRaw,
+  toDateIso,
+  toWallClock,
+  wallClockToDbIso,
+} from '@/lib/reservation-schedule'
 import {
   buildTimeSlots,
   minutesToTime,
@@ -97,14 +110,30 @@ function parseReservation(
   zoneNameById?: Map<string, string>,
 ): Reservation {
   const parts = (row.service_name ?? '').split(' \u00b7 ') // split on " · "
-  const guestName = customerName?.trim() || parts[0]?.trim() || 'Guest'
+  let guestName = customerName?.trim() || parts[0]?.trim() || 'Guest'
   const partySize =
     row.party_size != null && row.party_size > 0
       ? row.party_size
       : (parsePartySizeFromServiceName(row.service_name) ??
           parseInt((parts[1] ?? '').replace(/\D/g, ''), 10)) || 1
   const zoneId = row.zone_id ?? null
-  const zoneName = zoneId && zoneNameById ? zoneNameById.get(zoneId) ?? null : null
+  // Prefer the live zones map; fall back to the zone label encoded in
+  // service_name ("Name · Party of N · Bar") so the zone still shows when the
+  // dining_zones read is unavailable (e.g. RLS) or for legacy rows.
+  const zoneFromService =
+    parts
+      .slice(1)
+      .map((p) => p.trim())
+      .find((p) => isLikelyDiningZoneLabel(p)) ?? null
+  const zoneName =
+    (zoneId && zoneNameById ? zoneNameById.get(zoneId) ?? null : null) ?? zoneFromService
+
+  if (isLikelyDiningZoneLabel(guestName)) {
+    guestName = customerName?.trim() || 'Guest'
+  }
+  if (zoneName && guestName.toLowerCase() === zoneName.toLowerCase()) {
+    guestName = customerName?.trim() || 'Guest'
+  }
 
   const tablePart = parts.find((p) => /^Table /i.test(p.trim()))
   const tableNumber = tablePart ? tablePart.replace(/^Table /i, '').trim() : '—'
@@ -118,7 +147,7 @@ function parseReservation(
     guestName,
     partySize,
     tableNumber,
-    scheduledAt: new Date(row.scheduled_at),
+    scheduledAt: appointmentInstantFromRaw(row.scheduled_at),
     status: normalizeStatus(row.status),
     specialRequests,
     customerId: row.customer_id ?? null,
@@ -129,11 +158,7 @@ function parseReservation(
 }
 
 function isSameDay(a: Date, b: Date) {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  )
+  return isSameCalgaryCalendarDay(a, b)
 }
 
 function startOfWeekMon(d: Date) {
@@ -144,7 +169,7 @@ function startOfWeekMon(d: Date) {
 }
 
 function fmtTime(d: Date) {
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  return formatCalgaryTime(d)
 }
 
 
@@ -201,7 +226,7 @@ function MonthCalendar({
   for (const r of reservations) {
     if (r.status === 'cancelled' || r.status === 'no-show') continue
     const rd = r.scheduledAt
-    const k = `${rd.getFullYear()}-${rd.getMonth()}-${rd.getDate()}`
+    const k = calgaryCalendarDayKey(rd)
     const curr = dayStats.get(k) ?? { count: 0, covers: 0 }
     dayStats.set(k, { count: curr.count + 1, covers: curr.covers + r.partySize })
   }
@@ -241,7 +266,8 @@ function MonthCalendar({
       {/* Day grid */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)' }}>
         {cells.map(({ date, inMonth }, idx) => {
-          const k = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`
+          const pad2 = (n: number) => String(n).padStart(2, '0')
+          const k = `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
           const { count, covers } = dayStats.get(k) ?? { count: 0, covers: 0 }
           const fillPct = count / maxCount
           const isToday = isSameDay(date, today)
@@ -959,8 +985,9 @@ function ReservationModal({
 
   const applyReservation = useCallback(
     (r: Reservation) => {
-      const d = r.scheduledAt
-      const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      const p = getCalgaryPartsFromInstant(r.scheduledAt)
+      const pad2 = (n: number) => String(n).padStart(2, '0')
+      const dateStr = `${p.year}-${pad2(p.month)}-${pad2(p.day)}`
       const row = getDayHoursForDate(operatingHours, dateStr)
       const range = timelineRangeFromDayHours(row)
       setGuestName(r.guestName)
@@ -968,8 +995,8 @@ function ReservationModal({
       setDate(dateStr)
       setTime(
         range
-          ? snapToGrid(d.getHours() * 60 + d.getMinutes(), range)
-          : `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`,
+          ? snapToGrid(p.hour * 60 + p.minute, range)
+          : calgaryTimeHmFromDate(r.scheduledAt),
       )
       setTableNumber(r.tableNumber !== '—' ? r.tableNumber : '')
       setSpecialRequests(r.specialRequests)
@@ -1049,7 +1076,11 @@ function ReservationModal({
     setSaving(true)
 
     const wallClock = `${date}T${time}:00`
-    const scheduledAt = new Date(wallClock)
+    const scheduledAtIso = wallClockToDbIso(wallClock)
+    // Use the exact instant we persist so the optimistic UI matches the DB.
+    // (appointmentInstantFromRaw treats a naive wall-clock as UTC, which would
+    // shift the displayed time by the Calgary offset.)
+    const scheduledAt = new Date(scheduledAtIso)
     const notesValue = specialRequests.trim() || null
     const serviceName = buildServiceName(guestName, partySize, tableNumber, specialRequests)
 
@@ -1091,7 +1122,7 @@ function ReservationModal({
         .from('appointments')
         .update({
           service_name: serviceName,
-          scheduled_at: wallClock,
+          scheduled_at: scheduledAtIso,
           status: editStatus,
           notes: notesValue,
           party_size: partySize,
@@ -1125,7 +1156,7 @@ function ReservationModal({
       .insert({
         business_id: businessId,
         service_name: serviceName,
-        scheduled_at: wallClock,
+        scheduled_at: scheduledAtIso,
         status: 'confirmed',
         notes: notesValue,
         party_size: partySize,
@@ -1373,7 +1404,7 @@ function ReservationModal({
                   >
                     {diningZones.map((z) => (
                       <option key={z.id} value={z.id}>
-                        {z.name} (max {z.max_concurrent_parties} parties)
+                        {z.name} (capacity {z.max_concurrent_parties} guests)
                       </option>
                     ))}
                   </select>
@@ -1809,7 +1840,6 @@ export default function BookingsPage() {
   const [guestDrawer, setGuestDrawer] = useState<{ customerId: string; guestName: string } | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'confirmed' | 'pending' | 'cancelled'>('all')
-  const [calendarView, setCalendarView] = useState<'month' | 'day'>('month')
   const [operatingHours, setOperatingHours] = useState<OperatingHours>(DEFAULT_OPERATING_HOURS)
   const [diningZones, setDiningZones] = useState<DiningZone[]>([])
   const [tableVisibleCount, setTableVisibleCount] = useState(10)
@@ -1873,6 +1903,25 @@ export default function BookingsPage() {
     return m
   }, [diningZones])
 
+  // Zones load after the first reservations fetch — back-fill zoneName on the
+  // already-mapped rows once the zone map arrives (or changes).
+  useEffect(() => {
+    if (zoneNameById.size === 0) return
+    setReservations((prev) => {
+      let changed = false
+      const next = prev.map((r) => {
+        const mapped = r.zoneId ? zoneNameById.get(r.zoneId) : undefined
+        // Only upgrade to the mapped name — never erase a service_name-derived label.
+        if (mapped && mapped !== r.zoneName) {
+          changed = true
+          return { ...r, zoneName: mapped }
+        }
+        return r
+      })
+      return changed ? next : prev
+    })
+  }, [zoneNameById])
+
   // ─── Load data ─────────────────────────────────────────────────────────────
   const [loadError, setLoadError] = useState<string | null>(null)
   const [updateError, setUpdateError] = useState<string | null>(null)
@@ -1917,16 +1966,21 @@ export default function BookingsPage() {
       }
 
       const p2 = (n: number) => String(n).padStart(2, '0')
-      const startStr = `${loadMonthYear}-${p2(loadMonthIndex + 1)}-01T00:00:00`
-      const endDate = new Date(loadMonthYear, loadMonthIndex + 1, 1)
-      const endStr = `${endDate.getFullYear()}-${p2(endDate.getMonth() + 1)}-01T00:00:00`
+      const month = loadMonthIndex + 1
+      const startKey = `${loadMonthYear}-${p2(month)}-01`
+      const endKey =
+        month === 12
+          ? `${loadMonthYear + 1}-01-01`
+          : `${loadMonthYear}-${p2(month + 1)}-01`
+      const startIso = wallClockInCalgaryToUtcDate(`${startKey}T00:00:00`).toISOString()
+      const endIso = wallClockInCalgaryToUtcDate(`${endKey}T00:00:00`).toISOString()
 
       const { data: rows, error } = await supabase
         .from('appointments')
         .select('id, service_name, scheduled_at, status, customer_id, conversation_id, notes, zone_id, party_size')
         .eq('business_id', business.id)
-        .gte('scheduled_at', startStr)
-        .lt('scheduled_at', endStr)
+        .gte('scheduled_at', startIso)
+        .lt('scheduled_at', endIso)
         .order('scheduled_at', { ascending: true })
 
       if (isCancelled()) return
@@ -1979,6 +2033,7 @@ export default function BookingsPage() {
               (r, i) =>
                 r.id === next[i].id &&
                 r.status === next[i].status &&
+                r.zoneName === next[i].zoneName &&
                 r.scheduledAt.getTime() === next[i].scheduledAt.getTime(),
             )
           ) {
@@ -2103,7 +2158,9 @@ export default function BookingsPage() {
     const slots = buildTimeSlots(timeRange)
     const snapped = snapToGrid(timeToTimelineMinutes(time, timeRange), timeRange, slots)
     const wallClock = toWallClock(dateIso, snapped)
-    const nextAt = new Date(wallClock)
+    const scheduledAtIso = wallClockToDbIso(wallClock)
+    // Match the persisted instant exactly (see note in handleSubmit).
+    const nextAt = new Date(scheduledAtIso)
     const previous = reservations
     setReservations((prev) =>
       prev.map((r) => (r.id === id ? { ...r, scheduledAt: nextAt } : r)),
@@ -2111,7 +2168,7 @@ export default function BookingsPage() {
     setUpdateError(null)
     const { error } = await supabase
       .from('appointments')
-      .update({ scheduled_at: wallClock })
+      .update({ scheduled_at: scheduledAtIso })
       .eq('id', id)
     if (error) {
       setReservations(previous)
@@ -2253,7 +2310,9 @@ export default function BookingsPage() {
     const isNext = r.id === bookingKpi.nextUpcomingId
     const sc = lightStatusColors[r.status]
     const location =
-      r.tableNumber !== '—' ? `Table ${r.tableNumber}` : r.specialRequests || 'Main Dining'
+      r.tableNumber !== '—'
+        ? `Table ${r.tableNumber}`
+        : r.zoneName || r.specialRequests || '—'
     return (
       <tr
         key={r.id}
@@ -2452,11 +2511,6 @@ export default function BookingsPage() {
   function handleAddForDay() {
     setPrefilledDate(effectiveDayIso)
     setShowAddModal(true)
-  }
-
-  function setCalendarViewDay() {
-    setCalendarView('day')
-    if (!selectedDay) setSelectedDay(effectiveDay)
   }
 
   const calendarToggleBtn = (active: boolean): CSSProperties => ({
@@ -2955,64 +3009,31 @@ export default function BookingsPage() {
                 transition={oceanTransition(reduceMotion, { duration: 0.2 })}
                 style={{ display: 'grid', gridTemplateColumns: '7fr 3fr', gap: bk.gapMd, alignItems: 'start' }}
               >
-                {/* LEFT: Month overview or Day timeline */}
+                {/* LEFT: Month overview */}
                 <div style={{ display: 'grid', gap: bk.gap }}>
-                  <div style={{ display: 'flex', gap: 8, fontFamily: 'var(--font-plus-jakarta), system-ui, sans-serif' }}>
-                    <button
-                      type="button"
-                      onClick={() => setCalendarView('month')}
-                      style={calendarToggleBtn(calendarView === 'month')}
-                    >
-                      Month
-                    </button>
-                    <button
-                      type="button"
-                      onClick={setCalendarViewDay}
-                      style={calendarToggleBtn(calendarView === 'day')}
-                    >
-                      Day
-                    </button>
-                  </div>
-
-                  {calendarView === 'month' ? (
-                    <>
-                      <BookingsLightCalendar
-                        displayMonth={displayMonth}
-                        reservations={reservations}
-                        selectedDay={selectedDay}
-                        onSelectDay={handleDaySelect}
-                        onMonthPrev={() => setMonthOffset((o) => o - 1)}
-                        onMonthNext={() => setMonthOffset((o) => o + 1)}
-                        onJumpToday={() => { setMonthOffset(0); setSelectedDay(today); setTableVisibleCount(10) }}
-                        onClearDay={handleShowAllMonth}
-                        today={today}
-                        operatingHours={operatingHours}
-                        reduceMotion={reduceMotion}
-                      />
-                      <BookingsDayChips
-                        date={effectiveDay}
-                        reservations={dayPanelReservations}
-                        loading={loading}
-                        statusColors={lightStatusColors}
-                        onEdit={(r) => setEditReservation(r)}
-                        onAdd={handleAddForDay}
-                      />
-                      {!loading && dayPanelReservations.length === 0 && selectedDay && (
-                        <BookingsDayEmptyStrip date={effectiveDay} onAdd={handleAddForDay} />
-                      )}
-                    </>
-                  ) : (
-                    <BookingsDayTimeline
-                      date={effectiveDay}
-                      reservations={reservations}
-                      range={timeRange}
-                      peaks={dayPeaks}
-                      loading={loading}
-                      reduceMotion={reduceMotion}
-                      onReschedule={(id, newTime) => void rescheduleReservation(id, effectiveDayIso, newTime)}
-                      onEdit={(r) => setEditReservation(r)}
-                      onAdd={handleAddForDay}
-                    />
+                  <BookingsLightCalendar
+                    displayMonth={displayMonth}
+                    reservations={reservations}
+                    selectedDay={selectedDay}
+                    onSelectDay={handleDaySelect}
+                    onMonthPrev={() => setMonthOffset((o) => o - 1)}
+                    onMonthNext={() => setMonthOffset((o) => o + 1)}
+                    onJumpToday={() => { setMonthOffset(0); setSelectedDay(today); setTableVisibleCount(10) }}
+                    onClearDay={handleShowAllMonth}
+                    today={today}
+                    operatingHours={operatingHours}
+                    reduceMotion={reduceMotion}
+                  />
+                  <BookingsDayChips
+                    date={effectiveDay}
+                    reservations={dayPanelReservations}
+                    loading={loading}
+                    statusColors={lightStatusColors}
+                    onEdit={(r) => setEditReservation(r)}
+                    onAdd={handleAddForDay}
+                  />
+                  {!loading && dayPanelReservations.length === 0 && selectedDay && (
+                    <BookingsDayEmptyStrip date={effectiveDay} onAdd={handleAddForDay} />
                   )}
                 </div>
 
