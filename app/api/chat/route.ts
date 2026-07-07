@@ -20,6 +20,10 @@ import {
 } from '@/lib/dining-zones'
 import type { BookingSettings } from '@/lib/booking-settings'
 import {
+  parseNotificationSettings,
+  type NotificationSettings,
+} from '@/lib/notification-settings'
+import {
   addDaysToDateKey,
   getCalgaryNowParts,
   scheduledAtToWallClock,
@@ -41,7 +45,14 @@ import {
   getDayHoursForDate,
   type OperatingHours,
 } from '@/lib/operating-hours'
+import {
+  DEFAULT_PAYMENT_SETTINGS,
+  depositAmountCents,
+  parsePaymentSettings,
+  type PaymentSettings,
+} from '@/lib/payment-settings'
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
+import { appBaseUrl, getStripe } from '@/lib/stripe'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { verifyBusinessOwner } from '@/lib/verify-business-owner'
 
@@ -71,6 +82,7 @@ TOOL USAGE:
 - reschedule_reservation — call when the guest wants to move an existing booking.
 - cancel_reservation — call when the guest wants to cancel. Use the word "cancelled" in your reply.
 - save_guest_details — call as soon as you learn the guest's name, phone, or email, even before a booking is made. ALSO call it whenever the guest mentions an allergy, dietary restriction, lasting seating/ambiance preference, or a notable occasion.
+- join_waitlist — when a requested time is full and the guest declines every alternative, offer the waitlist: "I can add you to our waitlist for that time — we'll reach out the moment a table opens." Requires a phone number or email. Call it only after the guest agrees. After it succeeds, confirm they are on the list; never promise a table.
 
 STYLE:
 - NEVER say "one moment", "I'll check now", or otherwise promise future work — call the tool immediately and reply with its result in the same turn.
@@ -78,6 +90,17 @@ STYLE:
 - If RETURNING GUEST CONTEXT lists allergies or dietary needs, ALWAYS include them in special_requests when booking, even if the guest does not repeat them.
 - Once you know the guest's name, address them by first name.
 - Keep responses concise (2–4 sentences). Never repeat questions already answered.
+- Sound like a gracious host, not a form: acknowledge what the guest said before asking the next question ("Lovely, a table for four —"), and vary your phrasing instead of repeating the same sentence patterns.
+- When the guest mentions an occasion (birthday, anniversary, first date), react warmly in ONE short phrase and note it in special_requests — never interrogate them about it.
+- Ask for AT MOST one thing per message. If several fields are missing, ask for the most natural next one only.
+
+RECOVERY & EDGE CASES:
+- Unclear or contradictory input: do not guess. Ask one short, friendly clarifying question ("Just to be sure — Friday the 10th, or Saturday the 11th?").
+- If a tool returns past_date or beyond_booking_window, relay the reason kindly and ask for a date that works.
+- If the requested time is full: offer the returned alternatives first. If the guest declines them all, offer the waitlist — never just dead-end.
+- Menu & dietary questions: answer ONLY from the MENU sections below. If the menu does not answer it, say you're not certain and offer to note the question for the restaurant. Never invent dishes, prices, or ingredients.
+- Guest asks for something you cannot do (large event, private hire, complaint): take their contact details with save_guest_details, note it in special_requests or preferences, and let them know the team will follow up.
+- If the guest switches language, reply in their language.
 `
 
 type ToolName =
@@ -86,6 +109,8 @@ type ToolName =
   | 'reschedule_reservation'
   | 'cancel_reservation'
   | 'save_guest_details'
+  | 'join_waitlist'
+  | 'escalate_to_manager'
 
 const BOOKING_TOOLS = [
   {
@@ -192,6 +217,54 @@ const BOOKING_TOOLS = [
       },
     },
   },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'escalate_to_manager',
+      description:
+        'Alert the restaurant team about this conversation. Call when the guest complains or is upset, asks for a manager, requests a large event or private hire you cannot book, or raises a serious allergy concern. Staff are notified by email; after calling it, reassure the guest and keep helping them normally.',
+      parameters: {
+        type: 'object',
+        properties: {
+          category: {
+            type: 'string',
+            enum: ['complaint', 'large_party', 'allergy', 'other'],
+            description: 'What kind of attention the guest needs',
+          },
+          reason: {
+            type: 'string',
+            description: "One-sentence summary of the guest's issue or request",
+          },
+        },
+        required: ['category', 'reason'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'join_waitlist',
+      description:
+        'Add the guest to the waitlist for a full slot. Only call AFTER create_reservation or check_availability showed the requested time is unavailable AND the guest declined the alternatives AND agreed to be waitlisted. Requires a phone number or email so staff can reach them.',
+      parameters: {
+        type: 'object',
+        properties: {
+          guest_name: { type: 'string', description: "The guest's full name" },
+          date: { type: 'string', description: 'Requested date, YYYY-MM-DD' },
+          time: { type: 'string', description: 'Requested 24-hour time, HH:MM' },
+          party_size: { type: 'integer', description: 'Number of guests' },
+          seating_area: {
+            type: 'string',
+            description: 'Preferred dining area, verbatim, or "no preference"',
+          },
+          phone: { type: 'string', description: 'Guest phone number' },
+          email: { type: 'string', description: 'Guest email' },
+          notes: { type: 'string', description: 'Special requests or context' },
+        },
+        required: ['guest_name', 'date', 'time', 'party_size'],
+      },
+    },
+  },
 ]
 
 type MenuEntry = { name: string; price: number | null; description: string | null; category: string | null }
@@ -219,6 +292,9 @@ function buildSystemPrompt(
   todayDateKey?: string,
   diningZones?: { name: string; is_active: boolean }[] | null,
   requireContactBeforeBooking?: boolean,
+  depositPerGuest?: number | null,
+  language?: string | null,
+  notif?: NotificationSettings | null,
 ): string {
   const base = customPrompt?.trim()
     ? customPrompt.trim()
@@ -231,8 +307,27 @@ function buildSystemPrompt(
       } When the guest says "today", "tonight", "tomorrow", or a weekday name, copy the matching YYYY-MM-DD from this list — do not compute dates yourself.\n`
     : ''
   let prompt = `${base}${todayLine}\n\n${BOOKING_FLOW_RULES}`
+  if (language?.trim() && !/^english/i.test(language.trim())) {
+    prompt += `\nLANGUAGE: default to ${language.trim()} unless the guest writes in a different language — then mirror theirs.`
+  }
+  const escalationTriggers: string[] = []
+  if (notif?.escalate_complaint) {
+    escalationTriggers.push('the guest complains, is upset, or asks for a manager (category "complaint")')
+  }
+  if (notif?.escalate_large_party) {
+    escalationTriggers.push('the guest asks about a party of 8+ or a private event (category "large_party")')
+  }
+  if (notif?.escalate_allergy) {
+    escalationTriggers.push('the guest describes a severe or life-threatening allergy (category "allergy")')
+  }
+  if (escalationTriggers.length > 0) {
+    prompt += `\nESCALATION: call escalate_to_manager the moment ${escalationTriggers.join('; or ')}. It quietly alerts the staff — after calling it, tell the guest the team has been notified and keep helping them.`
+  }
   if (requireContactBeforeBooking) {
-    prompt += `\nCONTACT REQUIRED: you MUST collect a phone number or email from the guest BEFORE calling create_reservation. Do not skip this — booking is blocked without it. Explain briefly that it is needed for the confirmation.`
+    prompt += `\nCONTACT REQUIRED: a phone number OR email must be on record BEFORE create_reservation. If the guest already wrote one in this conversation, or RETURNING GUEST CONTEXT shows contact on file, that fully satisfies this — do NOT ask again. Otherwise ask once (either is fine), explaining it is for the confirmation.`
+  }
+  if (depositPerGuest != null && depositPerGuest > 0) {
+    prompt += `\nDEPOSIT POLICY: this restaurant collects a $${depositPerGuest.toFixed(2)} CAD per-guest deposit to secure reservations. Mention this briefly BEFORE booking. When create_reservation succeeds and returns a payment_link, include that exact link in your confirmation and tell the guest the table is held and fully confirmed once the deposit is paid. Never invent a payment link.`
   }
   if (returningGuestContext?.trim()) {
     prompt += `\n\n${returningGuestContext.trim()}`
@@ -270,13 +365,33 @@ function getLastUserMessageContent(messages: ChatMessage[]) {
   return null
 }
 
+/**
+ * Only user/assistant roles are accepted from the client — the system prompt is
+ * always built server-side. Accepting client "system" messages would let a
+ * widget visitor inject instructions that override booking rules.
+ */
 function toOpenAiMessages(messages: ChatMessage[]): ChatCompletionMessageParam[] {
   return messages
-    .filter((m) => m.role === 'user' || m.role === 'assistant' || m.role === 'system')
+    .filter((m) => m.role === 'user' || m.role === 'assistant')
     .map((m) => ({
-      role: m.role as 'user' | 'assistant' | 'system',
+      role: m.role as 'user' | 'assistant',
       content: m.content,
     }))
+}
+
+/** Cap history length/size so a malicious client can't blow up token costs. */
+function sanitizeIncomingMessages(raw: unknown): ChatMessage[] | null {
+  if (!Array.isArray(raw)) return null
+  return raw
+    .filter(
+      (m): m is ChatMessage =>
+        !!m &&
+        typeof m === 'object' &&
+        typeof (m as ChatMessage).role === 'string' &&
+        typeof (m as ChatMessage).content === 'string',
+    )
+    .slice(-40)
+    .map((m) => ({ role: m.role, content: m.content.slice(0, 4000) }))
 }
 
 function getUserMessagesCombined(messages: ChatMessage[]) {
@@ -289,7 +404,12 @@ function getUserMessagesCombined(messages: ChatMessage[]) {
 // ─── Contact normalization ───────────────────────────────────────────────────
 
 function extractPhone(text: string): string | null {
-  const m = text.match(/\b(\+?[\d\s\-().]{7,20}\d)\b/)
+  // Strip date-like tokens first so "2026-06-16" or "16/06/2026" (8 digits)
+  // never register as a phone number and trigger false returning-guest matches.
+  const cleaned = text
+    .replace(/\b\d{4}-\d{1,2}-\d{1,2}\b/g, ' ')
+    .replace(/\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/g, ' ')
+  const m = cleaned.match(/\b(\+?[\d\s\-().]{7,20}\d)\b/)
   if (!m) return null
   const digits = m[1].replace(/\D/g, '')
   return digits.length >= 7 && digits.length <= 15 ? m[1].trim() : null
@@ -477,6 +597,8 @@ function buildReturningGuestContext(customer: CustomerRow, history: GuestHistory
   return `RETURNING GUEST CONTEXT:
 - Name: ${customer.name?.trim() || 'Guest'}
 - Phone: ${customer.phone?.trim() || 'not on file'}
+- Email: ${customer.email?.trim() || 'not on file'}
+- Contact on file: ${customer.phone?.trim() || customer.email?.trim() ? 'YES — do NOT ask for a phone or email again' : 'no'}
 - Total visits: ${history.totalBookings}
 - Last visit: ${formatVisitDate(history.lastVisit)}
 - Preferred party size: ${partyHint}
@@ -558,6 +680,20 @@ async function persistGuest(params: {
       customer_id: returningGuest.id,
       customer_name: name ?? returningGuest.name ?? 'Guest',
     })
+
+    // Re-point records that still reference the placeholder customer. The FKs
+    // are ON DELETE SET NULL, so deleting the placeholder without this would
+    // orphan any booking made earlier in the conversation (lost from CRM).
+    await supabaseAdmin
+      .from('appointments')
+      .update({ customer_id: returningGuest.id })
+      .eq('customer_id', customer_id)
+      .eq('business_id', business_id)
+    await supabaseAdmin
+      .from('waitlist_entries')
+      .update({ customer_id: returningGuest.id })
+      .eq('customer_id', customer_id)
+      .eq('business_id', business_id)
 
     // Delete the placeholder customer created for this session if it's now
     // fully orphaned (no remaining conversations linked to it).
@@ -687,6 +823,14 @@ type ToolContext = {
   bookingCtx: BookingEngineContext
   nowParts: WallClockParts
   chatMessages: ChatMessage[]
+  ownerEmail: string | null
+  ownerName: string | null
+  notifSettings: NotificationSettings
+  paymentSettings: PaymentSettings
+  /** Base URL for guest-facing payment redirect pages. */
+  baseUrl: string
+  /** Escalation categories already alerted in this request (dedupe). */
+  escalated: Set<string>
 }
 
 type ToolOutcome = {
@@ -799,6 +943,34 @@ function formatSlotsForTool(slots: AvailableSlot[]): string[] {
   return result
 }
 
+/**
+ * Explicit guard for dates the slot engine would silently return [] for.
+ * Gives the model a *reason* it can relay, instead of "fully booked".
+ */
+function checkDateInBookableWindow(
+  dateKey: string,
+  ctx: ToolContext,
+): Record<string, unknown> | null {
+  const todayKey = wallClockDateKey(ctx.nowParts)
+  if (dateKey < todayKey) {
+    return {
+      ok: false,
+      error: 'past_date',
+      message: `That date is in the past — today is ${todayKey}. Gently point this out and ask the guest for a future date. Do not offer alternatives for past dates.`,
+    }
+  }
+  const maxDays = ctx.bookingCtx.bookingSettings.max_advance_days
+  const horizonKey = addDaysToDateKey(todayKey, maxDays)
+  if (dateKey > horizonKey) {
+    return {
+      ok: false,
+      error: 'beyond_booking_window',
+      message: `Reservations open up to ${maxDays} days ahead (through ${horizonKey}). Let the guest know and invite them to book within that window.`,
+    }
+  }
+  return null
+}
+
 async function runCheckAvailability(
   args: Record<string, unknown>,
   ctx: ToolContext,
@@ -808,6 +980,8 @@ async function runCheckAvailability(
     return { result: { ok: false, error: 'invalid_date', message: 'Date must be YYYY-MM-DD.' } }
   }
   const dateKey = wallClock.slice(0, 10)
+  const windowError = checkDateInBookableWindow(dateKey, ctx)
+  if (windowError) return { result: windowError }
   const partySize =
     typeof args.party_size === 'number' && args.party_size > 0 ? Math.round(args.party_size) : 2
   const seating = resolveSeatingArea(args.seating_area, ctx.bookingCtx.zones)
@@ -833,15 +1007,19 @@ async function runCheckAvailability(
       now: ctx.nowParts,
       zones: ctx.bookingCtx.zones,
       partySize,
+      zoneId,
       limit: 6,
     })
+    const dayHours = getDayHoursForDate(ctx.bookingCtx.operatingHours, dateKey)
     return {
       result: {
         ok: true,
         date: dateKey,
         available_times: [],
         nearby_alternatives: formatSlotsForTool(alternatives),
-        message: 'No open times on that date. Offer the nearby alternatives.',
+        message: dayHours.closed
+          ? 'The restaurant is CLOSED that day. Say so, then offer the nearby alternatives.'
+          : 'No open times on that date. Offer the nearby alternatives, and mention the waitlist if the guest declines them all.',
       },
     }
   }
@@ -972,6 +1150,9 @@ async function runCreateReservation(
   if (!wallClock) {
     return { result: { ok: false, error: 'invalid_datetime', message: 'Provide date as YYYY-MM-DD and time as HH:MM.' } }
   }
+
+  const windowError = checkDateInBookableWindow(wallClock.slice(0, 10), ctx)
+  if (windowError) return { result: windowError }
 
   const interval = ctx.bookingCtx.bookingSettings.slot_interval_minutes
   const snapped = snapWallClockToSlotInterval(wallClock, interval)
@@ -1119,7 +1300,7 @@ async function runCreateReservation(
     authoritativeName: true,
   })
 
-  const { error } = await supabaseAdmin
+  const { data: inserted, error } = await supabaseAdmin
     .from('appointments')
     .insert({
       business_id: ctx.business_id,
@@ -1144,6 +1325,82 @@ async function runCreateReservation(
   await bumpCustomerVisitStats(targetCustomerId, ctx.business_id)
   console.log('[booking] Reservation created via tool:', { guestName, partySize, wallClock, zoneLabel })
 
+  // The model doesn't reliably call save_guest_details for allergies mentioned
+  // inline while booking — persist dietary special requests to the guest
+  // profile here so returning-guest recognition always knows about them.
+  if (notes && /\b(allerg|gluten|vegan|vegetarian|dairy|lactose|nut|peanut|shellfish|celiac|coeliac|kosher|halal|intoleran)/i.test(notes)) {
+    await persistGuestPreferences({
+      business_id: ctx.business_id,
+      customer_id: targetCustomerId,
+      allergies: notes,
+    })
+    triggerEscalation(
+      ctx,
+      'allergy',
+      `${guestName} (party of ${partySize}, ${wallClock.slice(0, 10)} ${wallClock.slice(11, 16)}) noted: ${notes}`,
+    )
+  }
+
+  if (partySize >= 8) {
+    triggerEscalation(
+      ctx,
+      'large_party',
+      `${guestName} booked a party of ${partySize} for ${wallClock.slice(0, 10)} at ${wallClock.slice(11, 16)}${zoneLabel ? ` (${zoneLabel})` : ''}.`,
+    )
+  }
+
+  // Deposit link (best effort — the booking stands even if Stripe is down).
+  const paymentLink = inserted?.id
+    ? await createDepositCheckoutLink({
+        appointmentId: inserted.id,
+        partySize,
+        businessName: ctx.ownerName ?? 'the restaurant',
+        businessId: ctx.business_id,
+        settings: ctx.paymentSettings,
+        baseUrl: ctx.baseUrl,
+      })
+    : null
+
+  if (ctx.notifSettings.email_on_reservation) {
+    queueReservationBookedEmail(ctx.ownerEmail, ctx.ownerName, {
+      guestName,
+      partySize,
+      date: wallClock.slice(0, 10),
+      time: wallClock.slice(11, 16),
+      zone: zoneLabel ?? null,
+      notes: notes ?? null,
+    })
+  }
+
+  // Guest-facing confirmation, when we know their email.
+  if (ctx.notifSettings.email_guest_confirmation) {
+    let guestEmail =
+      normalizeGuestContact({ email: typeof args.email === 'string' ? args.email : null }).email ??
+      extractContactFromMessages(ctx.chatMessages).email ??
+      null
+    if (!guestEmail) {
+      const { data: custRow } = await supabaseAdmin
+        .from('customers')
+        .select('email')
+        .eq('id', targetCustomerId)
+        .eq('business_id', ctx.business_id)
+        .maybeSingle()
+      guestEmail = custRow?.email?.trim() || null
+    }
+    if (guestEmail) {
+      queueGuestConfirmationEmail(guestEmail, ctx.ownerName ?? 'the restaurant', {
+        guestName,
+        partySize,
+        date: wallClock.slice(0, 10),
+        time: wallClock.slice(11, 16),
+        zone: zoneLabel ?? null,
+        notes: notes ?? null,
+        paymentLink: paymentLink?.url ?? null,
+        depositAmount: paymentLink?.amountLabel ?? null,
+      })
+    }
+  }
+
   return {
     created: true,
     customerId: targetCustomerId,
@@ -1155,7 +1412,73 @@ async function runCreateReservation(
       time: wallClock.slice(11, 16),
       dining_area: zoneLabel,
       special_requests: notes,
+      ...(paymentLink
+        ? {
+            deposit_required: true,
+            deposit_amount: paymentLink.amountLabel,
+            payment_link: paymentLink.url,
+          }
+        : {}),
     },
+  }
+}
+
+/**
+ * Creates a Stripe Checkout link for a reservation deposit.
+ * Returns null when deposits are off, Stripe is unconfigured, or Stripe errors.
+ */
+async function createDepositCheckoutLink(params: {
+  appointmentId: string
+  partySize: number
+  businessName: string
+  businessId: string
+  settings: PaymentSettings
+  baseUrl: string
+}): Promise<{ url: string; amountLabel: string } | null> {
+  const amountCents = depositAmountCents(params.settings, params.partySize)
+  if (amountCents == null) return null
+  const stripe = getStripe()
+  if (!stripe) return null
+
+  try {
+    const session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      line_items: [
+        {
+          quantity: params.partySize,
+          price_data: {
+            currency: 'cad',
+            unit_amount: Math.round(amountCents / params.partySize),
+            product_data: {
+              name: `Reservation deposit — ${params.businessName}`,
+              description: `Party of ${params.partySize}`,
+            },
+          },
+        },
+      ],
+      metadata: {
+        appointment_id: params.appointmentId,
+        business_id: params.businessId,
+      },
+      success_url: `${params.baseUrl}/pay/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${params.baseUrl}/pay/cancelled`,
+      expires_at: Math.floor(Date.now() / 1000) + 24 * 60 * 60,
+    })
+    if (!session.url) return null
+
+    await supabaseAdmin
+      .from('appointments')
+      .update({
+        deposit_status: 'pending',
+        deposit_amount_cents: amountCents,
+        stripe_checkout_session_id: session.id,
+      })
+      .eq('id', params.appointmentId)
+
+    return { url: session.url, amountLabel: `$${(amountCents / 100).toFixed(2)} CAD` }
+  } catch (err) {
+    console.error('[payments] Deposit link failed:', err instanceof Error ? err.message : err)
+    return null
   }
 }
 
@@ -1270,6 +1593,42 @@ async function runRescheduleReservation(
     }
   }
 
+  // Fresh availability re-check against the latest DB state, mirroring
+  // create_reservation (context bookings may be minutes old by now).
+  const freshBookings = await loadFreshBookingsForDay(ctx.business_id, wallClock)
+  const stillAvailable = isSlotAvailable({
+    wallClock,
+    operatingHours: ctx.bookingCtx.operatingHours,
+    existing: freshBookings,
+    settings: ctx.bookingCtx.bookingSettings,
+    now: ctx.nowParts,
+    excludeAppointmentId: appt.id,
+    zones: ctx.bookingCtx.zones,
+    partySize,
+    zoneId: preferredZoneId,
+  })
+  if (!stillAvailable) {
+    const alternatives = findNearestOpenSlots({
+      targetWallClock: wallClock,
+      operatingHours: ctx.bookingCtx.operatingHours,
+      existing: freshBookings,
+      settings: ctx.bookingCtx.bookingSettings,
+      now: ctx.nowParts,
+      zones: ctx.bookingCtx.zones,
+      partySize,
+      zoneId: preferredZoneId,
+      limit: 5,
+    })
+    return {
+      result: {
+        ok: false,
+        error: 'not_available',
+        message: 'That new time was just taken. Offer the alternatives.',
+        nearby_alternatives: formatSlotsForTool(alternatives),
+      },
+    }
+  }
+
   const assignedZone = pickZoneForSlot(
     wallClock,
     ctx.bookingCtx.zones,
@@ -1325,7 +1684,143 @@ async function runSaveGuestDetails(
     occasions: typeof args.occasions === 'string' ? args.occasions : null,
   })
 
+  if (typeof args.allergies === 'string' && args.allergies.trim()) {
+    const who = typeof args.name === 'string' && args.name.trim() ? args.name.trim() : 'A guest'
+    triggerEscalation(ctx, 'allergy', `${who} mentioned: ${args.allergies.trim().slice(0, 200)}`)
+  }
+
   return { customerId, result: { ok: true } }
+}
+
+async function runJoinWaitlist(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): Promise<ToolOutcome> {
+  const guestName = typeof args.guest_name === 'string' ? args.guest_name.trim() : ''
+  const date = typeof args.date === 'string' ? args.date.trim() : ''
+  const time = typeof args.time === 'string' ? args.time.trim() : ''
+  const partySize =
+    typeof args.party_size === 'number' && args.party_size >= 1 ? Math.round(args.party_size) : 0
+  const phone = typeof args.phone === 'string' ? args.phone.trim() : ''
+  const email = typeof args.email === 'string' ? args.email.trim() : ''
+
+  const timeParts = time.match(/^(\d{1,2}):(\d{2})$/)
+  const timeValid =
+    timeParts != null && parseInt(timeParts[1], 10) <= 23 && parseInt(timeParts[2], 10) <= 59
+
+  const missing: string[] = []
+  if (!guestName) missing.push('guest_name')
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) missing.push('date')
+  if (!timeValid) missing.push('time')
+  if (partySize < 1) missing.push('party_size')
+  if (!phone && !email) missing.push('phone_or_email')
+  if (missing.length > 0) {
+    return {
+      result: {
+        ok: false,
+        error: 'missing_fields',
+        missing_fields: missing,
+        message: 'Ask the guest for the missing fields, then call join_waitlist again.',
+      },
+    }
+  }
+
+  // Best-effort zone match from the guest's stated preference.
+  const seatingArea = typeof args.seating_area === 'string' ? args.seating_area : ''
+  const zoneId = guestAcceptsAnyZone(seatingArea)
+    ? null
+    : inferZoneIdFromText(seatingArea, ctx.bookingCtx.zones)
+
+  const targetCustomerId = await persistGuest({
+    business_id: ctx.business_id,
+    customer_id: ctx.customer_id,
+    conversation_id: ctx.conversation_id,
+    rawName: guestName,
+    rawPhone: phone || null,
+    rawEmail: email || null,
+  })
+
+  const { error } = await supabaseAdmin.from('waitlist_entries').insert({
+    business_id: ctx.business_id,
+    customer_id: targetCustomerId,
+    conversation_id: ctx.conversation_id,
+    guest_name: guestName,
+    phone: phone || null,
+    email: email || null,
+    requested_date: date,
+    requested_time: time.padStart(5, '0'),
+    party_size: partySize,
+    zone_id: zoneId,
+    notes: typeof args.notes === 'string' && args.notes.trim() ? args.notes.trim() : null,
+  })
+
+  if (error) {
+    console.error('[waitlist] Insert failed:', error.message)
+    return { result: { ok: false, error: 'db_error', message: 'Could not join the waitlist. Try again.' } }
+  }
+
+  console.log('[waitlist] Guest waitlisted:', { guestName, date, time, partySize })
+  return {
+    customerId: targetCustomerId,
+    result: {
+      ok: true,
+      message:
+        'Guest added to the waitlist. Tell them the restaurant will reach out as soon as a table for that time frees up.',
+      date,
+      time,
+      party_size: partySize,
+    },
+  }
+}
+
+type EscalationCategory = 'complaint' | 'large_party' | 'allergy' | 'other'
+
+function escalationEnabled(category: EscalationCategory, settings: NotificationSettings): boolean {
+  if (category === 'complaint') return settings.escalate_complaint
+  if (category === 'large_party') return settings.escalate_large_party
+  if (category === 'allergy') return settings.escalate_allergy
+  return true
+}
+
+/**
+ * Alert the owner about a conversation that needs human attention. Deduped per
+ * category within a request; honors the per-category toggles in Settings.
+ */
+function triggerEscalation(ctx: ToolContext, category: EscalationCategory, reason: string): void {
+  if (!escalationEnabled(category, ctx.notifSettings)) return
+  if (ctx.escalated.has(category)) return
+  ctx.escalated.add(category)
+  queueEscalationOwnerEmail(ctx.ownerEmail, ctx.ownerName, {
+    category,
+    reason,
+    conversationId: ctx.conversation_id,
+    baseUrl: ctx.baseUrl,
+  })
+}
+
+async function runEscalateToManager(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): Promise<ToolOutcome> {
+  const rawCategory = typeof args.category === 'string' ? args.category : 'other'
+  const category: EscalationCategory = (
+    ['complaint', 'large_party', 'allergy', 'other'] as const
+  ).includes(rawCategory as EscalationCategory)
+    ? (rawCategory as EscalationCategory)
+    : 'other'
+  const reason =
+    typeof args.reason === 'string' && args.reason.trim()
+      ? args.reason.trim().slice(0, 300)
+      : 'Guest needs staff attention'
+
+  triggerEscalation(ctx, category, reason)
+  return {
+    result: {
+      ok: true,
+      message:
+        'The team has been alerted and will follow up. Reassure the guest briefly and continue helping them normally.',
+    },
+  }
 }
 
 async function executeTool(
@@ -1344,12 +1839,26 @@ async function executeTool(
       return runCancelReservation(ctx)
     case 'save_guest_details':
       return runSaveGuestDetails(args, ctx)
+    case 'join_waitlist':
+      return runJoinWaitlist(args, ctx)
+    case 'escalate_to_manager':
+      return runEscalateToManager(args, ctx)
     default:
       return { result: { ok: false, error: 'unknown_tool' } }
   }
 }
 
 // ─── Notification email ───────────────────────────────────────────────────────
+
+/** Guest-supplied strings go into owner emails — escape them so a guest can't inject HTML. */
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
 
 /** Fire-and-forget; never throws. Sends a notification when a new guest opens a chat. */
 function queueNewConversationOwnerEmail(
@@ -1377,6 +1886,342 @@ function queueNewConversationOwnerEmail(
   })()
 }
 
+/** Fire-and-forget; never throws. Alerts the owner that a chat needs human attention. */
+function queueEscalationOwnerEmail(
+  ownerEmail: string | null,
+  businessName: string | null,
+  details: {
+    category: string
+    reason: string
+    conversationId: string
+    baseUrl: string
+  },
+) {
+  const to = typeof ownerEmail === 'string' ? ownerEmail.trim() : ''
+  if (!to) return
+
+  void (async () => {
+    const apiKey = process.env.RESEND_API_KEY
+    if (!apiKey) return
+    try {
+      const resend = new Resend(apiKey)
+      const from = process.env.RESEND_FROM_EMAIL?.trim() || 'onboarding@resend.dev'
+      const categoryLabel: Record<string, string> = {
+        complaint: 'Guest complaint',
+        large_party: 'Large party request',
+        allergy: 'Allergy / dietary risk',
+        other: 'Needs attention',
+      }
+      const label = categoryLabel[details.category] ?? 'Needs attention'
+      const chatUrl = `${details.baseUrl}/dashboard/chats?conversation=${details.conversationId}`
+      const reasonHtml = escapeHtml(details.reason)
+
+      const html = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>${escapeHtml(label)}</title></head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background:#f1f5f9;">
+<tr><td align="center" style="padding:40px 16px;">
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="max-width:480px;">
+  <tr><td style="background:#7c2d12;border-radius:14px 14px 0 0;padding:24px 32px;">
+    <p style="margin:0 0 6px;font-size:10px;font-weight:700;letter-spacing:0.14em;color:#fdba74;text-transform:uppercase;">OceanCore · Escalation</p>
+    <p style="margin:0;font-size:20px;font-weight:700;color:#fff7ed;">${escapeHtml(label)}</p>
+  </td></tr>
+  <tr><td style="background:#ffffff;padding:26px 32px;">
+    <p style="margin:0 0 6px;font-size:10px;font-weight:700;letter-spacing:0.1em;color:#94a3b8;text-transform:uppercase;">What the guest needs</p>
+    <p style="margin:0 0 22px;font-size:15px;color:#0f172a;line-height:1.6;">${reasonHtml}</p>
+    <a href="${chatUrl}" style="display:block;text-align:center;background:#0c1a2e;color:#f8fafc;text-decoration:none;font-size:13px;font-weight:600;padding:13px 24px;border-radius:9px;">Open the conversation →</a>
+  </td></tr>
+  <tr><td style="padding:14px 32px;text-align:center;">
+    <p style="margin:0;font-size:11px;color:#94a3b8;">Sent by OceanCore for ${escapeHtml(businessName ?? 'your restaurant')}</p>
+  </td></tr>
+</table>
+</td></tr>
+</table>
+</body></html>`
+
+      const result = await resend.emails.send({
+        from,
+        to,
+        subject: `⚠ ${label} — a guest needs attention`,
+        html,
+        text: `${label}\n\n${details.reason}\n\nOpen the conversation: ${chatUrl}`,
+      })
+      if (result.error) {
+        console.error('[email] Escalation email error:', result.error)
+      } else {
+        console.log(`[email] Escalation alert sent (${details.category}), id:`, result.data?.id)
+      }
+    } catch (err) {
+      console.error('[email] Unexpected error sending escalation email:', err)
+    }
+  })()
+}
+
+/** Fire-and-forget; never throws. Sends the GUEST a warm booking confirmation. */
+function queueGuestConfirmationEmail(
+  guestEmail: string,
+  restaurantName: string,
+  details: {
+    guestName: string
+    partySize: number
+    date: string
+    time: string
+    zone: string | null
+    notes: string | null
+    paymentLink?: string | null
+    depositAmount?: string | null
+  },
+) {
+  const to = guestEmail.trim()
+  if (!to) return
+
+  void (async () => {
+    const apiKey = process.env.RESEND_API_KEY
+    if (!apiKey) return
+    try {
+      const resend = new Resend(apiKey)
+      const from = process.env.RESEND_FROM_EMAIL?.trim() || 'onboarding@resend.dev'
+      const restaurant = escapeHtml(restaurantName)
+      const firstName = escapeHtml(details.guestName.split(/\s+/)[0] || 'there')
+
+      const dateObj = new Date(`${details.date}T12:00:00`)
+      const formattedDate = dateObj.toLocaleDateString('en-US', {
+        weekday: 'long', month: 'long', day: 'numeric',
+      })
+      const [h, m] = details.time.split(':').map(Number)
+      const formattedTime = `${h > 12 ? h - 12 : h || 12}:${String(m).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`
+
+      const rows = [
+        ['When', `${formattedDate} · ${formattedTime}`],
+        ['Party', `${details.partySize} ${details.partySize === 1 ? 'guest' : 'guests'}`],
+        ...(details.zone ? [['Seating', details.zone]] : []),
+        ...(details.notes ? [['Requests', details.notes]] : []),
+      ]
+        .map(
+          ([k, v]) => `<tr>
+            <td style="padding:9px 0;font-size:12px;color:#94a3b8;width:88px;vertical-align:top;">${escapeHtml(k)}</td>
+            <td style="padding:9px 0;font-size:14px;font-weight:600;color:#0f172a;">${escapeHtml(v)}</td>
+          </tr>`,
+        )
+        .join('')
+
+      const depositBlock =
+        details.paymentLink && details.depositAmount
+          ? `<div style="margin-top:20px;padding:14px 16px;border-radius:10px;background:#fefce8;border:1px solid #fde68a;">
+              <p style="margin:0 0 10px;font-size:13px;color:#713f12;line-height:1.5;">A ${escapeHtml(details.depositAmount)} deposit secures your table. Your reservation is fully confirmed once it's paid.</p>
+              <a href="${details.paymentLink}" style="display:inline-block;background:#0c1a2e;color:#f8fafc;text-decoration:none;font-size:13px;font-weight:600;padding:10px 18px;border-radius:8px;">Pay deposit</a>
+            </div>`
+          : ''
+
+      const html = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Your reservation at ${restaurant}</title></head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background:#f1f5f9;">
+<tr><td align="center" style="padding:40px 16px;">
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="max-width:480px;">
+  <tr><td style="background:#0c1a2e;border-radius:14px 14px 0 0;padding:28px 32px;">
+    <p style="margin:0 0 8px;font-size:10px;font-weight:700;letter-spacing:0.14em;color:#38bdf8;text-transform:uppercase;">${restaurant}</p>
+    <p style="margin:0;font-size:22px;font-weight:700;color:#f8fafc;letter-spacing:-0.01em;">You're booked, ${firstName}!</p>
+  </td></tr>
+  <tr><td style="background:#ffffff;padding:24px 32px 28px;">
+    <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="border-collapse:collapse;">${rows}</table>
+    ${depositBlock}
+    <p style="margin:22px 0 0;font-size:13px;color:#475569;line-height:1.6;">Plans changed? Just reply in the chat where you booked and we'll move or cancel it for you.</p>
+  </td></tr>
+  <tr><td style="padding:14px 32px;text-align:center;">
+    <p style="margin:0;font-size:11px;color:#94a3b8;">Sent by ${restaurant} via OceanCore</p>
+  </td></tr>
+</table>
+</td></tr>
+</table>
+</body></html>`
+
+      const text = [
+        `You're booked at ${restaurantName}, ${details.guestName.split(/\s+/)[0]}!`,
+        '',
+        `When: ${formattedDate} at ${formattedTime}`,
+        `Party: ${details.partySize}`,
+        details.zone ? `Seating: ${details.zone}` : '',
+        details.notes ? `Requests: ${details.notes}` : '',
+        details.paymentLink ? `Deposit (${details.depositAmount}): ${details.paymentLink}` : '',
+      ].filter(Boolean).join('\n')
+
+      const result = await resend.emails.send({
+        from,
+        to,
+        subject: `Your table at ${restaurantName} — ${formattedDate}, ${formattedTime}`,
+        html,
+        text,
+      })
+      if (result.error) console.error('[email] Guest confirmation error:', result.error)
+    } catch (err) {
+      console.error('[email] Unexpected error sending guest confirmation:', err)
+    }
+  })()
+}
+
+/** Fire-and-forget; never throws. Sends owner an email when a reservation is confirmed. */
+function queueReservationBookedEmail(
+  ownerEmail: string | null,
+  ownerName: string | null,
+  details: {
+    guestName: string
+    partySize: number
+    date: string
+    time: string
+    zone: string | null
+    notes: string | null
+  },
+) {
+  const to = typeof ownerEmail === 'string' ? ownerEmail.trim() : ''
+  if (!to) return
+
+  void (async () => {
+    const apiKey = process.env.RESEND_API_KEY
+    if (!apiKey) {
+      console.warn('[email] RESEND_API_KEY not set — skipping reservation email')
+      return
+    }
+    try {
+      const resend = new Resend(apiKey)
+      const from = process.env.RESEND_FROM_EMAIL?.trim() || 'onboarding@resend.dev'
+      const restaurant = escapeHtml(ownerName ?? 'Your restaurant')
+      const zoneLabel = escapeHtml(details.zone ?? 'Main dining')
+      const guestNameHtml = escapeHtml(details.guestName)
+      const notesHtml = details.notes ? escapeHtml(details.notes) : null
+      const dashboardUrl = process.env.NEXT_PUBLIC_APP_URL
+        ? `${process.env.NEXT_PUBLIC_APP_URL}/dashboard/bookings`
+        : 'https://app.oceancore.co/dashboard/bookings'
+
+      // Format date: 2026-06-16 → Mon, Jun 16 2026
+      const dateObj = new Date(`${details.date}T12:00:00`)
+      const formattedDate = dateObj.toLocaleDateString('en-US', {
+        weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
+      })
+      // Format time: 19:00 → 7:00 PM
+      const [h, m] = details.time.split(':').map(Number)
+      const formattedTime = `${h > 12 ? h - 12 : h || 12}:${String(m).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`
+
+      const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>New Reservation</title>
+</head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background:#f1f5f9;">
+<tr><td align="center" style="padding:40px 16px;">
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="max-width:480px;">
+
+  <!-- Header bar -->
+  <tr><td style="background:#0c1a2e;border-radius:14px 14px 0 0;padding:28px 32px 24px;">
+    <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+      <tr>
+        <td>
+          <p style="margin:0 0 8px;font-size:10px;font-weight:700;letter-spacing:0.14em;color:#38bdf8;text-transform:uppercase;">OceanCore</p>
+          <p style="margin:0;font-size:20px;font-weight:700;color:#f8fafc;letter-spacing:-0.01em;">New Reservation</p>
+        </td>
+        <td align="right" valign="top">
+          <span style="display:inline-block;background:#1e3a5f;border:1px solid #2d5a8e;border-radius:20px;padding:5px 12px;font-size:11px;font-weight:600;color:#7dd3fc;white-space:nowrap;">${restaurant}</span>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+
+  <!-- White card body -->
+  <tr><td style="background:#ffffff;padding:28px 32px 24px;">
+
+    <!-- Guest name -->
+    <p style="margin:0 0 4px;font-size:10px;font-weight:700;letter-spacing:0.1em;color:#94a3b8;text-transform:uppercase;">Guest</p>
+    <p style="margin:0 0 24px;font-size:24px;font-weight:700;color:#0f172a;letter-spacing:-0.02em;">${guestNameHtml}</p>
+
+    <!-- Divider -->
+    <div style="height:1px;background:#f1f5f9;margin-bottom:24px;"></div>
+
+    <!-- Details row -->
+    <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:24px;">
+      <tr>
+        <td style="padding-right:6px;vertical-align:top;width:25%;">
+          <p style="margin:0 0 3px;font-size:9px;font-weight:700;letter-spacing:0.1em;color:#94a3b8;text-transform:uppercase;">Date</p>
+          <p style="margin:0;font-size:13px;font-weight:600;color:#1e293b;line-height:1.4;">${formattedDate}</p>
+        </td>
+        <td style="padding:0 6px;vertical-align:top;width:20%;">
+          <p style="margin:0 0 3px;font-size:9px;font-weight:700;letter-spacing:0.1em;color:#94a3b8;text-transform:uppercase;">Time</p>
+          <p style="margin:0;font-size:13px;font-weight:600;color:#1e293b;">${formattedTime}</p>
+        </td>
+        <td style="padding:0 6px;vertical-align:top;width:25%;">
+          <p style="margin:0 0 3px;font-size:9px;font-weight:700;letter-spacing:0.1em;color:#94a3b8;text-transform:uppercase;">Guests</p>
+          <p style="margin:0;font-size:13px;font-weight:600;color:#1e293b;">${details.partySize} ${details.partySize === 1 ? 'person' : 'people'}</p>
+        </td>
+        <td style="padding-left:6px;vertical-align:top;width:30%;">
+          <p style="margin:0 0 3px;font-size:9px;font-weight:700;letter-spacing:0.1em;color:#94a3b8;text-transform:uppercase;">Area</p>
+          <p style="margin:0;font-size:13px;font-weight:600;color:#1e293b;">${zoneLabel}</p>
+        </td>
+      </tr>
+    </table>
+
+    ${notesHtml ? `
+    <!-- Special requests -->
+    <div style="background:#fefce8;border-left:3px solid #facc15;border-radius:0 8px 8px 0;padding:12px 16px;margin-bottom:24px;">
+      <p style="margin:0 0 3px;font-size:9px;font-weight:700;letter-spacing:0.1em;color:#a16207;text-transform:uppercase;">Special requests</p>
+      <p style="margin:0;font-size:13px;color:#374151;line-height:1.55;">${notesHtml}</p>
+    </div>` : ''}
+
+    <!-- CTA button -->
+    <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+      <tr><td>
+        <a href="${dashboardUrl}" style="display:block;text-align:center;background:#0c1a2e;color:#f8fafc;text-decoration:none;font-size:13px;font-weight:600;padding:13px 24px;border-radius:9px;letter-spacing:0.01em;">View in Dashboard →</a>
+      </td></tr>
+    </table>
+
+  </td></tr>
+
+  <!-- Footer -->
+  <tr><td style="padding:16px 32px;text-align:center;">
+    <p style="margin:0;font-size:11px;color:#94a3b8;line-height:1.6;">
+      Sent by OceanCore &nbsp;·&nbsp;
+      <a href="${dashboardUrl}" style="color:#64748b;text-decoration:underline;">Manage notifications</a>
+    </p>
+  </td></tr>
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>`
+
+      const text = [
+        `New reservation at ${restaurant}`,
+        '',
+        `Guest: ${details.guestName}`,
+        `Party size: ${details.partySize}`,
+        `Date: ${formattedDate}`,
+        `Time: ${formattedTime} · ${zoneLabel}`,
+        details.notes ? `Special requests: ${details.notes}` : '',
+        '',
+        `Dashboard: ${dashboardUrl}`,
+      ].filter(Boolean).join('\n')
+
+      console.log(`[email] Sending reservation notification → ${to} from ${from}`)
+      const result = await resend.emails.send({
+        from,
+        to,
+        subject: `New reservation — ${details.guestName}, ${formattedDate} at ${formattedTime}`,
+        html,
+        text,
+      })
+      if (result.error) {
+        console.error('[email] Resend error:', result.error)
+      } else {
+        console.log('[email] Reservation email sent, id:', result.data?.id)
+      }
+    } catch (err) {
+      console.error('[email] Unexpected error sending reservation email:', err)
+    }
+  })()
+}
+
 // ─── Route handler ────────────────────────────────────────────────────────────
 
 const CHAT_RATE_LIMIT = 40
@@ -1391,12 +2236,12 @@ export async function POST(request: Request) {
       from_dashboard?: boolean
     }
 
-    const chatMessages = body.messages
+    const chatMessages = sanitizeIncomingMessages(body.messages)
     const business_id = body.business_id
     const conversation_id = body.conversation_id
     const fromDashboard = body.from_dashboard === true
 
-    if (!Array.isArray(chatMessages)) {
+    if (!chatMessages) {
       return NextResponse.json({ error: 'messages array required' }, { status: 400 })
     }
 
@@ -1410,7 +2255,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'business_id required' }, { status: 400 })
       }
 
-      const ipLimit = checkRateLimit(`chat-preview:ip:${clientIp}`, 10, CHAT_RATE_WINDOW_MS)
+      const ipLimit = await checkRateLimit(`chat-preview:ip:${clientIp}`, 10, CHAT_RATE_WINDOW_MS)
       if (!ipLimit.allowed) {
         return NextResponse.json(
           { error: 'Too many requests. Please try again shortly.' },
@@ -1434,7 +2279,7 @@ export async function POST(request: Request) {
       }
     }
 
-    const ipLimit = checkRateLimit(`chat:ip:${clientIp}`, CHAT_RATE_LIMIT, CHAT_RATE_WINDOW_MS)
+    const ipLimit = await checkRateLimit(`chat:ip:${clientIp}`, CHAT_RATE_LIMIT, CHAT_RATE_WINDOW_MS)
     if (!ipLimit.allowed) {
       return NextResponse.json(
         { error: 'Too many requests. Please try again shortly.' },
@@ -1442,7 +2287,7 @@ export async function POST(request: Request) {
       )
     }
 
-    const bizLimit = checkRateLimit(`chat:biz:${business_id}`, CHAT_RATE_LIMIT * 2, CHAT_RATE_WINDOW_MS)
+    const bizLimit = await checkRateLimit(`chat:biz:${business_id}`, CHAT_RATE_LIMIT * 2, CHAT_RATE_WINDOW_MS)
     if (!bizLimit.allowed) {
       return NextResponse.json(
         { error: 'Too many requests for this business.' },
@@ -1453,12 +2298,25 @@ export async function POST(request: Request) {
     // ── Fetch business ────────────────────────────────────────────────────────
     const { data: business, error: bizError } = await supabaseAdmin
       .from('businesses')
-      .select('id, name, email, system_prompt, agent_name, menu_pdf_text')
+      .select('id, name, email, system_prompt, agent_name, language, menu_pdf_text, notification_settings')
       .eq('id', business_id)
       .maybeSingle()
 
     if (bizError || !business) {
       return NextResponse.json({ error: 'Business not found' }, { status: 404 })
+    }
+
+    // Deposits (tolerates the payment_settings column not existing yet).
+    let paymentSettings = { ...DEFAULT_PAYMENT_SETTINGS }
+    {
+      const { data: payRow, error: payErr } = await supabaseAdmin
+        .from('businesses')
+        .select('payment_settings')
+        .eq('id', business_id)
+        .maybeSingle()
+      if (!payErr && payRow) {
+        paymentSettings = parsePaymentSettings((payRow as { payment_settings?: unknown }).payment_settings)
+      }
     }
 
     // Fetch menu; fall back to name+price only if description/category columns haven't been added yet
@@ -1596,6 +2454,10 @@ export async function POST(request: Request) {
     const todayLabel = new Date(Date.UTC(nowParts.year, nowParts.month - 1, nowParts.day))
       .toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
 
+    const notifSettings = parseNotificationSettings(
+      (business as Record<string, unknown>).notification_settings,
+    )
+
     const systemPrompt = buildSystemPrompt(
       conciergeName,
       restaurantName,
@@ -1607,9 +2469,16 @@ export async function POST(request: Request) {
       wallClockDateKey(nowParts),
       bookingCtx.zones,
       bookingCtx.bookingSettings.require_contact_before_booking,
+      paymentSettings.deposit_enabled ? paymentSettings.deposit_per_guest : null,
+      (business as Record<string, unknown>).language as string | null,
+      notifSettings,
     )
-
-    if (isNewConversation && resolvedCustomerId && !returningGuestContext) {
+    if (
+      isNewConversation &&
+      resolvedCustomerId &&
+      !returningGuestContext &&
+      notifSettings.email_on_new_chat
+    ) {
       queueNewConversationOwnerEmail(business.email, business.name)
     }
 
@@ -1623,6 +2492,14 @@ export async function POST(request: Request) {
     if (userMsgErr) {
       return NextResponse.json({ error: userMsgErr.message }, { status: 500 })
     }
+
+    // Keep the inbox honest: updated_at drives conversation ordering and the
+    // stale-conversation auto-close, so it must track the latest message.
+    await supabaseAdmin
+      .from('conversations')
+      .update({ updated_at: new Date().toISOString() })
+      .eq('id', resolvedConversationId)
+      .eq('business_id', business_id)
 
     // ── Human takeover check ──────────────────────────────────────────────────
     const { data: convForAi } = await supabaseAdmin
@@ -1650,9 +2527,11 @@ export async function POST(request: Request) {
       ...toOpenAiMessages(chatMessages),
     ]
 
+    const escalatedCategories = new Set<string>()
     let bookingCreated = false
     let bookingCancelled = false
     let bookingRescheduled = false
+    let bookingDetails: { guest_name: string; party_size: number; date: string; time: string; dining_area: string | null } | null = null
     let assistantText = ''
 
     const MAX_TOOL_ROUNDS = 4
@@ -1697,9 +2576,24 @@ export async function POST(request: Request) {
           bookingCtx,
           nowParts,
           chatMessages,
+          ownerEmail: business.email ?? null,
+          ownerName: business.name ?? null,
+          notifSettings,
+          paymentSettings,
+          baseUrl: appBaseUrl(request),
+          escalated: escalatedCategories,
         })
 
-        if (outcome.created) bookingCreated = true
+        if (outcome.created) {
+          bookingCreated = true
+          bookingDetails = outcome.result as {
+            guest_name: string
+            party_size: number
+            date: string
+            time: string
+            dining_area: string | null
+          }
+        }
         if (outcome.cancelled) bookingCancelled = true
         if (outcome.rescheduled) bookingRescheduled = true
         if (outcome.customerId) resolvedCustomerId = outcome.customerId
@@ -1712,6 +2606,14 @@ export async function POST(request: Request) {
       }
     }
 
+    // The model occasionally returns empty content (or the tool-round budget is
+    // exhausted) — never send/store an empty bubble.
+    if (!assistantText.trim()) {
+      assistantText = bookingCreated
+        ? 'Wonderful — your reservation is all set! We look forward to seeing you.'
+        : "Sorry, I didn't quite catch that — could you tell me once more?"
+    }
+
     const { error: assistantMsgErr } = await supabaseAdmin.from('messages').insert({
       conversation_id: resolvedConversationId,
       role: 'assistant',
@@ -1719,7 +2621,9 @@ export async function POST(request: Request) {
     })
 
     if (assistantMsgErr) {
-      return NextResponse.json({ error: assistantMsgErr.message }, { status: 500 })
+      // Don't fail the request — a booking may already exist; the guest still
+      // needs the confirmation text even if transcript persistence hiccuped.
+      console.error('[chat] Failed to save assistant message:', assistantMsgErr.message)
     }
 
     return NextResponse.json({
@@ -1729,6 +2633,7 @@ export async function POST(request: Request) {
       booking_created: bookingCreated,
       booking_cancelled: bookingCancelled,
       booking_rescheduled: bookingRescheduled,
+      booking_details: bookingDetails,
     })
   } catch (e) {
     const message = e instanceof Error ? e.message : 'Unexpected error'

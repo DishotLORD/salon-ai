@@ -14,6 +14,13 @@ export type RecentActivity = {
   role: 'assistant' | 'guest'
 }
 
+export type ZoneOccupancy = {
+  id: string
+  name: string
+  capacity: number
+  guestsToday: number
+}
+
 type DashboardClientProps = {
   businessDisplayName: string
   conciergeName: string
@@ -21,6 +28,7 @@ type DashboardClientProps = {
   activeChats: number
   messageCount: number
   recentActivity: RecentActivity[]
+  zoneOccupancy: ZoneOccupancy[]
 }
 
 function getGreeting() {
@@ -170,6 +178,198 @@ function AvatarBubble({ role, name }: { role: 'assistant' | 'guest'; name?: stri
   )
 }
 
+// ─── Zone occupancy ────────────────────────────────────────────
+
+function zoneIcon(name: string) {
+  const n = name.toLowerCase()
+  if (n.includes('bar') || n.includes('lounge')) return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8 22h8M12 11v11M3 3h18l-5 8H8L3 3Z"/>
+    </svg>
+  )
+  if (n.includes('patio') || n.includes('outdoor') || n.includes('terrace')) return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 2v6M5.5 5.5 8 8M18.5 5.5 16 8M2 12h4M18 12h4M12 22c-4 0-7-3-7-7h14c0 4-3 7-7 7Z"/>
+    </svg>
+  )
+  if (n.includes('private') || n.includes('vip') || n.includes('room')) return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+    </svg>
+  )
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 11l19-9-9 19-2-8-8-2Z"/>
+    </svg>
+  )
+}
+
+function zoneTone(pct: number): { label: string; color: string } {
+  if (pct === 0) return { label: 'Empty',       color: 'var(--t-text-subtle, #64748b)' }
+  if (pct < 50)  return { label: 'Steady',      color: 'var(--t-accent, #38bdf8)' }
+  if (pct < 85)  return { label: 'Filling',     color: '#f59e0b' }
+  return              { label: 'At capacity',  color: '#ef4444' }
+}
+
+function Ring({ pct, color, mounted }: { pct: number; color: string; mounted: boolean }) {
+  const size = 64, stroke = 6, r = (size - stroke) / 2
+  const c = 2 * Math.PI * r
+  const offset = c - (mounted ? pct : 0) / 100 * c
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ transform: 'rotate(-90deg)' }} aria-hidden="true">
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={t.bgSurfaceMuted} strokeWidth={stroke} />
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color} strokeWidth={stroke} strokeLinecap="round"
+        strokeDasharray={c} strokeDashoffset={offset}
+        style={{ transition: 'stroke-dashoffset 900ms cubic-bezier(0.22,1,0.36,1)' }} />
+    </svg>
+  )
+}
+
+function ZoneOccupancyPanel({ zones }: { zones: ZoneOccupancy[] }) {
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setMounted(true))
+    return () => cancelAnimationFrame(id)
+  }, [])
+
+  const totalBooked   = zones.reduce((s, z) => s + z.guestsToday, 0)
+  const totalCapacity = zones.reduce((s, z) => s + z.capacity, 0)
+  const totalPct      = totalCapacity > 0 ? Math.round((totalBooked / totalCapacity) * 100) : 0
+
+  return (
+    <section style={{
+      background: t.bgSurface,
+      border: `1px solid ${t.border}`,
+      borderRadius: 16,
+      overflow: 'hidden',
+      boxShadow: t.shadowCard,
+      marginBottom: 28,
+    }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, padding: '20px 24px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{
+            width: 40, height: 40, borderRadius: 12,
+            border: `1px solid ${t.border}`, background: t.bgSurfaceMuted,
+            display: 'grid', placeItems: 'center', color: t.textMuted, flexShrink: 0,
+          }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+              <path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+          </div>
+          <div>
+            <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: t.text, letterSpacing: '-0.01em' }}>Today&apos;s covers</h2>
+            <p style={{ margin: '2px 0 0', fontSize: 12.5, color: t.textMuted }}>Seat fill across all zones</p>
+          </div>
+        </div>
+        <Link href="/dashboard/bookings" style={{
+          textDecoration: 'none', flexShrink: 0,
+          display: 'inline-flex', alignItems: 'center', gap: 5,
+          padding: '6px 12px', borderRadius: 8,
+          border: `1px solid ${t.border}`, background: t.bgSurfaceMuted,
+          fontSize: 13, fontWeight: 600, color: t.text,
+          transition: 'background 0.15s',
+        }}
+          onMouseEnter={e => (e.currentTarget.style.background = t.bgSurfaceHover)}
+          onMouseLeave={e => (e.currentTarget.style.background = t.bgSurfaceMuted)}
+        >
+          All bookings
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M7 17 17 7M7 7h10v10"/>
+          </svg>
+        </Link>
+      </div>
+
+      {/* Total summary row */}
+      <div style={{
+        display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
+        borderTop: `1px solid ${t.border}`, padding: '18px 24px',
+      }}>
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: t.textMuted, marginBottom: 4 }}>
+            Total occupancy
+          </div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+            <span style={{ fontSize: 30, fontWeight: 700, color: t.text, fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.02em' }}>
+              {totalPct}%
+            </span>
+            <span style={{ fontSize: 13, color: t.textMuted }}>
+              {totalBooked} of {totalCapacity} guests
+            </span>
+          </div>
+        </div>
+        {/* Mini bar chart */}
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height: 44 }} aria-hidden="true">
+          {zones.map((z) => {
+            const p = z.capacity > 0 ? Math.min(100, Math.round((z.guestsToday / z.capacity) * 100)) : 0
+            const { color } = zoneTone(p)
+            return (
+              <div key={z.id} style={{
+                width: 10, borderRadius: 99,
+                background: color,
+                opacity: p === 0 ? 0.2 : 0.85,
+                height: mounted ? `${Math.max(p, 8)}%` : '8%',
+                transition: 'height 900ms cubic-bezier(0.22,1,0.36,1)',
+              }} />
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Zone grid */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: `repeat(${Math.min(zones.length, 3)}, 1fr)`,
+        gap: '1px',
+        background: t.border,
+        borderTop: `1px solid ${t.border}`,
+      }}>
+        {zones.map((zone) => {
+          const pct = zone.capacity > 0 ? Math.min(100, Math.round((zone.guestsToday / zone.capacity) * 100)) : 0
+          const { label, color } = zoneTone(pct)
+          return (
+            <div key={zone.id}
+              style={{ background: t.bgSurface, padding: '20px 24px', transition: 'background 0.12s', cursor: 'default' }}
+              onMouseEnter={e => (e.currentTarget.style.background = t.bgSurfaceHover)}
+              onMouseLeave={e => (e.currentTarget.style.background = t.bgSurface)}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: t.textMuted, fontSize: 13, fontWeight: 600 }}>
+                {zoneIcon(zone.name)}
+                <span style={{ color: t.text }}>{zone.name}</span>
+              </div>
+
+              <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', gap: 14 }}>
+                {/* Ring */}
+                <div style={{ position: 'relative', width: 64, height: 64, flexShrink: 0 }}>
+                  <Ring pct={pct} color={color} mounted={mounted} />
+                  <span style={{
+                    position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 12, fontWeight: 700, color: t.text, fontVariantNumeric: 'tabular-nums',
+                  }}>
+                    {pct}%
+                  </span>
+                </div>
+
+                <div>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: t.text, fontVariantNumeric: 'tabular-nums', lineHeight: 1.2 }}>
+                    {zone.guestsToday}
+                    <span style={{ color: t.textMuted, fontWeight: 400 }}>/{zone.capacity}</span>
+                  </div>
+                  <div style={{ marginTop: 4, display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11.5, fontWeight: 600, color }}>
+                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: color, flexShrink: 0 }} />
+                    {label}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
 // ─── Main client component ────────────────────────────────────
 export function DashboardClient({
   businessDisplayName,
@@ -178,6 +378,7 @@ export function DashboardClient({
   activeChats,
   messageCount,
   recentActivity,
+  zoneOccupancy,
 }: DashboardClientProps) {
   const [unreadCount, setUnreadCount] = useState(activeChats)
 
@@ -315,6 +516,11 @@ export function DashboardClient({
               </button>
             </Link>
           </section>
+
+          {/* Zone occupancy */}
+          {zoneOccupancy.length > 0 && (
+            <ZoneOccupancyPanel zones={zoneOccupancy} />
+          )}
 
           {/* Recent activity */}
           <section style={{

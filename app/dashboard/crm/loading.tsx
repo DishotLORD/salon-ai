@@ -5,7 +5,7 @@ export default function CrmLoading() {
   return (
     <div
       style={{
-        background: '#f8fafc',
+        background: 'var(--bk-bg)',
         minHeight: '100vh',
         margin: '-36px',
         padding: bk.pagePad,
@@ -19,7 +19,7 @@ export default function CrmLoading() {
           style={{
             fontSize: bk.micro,
             fontWeight: 700,
-            color: '#94a3b8',
+            color: 'var(--bk-muted)',
             letterSpacing: '0.1em',
             textTransform: 'uppercase',
           }}
@@ -31,13 +31,13 @@ export default function CrmLoading() {
             margin: '4px 0 0',
             fontSize: bk.h1,
             fontWeight: 700,
-            color: '#0f172a',
+            color: 'var(--bk-head)',
             letterSpacing: '-0.03em',
           }}
         >
           Guests
         </h1>
-        <p style={{ margin: '4px 0 0', fontSize: bk.body, color: '#64748b', minHeight: 18 }}>
+        <p style={{ margin: '4px 0 0', fontSize: bk.body, color: 'var(--bk-body)', minHeight: 18 }}>
           {'\u00a0'}
         </p>
       </div>
@@ -49,14 +49,14 @@ export default function CrmLoading() {
               style={{
                 fontSize: bk.micro,
                 fontWeight: 600,
-                color: '#94a3b8',
+                color: 'var(--bk-muted)',
                 textTransform: 'uppercase',
                 letterSpacing: '0.08em',
               }}
             >
               {label}
             </div>
-            <div style={{ fontSize: bk.statValue, fontWeight: 700, color: '#0f172a', marginTop: 4, minHeight: 28 }}>
+            <div style={{ fontSize: bk.statValue, fontWeight: 700, color: 'var(--bk-head)', marginTop: 4, minHeight: 28 }}>
               —
             </div>
           </div>
@@ -71,7 +71,7 @@ export default function CrmLoading() {
               style={{
                 height: 48,
                 borderRadius: 8,
-                background: 'linear-gradient(90deg, #f1f5f9 0%, #e2e8f0 50%, #f1f5f9 100%)',
+                background: 'linear-gradient(90deg, var(--bk-surface) 0%, var(--bk-surface-2) 50%, var(--bk-surface) 100%)',
               }}
             />
           ))}

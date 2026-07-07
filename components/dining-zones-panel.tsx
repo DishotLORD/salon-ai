@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 import {
   ZONE_PRESETS,
@@ -15,7 +15,7 @@ const labelStyle: React.CSSProperties = {
   fontWeight: 700,
   letterSpacing: '0.12em',
   textTransform: 'uppercase',
-  color: '#94a3b8',
+  color: 'var(--bk-muted)',
 }
 
 const inputStyle: React.CSSProperties = {
@@ -41,7 +41,7 @@ function newZoneDraft(settings: BookingSettings, sortOrder: number): DiningZoneD
     slug: 'patio',
     max_concurrent_parties: 150,
     min_party_size: base.min_party_size,
-    max_party_size: base.max_party_size,
+    max_party_size: 999,
     turnover_minutes: 70,
     is_active: true,
     sort_order: sortOrder,
@@ -62,6 +62,7 @@ export function DiningZonesPanel({
   disabled,
 }: DiningZonesPanelProps) {
   const [presetOpen, setPresetOpen] = useState(false)
+  const localKeyCounter = useRef(0)
 
   const updateAt = (index: number, patch: Partial<DiningZoneDraft>) => {
     const next = zones.map((z, i) => (i === index ? { ...z, ...patch } : z))
@@ -84,16 +85,15 @@ export function DiningZonesPanel({
   }
 
   const addPreset = (name: string, slug: string) => {
-    const base = defaultMainDiningZone('', bookingSettings)
     onChange([
       ...zones,
       {
-        _localKey: `new-${Date.now()}`,
+        _localKey: `new-${++localKeyCounter.current}`,
         name,
         slug,
         max_concurrent_parties: slug === 'main-dining' ? 150 : 60,
-        min_party_size: slug === 'large-groups' ? 8 : base.min_party_size,
-        max_party_size: slug === 'large-groups' ? 20 : base.max_party_size,
+        min_party_size: 1,
+        max_party_size: 999,
         turnover_minutes: slug === 'large-groups' ? 120 : 70,
         is_active: true,
         sort_order: zones.length,
@@ -104,7 +104,7 @@ export function DiningZonesPanel({
 
   return (
     <div style={{ display: 'grid', gap: 14 }}>
-      <p style={{ margin: 0, fontSize: 13, color: '#64748b', lineHeight: 1.55 }}>
+      <p style={{ margin: 0, fontSize: 13, color: 'var(--bk-body)', lineHeight: 1.55 }}>
         Smart zones replace a floor plan. Each zone has its own guest capacity (covers) and average stay time.
         Deactivate a zone instead of deleting it if it has past bookings.
       </p>
@@ -116,7 +116,7 @@ export function DiningZonesPanel({
             padding: 14,
             borderRadius: 12,
             border: '1px solid rgba(15, 23, 42, 0.08)',
-            background: zone.is_active ? '#fff' : '#f8fafc',
+            background: zone.is_active ? 'var(--bk-card)' : 'var(--bk-surface)',
             display: 'grid',
             gap: 10,
           }}
@@ -131,7 +131,7 @@ export function DiningZonesPanel({
                 updateAt(index, { name, slug: slugifyZoneName(name) })
               }}
             />
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#64748b' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--bk-body)' }}>
               <input
                 type="checkbox"
                 checked={zone.is_active}
@@ -161,7 +161,7 @@ export function DiningZonesPanel({
                 type="button"
                 disabled={disabled || zones.length <= 1}
                 onClick={() => removeAt(index)}
-                style={{ ...iconBtn, color: '#b91c1c' }}
+                style={{ ...iconBtn, color: 'var(--bk-danger)' }}
               >
                 Remove
               </button>
@@ -208,36 +208,6 @@ export function DiningZonesPanel({
                 onChange={(e) =>
                   updateAt(index, {
                     turnover_minutes: Math.max(15, parseInt(e.target.value, 10) || 70),
-                  })
-                }
-              />
-            </label>
-            <label style={{ display: 'grid', gap: 4 }}>
-              <span style={labelStyle}>Min party</span>
-              <input
-                type="number"
-                min={1}
-                disabled={disabled}
-                style={inputStyle}
-                value={zone.min_party_size}
-                onChange={(e) =>
-                  updateAt(index, {
-                    min_party_size: Math.max(1, parseInt(e.target.value, 10) || 1),
-                  })
-                }
-              />
-            </label>
-            <label style={{ display: 'grid', gap: 4 }}>
-              <span style={labelStyle}>Max party</span>
-              <input
-                type="number"
-                min={1}
-                disabled={disabled}
-                style={inputStyle}
-                value={zone.max_party_size}
-                onChange={(e) =>
-                  updateAt(index, {
-                    max_party_size: Math.max(1, parseInt(e.target.value, 10) || 12),
                   })
                 }
               />
@@ -290,7 +260,7 @@ const iconBtn: React.CSSProperties = {
   fontWeight: 600,
   borderRadius: 6,
   border: '1px solid rgba(15, 23, 42, 0.1)',
-  background: '#fff',
+  background: 'var(--bk-card)',
   cursor: 'pointer',
 }
 
@@ -300,8 +270,8 @@ const primaryBtn: React.CSSProperties = {
   fontWeight: 600,
   borderRadius: 8,
   border: 'none',
-  background: '#0f172a',
-  color: '#fff',
+  background: 'var(--bk-inverse)',
+  color: 'var(--bk-inverse-text)',
   cursor: 'pointer',
 }
 
@@ -311,7 +281,7 @@ const secondaryBtn: React.CSSProperties = {
   fontWeight: 600,
   borderRadius: 8,
   border: '1px solid rgba(15, 23, 42, 0.12)',
-  background: '#fff',
-  color: '#334155',
+  background: 'var(--bk-card)',
+  color: 'var(--bk-text)',
   cursor: 'pointer',
 }

@@ -5,8 +5,8 @@ export default function DashboardLoading() {
         minHeight: '100vh',
         display: 'grid',
         placeItems: 'center',
-        background: '#0a1628',
-        color: '#94a3b8',
+        background: 'var(--t-bg-app)',
+        color: 'var(--t-text-muted)',
         fontSize: 14,
       }}
     >

@@ -1,10 +1,11 @@
 'use client'
 
-import { motion, useReducedMotion } from 'framer-motion'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { CrmGuestDetail } from '@/components/crm-guest-detail'
 import { DashboardOceanNav } from '@/components/dashboard-ocean-nav'
+import { resolveBusinessAccess } from '@/lib/business-access'
 import { bk, bkCard } from '@/lib/bookings-compact-ui'
 import type { CrmCustomer } from '@/lib/crm-customer'
 import { mapDbCustomerBase } from '@/lib/crm-customer'
@@ -40,6 +41,7 @@ function GuestAvatar({ name, isUnknown, size = 34 }: { name: string; isUnknown: 
         color: isUnknown ? unknownGuestAvatarStyle.color : '#fff',
         fontSize: size * 0.38,
         fontWeight: 600,
+        boxShadow: size >= 44 ? 'var(--bk-shadow-md)' : 'none',
       }}
     >
       {getGuestInitials(name)}
@@ -59,9 +61,9 @@ function CrmTagChips({ tags, compact }: { tags: CrmGuestTag[]; compact?: boolean
               display: 'inline-flex',
               alignItems: 'center',
               gap: 4,
-              padding: compact ? '2px 6px' : '2px 8px',
+              padding: compact ? '2px 6px' : '3px 9px',
               borderRadius: 999,
-              fontSize: compact ? 8 : 9,
+              fontSize: compact ? 8.5 : 10,
               fontWeight: 700,
               background: ts.bg,
               border: `1px solid ${ts.border}`,
@@ -84,115 +86,70 @@ function CrmTagChips({ tags, compact }: { tags: CrmGuestTag[]; compact?: boolean
   )
 }
 
-const FILTERS = GUEST_TAG_FILTERS
-
 function CrmGuestFilterBar({
   value,
   onChange,
+  counts,
 }: {
   value: GuestTagFilter
   onChange: (next: GuestTagFilter) => void
+  counts: Record<string, number>
 }) {
-  const reduceMotion = useReducedMotion()
-  const trackRef = useRef<HTMLDivElement>(null)
-  const buttonRefs = useRef<Partial<Record<GuestTagFilter, HTMLButtonElement>>>({})
-  const [indicator, setIndicator] = useState({ x: 0, width: 0, height: 0 })
-
-  const measureIndicator = useCallback(() => {
-    const track = trackRef.current
-    const button = buttonRefs.current[value]
-    if (!track || !button) return
-    const trackRect = track.getBoundingClientRect()
-    const buttonRect = button.getBoundingClientRect()
-    setIndicator({
-      x: buttonRect.left - trackRect.left,
-      width: buttonRect.width,
-      height: buttonRect.height,
-    })
-  }, [value])
-
-  useLayoutEffect(() => {
-    measureIndicator()
-    const frame = requestAnimationFrame(measureIndicator)
-    return () => cancelAnimationFrame(frame)
-  }, [measureIndicator])
-
-  useEffect(() => {
-    window.addEventListener('resize', measureIndicator)
-    return () => window.removeEventListener('resize', measureIndicator)
-  }, [measureIndicator])
-
+  const [hover, setHover] = useState<GuestTagFilter | null>(null)
   return (
-    <div style={{ width: 'fit-content', maxWidth: '100%', justifySelf: 'start' }}>
-      <motion.div
-        ref={trackRef}
-        layout={false}
-        style={{
-          position: 'relative',
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 6,
-          flexWrap: 'wrap',
-        }}
-      >
-        <motion.div
-          aria-hidden
-          initial={false}
-          animate={{
-            x: indicator.x,
-            width: indicator.width,
-            height: indicator.height,
-          }}
-          transition={
-            reduceMotion
-              ? { duration: 0.01 }
-              : { type: 'spring', stiffness: 520, damping: 38, mass: 0.72 }
-          }
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            borderRadius: 999,
-            background: '#0f172a',
-            boxShadow: '0 1px 2px rgba(15, 23, 42, 0.12)',
-            pointerEvents: 'none',
-            willChange: 'transform, width, height',
-          }}
-        />
-        {FILTERS.map((f) => {
-          const active = value === f
-          return (
-            <button
-              key={f}
-              ref={(el) => {
-                if (el) buttonRefs.current[f] = el
-              }}
-              type="button"
-              onClick={() => onChange(f)}
-              aria-pressed={active}
-              style={{
-                position: 'relative',
-                zIndex: 1,
-                padding: '5px 12px',
-                borderRadius: 999,
-                border: active ? '1px solid transparent' : bk.border,
-                background: active ? 'transparent' : '#ffffff',
-                color: active ? '#ffffff' : '#64748b',
-                fontSize: bk.caption,
-                fontWeight: active ? 600 : 500,
-                lineHeight: 1.2,
-                whiteSpace: 'nowrap',
-                cursor: 'pointer',
-                fontFamily: bk.font,
-                outline: 'none',
-                transition: 'color 0.15s ease',
-              }}
-            >
-              {f}
-            </button>
-          )
-        })}
-      </motion.div>
+    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', width: 'fit-content' }}>
+      {GUEST_TAG_FILTERS.map((f) => {
+        const active = value === f
+        const hot = hover === f && !active
+        return (
+          <button
+            key={f}
+            type="button"
+            onClick={() => onChange(f)}
+            aria-pressed={active}
+            onMouseEnter={() => setHover(f)}
+            onMouseLeave={() => setHover(null)}
+            style={{
+              padding: '6px 13px',
+              borderRadius: 999,
+              border: active ? '1px solid var(--bk-inverse)' : bk.border,
+              background: active ? 'var(--bk-inverse)' : hot ? 'var(--bk-surface)' : 'var(--bk-card)',
+              color: active ? 'var(--bk-inverse-text)' : 'var(--bk-body)',
+              fontSize: bk.caption,
+              fontWeight: active ? 600 : 500,
+              lineHeight: 1.2,
+              whiteSpace: 'nowrap',
+              cursor: 'pointer',
+              fontFamily: bk.font,
+              outline: 'none',
+              transition: 'background 0.16s ease, color 0.16s ease, border-color 0.16s ease',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              boxShadow: active ? 'var(--bk-shadow-md)' : 'none',
+            }}
+          >
+            {f}
+            {counts[f] != null && counts[f] > 0 && (
+              <span
+                style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  lineHeight: 1,
+                  padding: '2px 6px',
+                  borderRadius: 999,
+                  background: active ? 'rgba(255,255,255,0.22)' : 'var(--bk-surface)',
+                  color: active ? 'var(--bk-inverse-text)' : 'var(--bk-body)',
+                  minWidth: 18,
+                  textAlign: 'center',
+                }}
+              >
+                {counts[f]}
+              </span>
+            )}
+          </button>
+        )
+      })}
     </div>
   )
 }
@@ -203,14 +160,18 @@ type CrmGuestsClientProps = {
 }
 
 export function CrmGuestsClient({ initialCustomers, initialBusinessId }: CrmGuestsClientProps) {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const guestParam = searchParams.get('guest')
   const [customers, setCustomers] = useState(initialCustomers)
   const [loading, setLoading] = useState(initialCustomers.length === 0)
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(guestParam)
   const [filterTag, setFilterTag] = useState<GuestTagFilter>('All')
   const [businessId, setBusinessId] = useState<string | null>(initialBusinessId)
   const customersRef = useRef(initialCustomers)
+  // eslint-disable-next-line react-hooks/refs -- latest-ref pattern for silent refetch decisions
   customersRef.current = customers
 
   const loadCustomers = useCallback(async (options?: { silent?: boolean }) => {
@@ -228,13 +189,14 @@ export function CrmGuestsClient({ initialCustomers, initialBusinessId }: CrmGues
       if (!silent) setLoading(false)
       return
     }
-    const { data: biz } = await supabase.from('businesses').select('id').eq('user_id', user.id).maybeSingle()
-    if (!biz?.id) {
+    const access = await resolveBusinessAccess()
+    if (!access) {
       setCustomers([])
       setBusinessId(null)
       if (!silent) setLoading(false)
       return
     }
+    const biz = { id: access.businessId }
     setBusinessId((prev) => (prev === biz.id ? prev : biz.id))
     const [customersRes, appointmentsRes] = await Promise.all([
       supabase
@@ -279,6 +241,7 @@ export function CrmGuestsClient({ initialCustomers, initialBusinessId }: CrmGues
   }, [])
 
   const loadCustomersRef = useRef(loadCustomers)
+  // eslint-disable-next-line react-hooks/refs -- latest-ref pattern so effects call the current loader
   loadCustomersRef.current = loadCustomers
 
   useEffect(() => {
@@ -313,6 +276,14 @@ export function CrmGuestsClient({ initialCustomers, initialBusinessId }: CrmGues
     return { total, newThisMonth, repeatRate, returningCount }
   }, [customers])
 
+  const counts = useMemo(() => {
+    const c: Record<string, number> = { All: customers.length }
+    for (const f of ['New', 'Regular', 'Loyal', 'No-show', 'Large party'] as GuestTagFilter[]) {
+      c[f] = customers.filter((g) => guestMatchesFilter(g.tags, f)).length
+    }
+    return c
+  }, [customers])
+
   const enriched = useMemo(
     () =>
       customers.map((c) => ({
@@ -345,6 +316,11 @@ export function CrmGuestsClient({ initialCustomers, initialBusinessId }: CrmGues
 
   const selected = customers.find((c) => c.id === selectedId) ?? null
 
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- sync selected guest with URL deep link
+    if (guestParam) setSelectedId(guestParam)
+  }, [guestParam])
+
   function handleNotesSaved(id: string, notes: string) {
     setCustomers((prev) => prev.map((c) => (c.id === id ? { ...c, notes } : c)))
   }
@@ -357,16 +333,17 @@ export function CrmGuestsClient({ initialCustomers, initialBusinessId }: CrmGues
   const showInitialSkeleton = loading && customers.length === 0
 
   return (
-    <DashboardOceanNav activeNav="CRM" flatBackground="#f8fafc">
+    <DashboardOceanNav activeNav="CRM" flatBackground="var(--bk-bg)">
       {({ isMobile, openNav }) => (
         <main
           style={{
-            background: '#f8fafc',
+            background: 'var(--bk-bg)',
             minHeight: '100vh',
             margin: isMobile ? '-20px -16px' : '-36px',
             padding: isMobile ? bk.pagePadMobile : bk.pagePad,
             display: 'grid',
-            gap: 12,
+            gap: 14,
+            alignContent: 'start',
             fontFamily: bk.font,
           }}
         >
@@ -379,7 +356,7 @@ export function CrmGuestsClient({ initialCustomers, initialBusinessId }: CrmGues
                 height: 40,
                 borderRadius: 10,
                 border: bk.border,
-                background: '#fff',
+                background: 'var(--bk-card)',
                 fontSize: 18,
                 cursor: 'pointer',
                 justifySelf: 'start',
@@ -389,6 +366,7 @@ export function CrmGuestsClient({ initialCustomers, initialBusinessId }: CrmGues
             </button>
           )}
 
+          {/* header */}
           <div
             style={{
               display: 'flex',
@@ -399,34 +377,55 @@ export function CrmGuestsClient({ initialCustomers, initialBusinessId }: CrmGues
             }}
           >
             <div>
-              <div style={{ fontSize: bk.micro, fontWeight: 700, color: '#94a3b8', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
-                Guest CRM
-              </div>
-              <h1 style={{ margin: '4px 0 0', fontSize: bk.h1, fontWeight: 700, color: '#0f172a', letterSpacing: '-0.03em' }}>
-                Guests
-              </h1>
-              <p
+              <div
                 style={{
-                  margin: '4px 0 0',
-                  fontSize: bk.body,
-                  color: '#64748b',
-                  minHeight: 18,
+                  fontSize: bk.micro,
+                  fontWeight: 700,
+                  color: 'var(--bk-muted)',
+                  letterSpacing: '0.1em',
+                  textTransform: 'uppercase',
                 }}
               >
+                Guest CRM
+              </div>
+              <h1
+                style={{
+                  margin: '5px 0 0',
+                  fontSize: 26,
+                  fontWeight: 700,
+                  color: 'var(--bk-head)',
+                  letterSpacing: '-0.03em',
+                }}
+              >
+                Guests
+              </h1>
+              <p style={{ margin: '4px 0 0', fontSize: bk.body, color: 'var(--bk-body)' }}>
                 {showInitialSkeleton
                   ? 'Loading guest list…'
-                  : `${stats.total} guest${stats.total === 1 ? '' : 's'} from AI chats`}
+                  : `${stats.total} guests from AI chats & bookings`}
               </p>
             </div>
-            <div style={{ position: 'relative', flex: isMobile ? '1 1 100%' : '0 1 280px', minWidth: isMobile ? undefined : 200 }}>
+            <div
+              style={{
+                position: 'relative',
+                flex: isMobile ? '1 1 100%' : '0 1 290px',
+                minWidth: isMobile ? undefined : 220,
+              }}
+            >
               <svg
                 width="14"
                 height="14"
                 viewBox="0 0 24 24"
                 fill="none"
-                stroke="#94a3b8"
+                stroke="var(--bk-muted)"
                 strokeWidth="1.8"
-                style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}
+                style={{
+                  position: 'absolute',
+                  left: 11,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  pointerEvents: 'none',
+                }}
               >
                 <circle cx="11" cy="11" r="7" />
                 <path d="m21 21-4.3-4.3" />
@@ -438,20 +437,28 @@ export function CrmGuestsClient({ initialCustomers, initialBusinessId }: CrmGues
                 placeholder="Search name, email, phone…"
                 style={{
                   width: '100%',
-                  padding: '7px 10px 7px 30px',
+                  padding: '8px 12px 8px 32px',
                   borderRadius: bk.radiusSm,
                   border: bk.border,
-                  background: '#fff',
+                  background: 'var(--bk-card)',
                   fontSize: bk.body,
-                  color: '#0f172a',
+                  color: 'var(--bk-head)',
                   outline: 'none',
                   boxSizing: 'border-box',
+                  fontFamily: bk.font,
                 }}
               />
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: bk.gapMd }}>
+          {/* stats */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)',
+              gap: 12,
+            }}
+          >
             {[
               { label: 'Total guests', value: showInitialSkeleton ? '—' : String(stats.total), sub: undefined },
               {
@@ -470,14 +477,22 @@ export function CrmGuestsClient({ initialCustomers, initialBusinessId }: CrmGues
               },
             ].map(({ label, value, sub }) => (
               <div key={label} style={{ ...bkCard, padding: bk.cardPad, minHeight: 88 }}>
-                <div style={{ fontSize: bk.micro, fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                <div
+                  style={{
+                    fontSize: bk.micro,
+                    fontWeight: 600,
+                    color: 'var(--bk-muted)',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.08em',
+                  }}
+                >
                   {label}
                 </div>
                 <div
                   style={{
                     fontSize: bk.statValue,
                     fontWeight: 700,
-                    color: '#0f172a',
+                    color: 'var(--bk-head)',
                     marginTop: 4,
                     lineHeight: 1,
                     minHeight: 28,
@@ -485,226 +500,247 @@ export function CrmGuestsClient({ initialCustomers, initialBusinessId }: CrmGues
                 >
                   {value}
                 </div>
-                <div style={{ fontSize: bk.micro, color: '#64748b', marginTop: 4, minHeight: 14 }}>
-                  {sub ?? '\u00a0'}
+                <div style={{ fontSize: bk.micro, color: 'var(--bk-body)', marginTop: 4, minHeight: 14 }}>
+                  {sub ?? ' '}
                 </div>
               </div>
             ))}
           </div>
 
-          <CrmGuestFilterBar value={filterTag} onChange={setFilterTag} />
+          {/* filter bar */}
+          <CrmGuestFilterBar value={filterTag} onChange={setFilterTag} counts={counts} />
 
           {error && (
-            <div style={{ padding: 12, borderRadius: 8, background: '#fef2f2', color: '#dc2626', fontSize: bk.body }}>
+            <div
+              style={{
+                padding: 12,
+                borderRadius: 8,
+                background: 'var(--bk-danger-bg)',
+                color: 'var(--bk-danger)',
+                fontSize: bk.body,
+              }}
+            >
               {error}
             </div>
           )}
 
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: isMobile ? '1fr' : selected ? 'minmax(0, 1fr) 320px' : '1fr',
-              gap: bk.gapMd,
-              alignItems: 'start',
-            }}
-          >
-            <div style={{ ...bkCard, overflow: 'hidden', minHeight: showInitialSkeleton ? 320 : undefined }}>
-              {showInitialSkeleton ? (
-                <div style={{ padding: 16, display: 'grid', gap: 8 }}>
-                  {Array.from({ length: 6 }).map((_, i) => (
-                    <div
-                      key={i}
+          {/* guest list */}
+          <div style={{ ...bkCard, overflow: 'hidden', minHeight: showInitialSkeleton ? 320 : undefined }}>
+            {showInitialSkeleton ? (
+              <div style={{ padding: 16, display: 'grid', gap: 8 }}>
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      height: 48,
+                      borderRadius: 8,
+                      background: 'linear-gradient(90deg, var(--bk-surface) 0%, var(--bk-border) 50%, var(--bk-surface) 100%)',
+                    }}
+                  />
+                ))}
+              </div>
+            ) : customers.length === 0 ? (
+              <div style={{ padding: 40, textAlign: 'center' }}>
+                <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--bk-head)' }}>No guests yet</div>
+                <p style={{ marginTop: 6, fontSize: bk.body, color: 'var(--bk-body)', lineHeight: 1.5 }}>
+                  When guests chat with your AI, their profiles appear here.
+                </p>
+              </div>
+            ) : filtered.length === 0 ? (
+              <div style={{ padding: 36, textAlign: 'center', color: 'var(--bk-muted)', fontSize: bk.body }}>
+                No guests match this filter
+              </div>
+            ) : isMobile ? (
+              <div style={{ padding: 10, display: 'grid', gap: 6 }}>
+                {filtered.map((c) => {
+                  const active = c.id === selectedId
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => setSelectedId(active ? null : c.id)}
                       style={{
-                        height: 48,
+                        width: '100%',
+                        textAlign: 'left',
+                        padding: '10px 12px',
                         borderRadius: 8,
-                        background: 'linear-gradient(90deg, #f1f5f9 0%, #e2e8f0 50%, #f1f5f9 100%)',
+                        border: active ? '1px solid var(--bk-blue-border)' : bk.border,
+                        background: active ? 'var(--bk-blue-bg)' : 'var(--bk-card)',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'stretch',
+                        gap: 8,
+                        fontFamily: 'inherit',
                       }}
-                    />
-                  ))}
-                </div>
-              ) : customers.length === 0 ? (
-                <div style={{ padding: 40, textAlign: 'center' }}>
-                  <div style={{ fontSize: 15, fontWeight: 600, color: '#0f172a' }}>No guests yet</div>
-                  <p style={{ marginTop: 6, fontSize: bk.body, color: '#64748b', lineHeight: 1.5 }}>
-                    When guests chat with your AI, their profiles appear here.
-                  </p>
-                </div>
-              ) : filtered.length === 0 ? (
-                <div style={{ padding: 32, textAlign: 'center', color: '#94a3b8', fontSize: bk.body }}>
-                  No guests match this filter
-                </div>
-              ) : isMobile ? (
-                <div style={{ padding: 10, display: 'grid', gap: 6 }}>
-                  {filtered.map((c) => {
-                    const active = c.id === selectedId
-                    return (
-                      <button
-                        key={c.id}
-                        type="button"
-                        onClick={() => setSelectedId(active ? null : c.id)}
-                        style={{
-                          width: '100%',
-                          textAlign: 'left',
-                          padding: '10px 12px',
-                          borderRadius: 8,
-                          border: active ? '1px solid #bfdbfe' : bk.border,
-                          background: active ? '#eff6ff' : '#fff',
-                          cursor: 'pointer',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          alignItems: 'stretch',
-                          gap: 8,
-                          fontFamily: 'inherit',
-                        }}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                          <GuestAvatar name={c.name} isUnknown={c.isUnknownGuest} size={36} />
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div
-                              style={{
-                                fontSize: bk.body,
-                                fontWeight: 600,
-                                color: c.isUnknownGuest ? '#94a3b8' : '#0f172a',
-                              }}
-                            >
-                              {c.displayLabel}
-                            </div>
-                            <div
-                              style={{
-                                fontSize: bk.micro,
-                                color: '#94a3b8',
-                                marginTop: 2,
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap',
-                              }}
-                            >
-                              {c.contact || 'No contact'}
-                            </div>
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <GuestAvatar name={c.name} isUnknown={c.isUnknownGuest} size={36} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div
+                            style={{
+                              fontSize: bk.body,
+                              fontWeight: 600,
+                              color: c.isUnknownGuest ? 'var(--bk-muted)' : 'var(--bk-head)',
+                            }}
+                          >
+                            {c.displayLabel}
+                          </div>
+                          <div
+                            style={{
+                              fontSize: bk.micro,
+                              color: 'var(--bk-muted)',
+                              marginTop: 2,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {c.contact || 'No contact'}
                           </div>
                         </div>
-                        <div style={{ fontSize: bk.micro, color: '#64748b' }}>
-                          {c.bookingCount} booking{c.bookingCount === 1 ? '' : 's'} · Last {c.lastBookingLabel}
-                        </div>
-                        <CrmTagChips tags={c.tags} compact />
-                      </button>
-                    )
-                  })}
-                </div>
-              ) : (
-                <div style={{ overflowX: 'auto' }}>
-                  <table
-                    style={{
-                      width: '100%',
-                      minWidth: 920,
-                      borderCollapse: 'collapse',
-                      tableLayout: 'fixed',
-                    }}
-                  >
-                    <thead>
-                      <tr style={{ borderBottom: '1px solid #e2e8f0', background: '#fafafa' }}>
-                        {[
-                          { col: 'Guest', w: '26%' },
-                          { col: 'Joined', w: '12%' },
-                          { col: 'Bookings', w: '9%' },
-                          { col: 'Last booking', w: '14%' },
-                          { col: 'Avg party', w: '9%' },
-                          { col: 'Tags', w: '30%' },
-                        ].map(({ col, w }) => (
-                          <th
-                            key={col}
-                            style={{
-                              padding: '8px 12px',
-                              textAlign: 'left',
-                              fontSize: 9,
-                              fontWeight: 700,
-                              color: '#94a3b8',
-                              textTransform: 'uppercase',
-                              letterSpacing: '0.08em',
-                              width: w,
-                            }}
-                          >
-                            {col}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filtered.map((c, i) => {
-                        const active = c.id === selectedId
-                        return (
-                          <tr
-                            key={c.id}
-                            onClick={() => setSelectedId(c.id)}
-                            style={{
-                              cursor: 'pointer',
-                              background: active ? '#eff6ff' : 'transparent',
-                              borderBottom: i < filtered.length - 1 ? '1px solid #f1f5f9' : 'none',
-                            }}
-                          >
-                            <td style={{ padding: '9px 12px' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                                <GuestAvatar name={c.name} isUnknown={c.isUnknownGuest} />
-                                <div style={{ minWidth: 0 }}>
-                                  <div
-                                    style={{
-                                      fontSize: bk.body,
-                                      fontWeight: 600,
-                                      color: c.isUnknownGuest ? '#94a3b8' : '#0f172a',
-                                      overflow: 'hidden',
-                                      textOverflow: 'ellipsis',
-                                      whiteSpace: 'nowrap',
-                                    }}
-                                  >
-                                    {c.displayLabel}
-                                  </div>
-                                  <div
-                                    style={{
-                                      fontSize: bk.micro,
-                                      color: '#94a3b8',
-                                      marginTop: 2,
-                                      overflow: 'hidden',
-                                      textOverflow: 'ellipsis',
-                                      whiteSpace: 'nowrap',
-                                    }}
-                                  >
-                                    {c.contact || 'No contact'}
-                                  </div>
+                      </div>
+                      <div style={{ fontSize: bk.micro, color: 'var(--bk-body)' }}>
+                        {c.bookingCount} booking{c.bookingCount === 1 ? '' : 's'} · Last{' '}
+                        {c.lastBookingLabel}
+                      </div>
+                      <CrmTagChips tags={c.tags} compact />
+                    </button>
+                  )
+                })}
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table
+                  style={{
+                    width: '100%',
+                    minWidth: 880,
+                    borderCollapse: 'collapse',
+                    tableLayout: 'fixed',
+                  }}
+                >
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--bk-border)', background: 'var(--bk-surface)' }}>
+                      {[
+                        { col: 'Guest', w: '26%' },
+                        { col: 'Joined', w: '12%' },
+                        { col: 'Bookings', w: '9%' },
+                        { col: 'Last booking', w: '14%' },
+                        { col: 'Avg party', w: '9%' },
+                        { col: 'Tags', w: '30%' },
+                      ].map(({ col, w }) => (
+                        <th
+                          key={col}
+                          style={{
+                            padding: '10px 14px',
+                            textAlign: 'left',
+                            fontSize: 9,
+                            fontWeight: 700,
+                            color: 'var(--bk-muted)',
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.08em',
+                            width: w,
+                          }}
+                        >
+                          {col}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtered.map((c, i) => {
+                      const active = c.id === selectedId
+                      return (
+                        <tr
+                          key={c.id}
+                          onClick={() => setSelectedId(c.id)}
+                          style={{
+                            cursor: 'pointer',
+                            background: active ? 'var(--bk-blue-bg)' : 'transparent',
+                            borderBottom: i < filtered.length - 1 ? '1px solid var(--bk-surface)' : 'none',
+                            boxShadow: active ? 'inset 3px 0 0 var(--bk-accent)' : 'none',
+                          }}
+                        >
+                          <td style={{ padding: '10px 14px' }}>
+                            <div
+                              style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }}
+                            >
+                              <GuestAvatar name={c.name} isUnknown={c.isUnknownGuest} />
+                              <div style={{ minWidth: 0 }}>
+                                <div
+                                  style={{
+                                    fontSize: bk.body,
+                                    fontWeight: 600,
+                                    color: c.isUnknownGuest ? 'var(--bk-muted)' : 'var(--bk-head)',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  {c.displayLabel}
+                                </div>
+                                <div
+                                  style={{
+                                    fontSize: bk.micro,
+                                    color: 'var(--bk-muted)',
+                                    marginTop: 2,
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  {c.contact || 'No contact'}
                                 </div>
                               </div>
-                            </td>
-                            <td style={{ padding: '9px 12px', fontSize: bk.body, color: '#64748b' }}>{c.joined}</td>
-                            <td style={{ padding: '9px 12px', fontSize: bk.body, fontWeight: 700, color: '#0f172a' }}>
-                              {c.bookingCount}
-                            </td>
-                            <td style={{ padding: '9px 12px', fontSize: bk.body, color: '#64748b' }}>
-                              {c.lastBookingLabel}
-                            </td>
-                            <td style={{ padding: '9px 12px', fontSize: bk.body, color: '#64748b' }}>
-                              {c.avgPartyLabel}
-                            </td>
-                            <td style={{ padding: '9px 12px' }}>
-                              <CrmTagChips tags={c.tags} compact />
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-
-            {selected && (
-              <CrmGuestDetail
-                customer={selected}
-                businessId={businessId}
-                onClose={() => setSelectedId(null)}
-                onNotesSaved={handleNotesSaved}
-                onDelete={handleDelete}
-              />
+                            </div>
+                          </td>
+                          <td style={{ padding: '10px 14px', fontSize: bk.body, color: 'var(--bk-body)' }}>
+                            {c.joined}
+                          </td>
+                          <td
+                            style={{
+                              padding: '10px 14px',
+                              fontSize: bk.body,
+                              fontWeight: 700,
+                              color: 'var(--bk-head)',
+                            }}
+                          >
+                            {c.bookingCount}
+                          </td>
+                          <td style={{ padding: '10px 14px', fontSize: bk.body, color: 'var(--bk-body)' }}>
+                            {c.lastBookingLabel}
+                          </td>
+                          <td style={{ padding: '10px 14px', fontSize: bk.body, color: 'var(--bk-body)' }}>
+                            {c.avgPartyLabel}
+                          </td>
+                          <td style={{ padding: '10px 14px' }}>
+                            <CrmTagChips tags={c.tags} compact />
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
+
+          <div style={{ fontSize: bk.micro, color: 'var(--bk-muted)', textAlign: 'right' }}>
+            Showing {filtered.length} of {customers.length} guests
+          </div>
+
+          {selected && (
+            <CrmGuestDetail
+              customer={selected}
+              businessId={businessId}
+              onClose={() => {
+                setSelectedId(null)
+                if (guestParam) router.replace('/dashboard/crm')
+              }}
+              onNotesSaved={handleNotesSaved}
+              onDelete={handleDelete}
+            />
+          )}
         </main>
       )}
     </DashboardOceanNav>

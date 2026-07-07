@@ -1,3 +1,4 @@
+import { resolveBusinessAccessServer } from '@/lib/business-access-server'
 import { mapDbCustomerBase } from '@/lib/crm-customer'
 import type { CrmCustomer } from '@/lib/crm-customer'
 import { enrichCrmCustomers, type CrmAppointmentRow } from '@/lib/crm-guest-metrics'
@@ -17,15 +18,11 @@ export async function loadCrmCustomersServer(): Promise<CrmCustomersPayload> {
     return { customers: [], businessId: null }
   }
 
-  const { data: biz } = await supabase
-    .from('businesses')
-    .select('id')
-    .eq('user_id', user.id)
-    .maybeSingle()
-
-  if (!biz?.id) {
+  const access = await resolveBusinessAccessServer(supabase, user.id)
+  if (!access) {
     return { customers: [], businessId: null }
   }
+  const biz = { id: access.businessId }
 
   const [customersRes, appointmentsRes] = await Promise.all([
     supabase

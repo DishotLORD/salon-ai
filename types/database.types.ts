@@ -21,6 +21,8 @@ export type Database = {
           language: string | null
           menu_pdf_text: string | null
           operating_hours: Json
+          booking_settings: Json
+          notification_settings: Json
           created_at: string
           updated_at: string
         }
@@ -37,6 +39,8 @@ export type Database = {
           language?: string | null
           menu_pdf_text?: string | null
           operating_hours?: Json
+          booking_settings?: Json
+          notification_settings?: Json
           created_at?: string
           updated_at?: string
         }

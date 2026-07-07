@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono, Inter, Playfair_Display, Plus_Jakarta_Sans } from "next/font/google";
+import { Geist, Geist_Mono, Inter, Montserrat, Playfair_Display, Plus_Jakarta_Sans } from "next/font/google";
 
 import { AppProviders } from "@/components/app-providers";
 
@@ -27,6 +27,12 @@ const inter = Inter({
   weight: ["400", "500", "600", "700"],
 });
 
+const montserrat = Montserrat({
+  variable: "--font-montserrat",
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700", "800"],
+});
+
 const plusJakarta = Plus_Jakarta_Sans({
   variable: "--font-plus-jakarta",
   subsets: ["latin"],
@@ -47,14 +53,14 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} ${playfair.variable} ${inter.variable} ${plusJakarta.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} ${playfair.variable} ${inter.variable} ${plusJakarta.variable} ${montserrat.variable} h-full antialiased`}
     >
       <head>
         <script dangerouslySetInnerHTML={{ __html: `(function(){try{var t=localStorage.getItem('theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;}catch(e){}})();` }} />
       </head>
       <body
         className="min-h-full flex flex-col"
-        style={{ margin: 0, background: "#ffffff", color: "#0f172a" }}
+        style={{ margin: 0, background: "#ffffff", color: "#0f172a", overflowX: "hidden" }}
         suppressHydrationWarning
       >
         <AppProviders>{children}</AppProviders>

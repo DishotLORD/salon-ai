@@ -48,16 +48,16 @@ export const SETTINGS_CATEGORIES: SettingsCategoryDef[] = [
 ]
 
 const navTheme = {
-  text: '#0f172a',
-  textMuted: '#94a3b8',
+  text: 'var(--bk-head)',
+  textMuted: 'var(--bk-muted)',
   accent: '#38bdf8',
   accentDark: '#0284c7',
-  activeBg: '#ffffff',
+  activeBg: 'var(--bk-toggle-active)',
   activeBorder: 'rgba(56, 189, 248, 0.45)',
-  hover: '#f8fafc',
-  trackBg: '#f1f5f9',
+  hover: 'var(--bk-surface)',
+  trackBg: 'var(--bk-surface)',
   trackBorder: 'rgba(15, 23, 42, 0.06)',
-  iconBg: '#e2e8f0',
+  iconBg: 'var(--bk-surface-2)',
   font: 'var(--font-plus-jakarta, system-ui, sans-serif)',
 } as const
 

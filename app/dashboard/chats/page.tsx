@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { DashboardOceanNav } from '@/components/dashboard-ocean-nav'
+import { resolveBusinessAccess } from '@/lib/business-access'
 import { oceanTransition } from '@/lib/ocean-motion'
 import { supabase } from '@/lib/supabase'
 import { card, t } from '@/lib/dashboard-theme'
@@ -183,11 +184,16 @@ export default function ChatsInboxPage() {
         return
       }
 
-      const { data: business } = await supabase
-        .from('businesses')
-        .select('id, agent_name')
-        .eq('user_id', user.id)
-        .maybeSingle()
+      const access = await resolveBusinessAccess()
+      if (cancelled) return
+
+      const { data: business } = access
+        ? await supabase
+            .from('businesses')
+            .select('id, agent_name')
+            .eq('id', access.businessId)
+            .maybeSingle()
+        : { data: null }
 
       if (cancelled) return
 
@@ -245,25 +251,31 @@ export default function ChatsInboxPage() {
 
       setInboxFetchError(false)
 
-      console.log('[chats] business_id:', business.id, '| conversations returned:', data?.length ?? 0, data)
-
       if (!data?.length) {
         setConversationList([])
         setSelectedId('')
         return
       }
 
-      // Auto-close conversations inactive for more than 15 minutes
+      // Auto-close conversations inactive for more than 15 minutes. Staleness is
+      // based on the LAST MESSAGE time (falling back to updated_at), parsed as
+      // UTC — new Date() on a suffix-less Supabase timestamp would read it in
+      // local time and keep chats "fresh" for hours.
       const STALE_MS = 15 * 60 * 1000
       const now = Date.now()
       const staleIds: string[] = []
       for (const row of data) {
-        const status = ((row as DbConversationRow).status ?? '').toLowerCase()
-        const updatedAt = (row as DbConversationRow).updated_at
-          ? new Date((row as DbConversationRow).updated_at!).getTime()
-          : 0
-        if ((status === 'active' || status === '') && updatedAt > 0 && now - updatedAt > STALE_MS) {
-          staleIds.push((row as DbConversationRow).id)
+        const conv = row as DbConversationRow
+        const status = (conv.status ?? '').toLowerCase()
+        if (status !== 'active' && status !== '') continue
+        const lastMessageAt = (conv.messages ?? []).reduce<string | null>(
+          (latest, m) => (latest === null || m.created_at > latest ? m.created_at : latest),
+          null,
+        )
+        const lastActivityIso = lastMessageAt ?? conv.updated_at
+        const lastActivity = lastActivityIso ? parseUtc(lastActivityIso).getTime() : 0
+        if (lastActivity > 0 && now - lastActivity > STALE_MS) {
+          staleIds.push(conv.id)
         }
       }
       if (staleIds.length > 0) {
@@ -374,12 +386,32 @@ export default function ChatsInboxPage() {
     }
   }, [selectedId, selectedConversation])
 
-  // ── Patch customer_name in the inbox list when syncGuestInfo writes back ────
+  // ── Live inbox: new conversations appear, names/status/previews stay fresh ──
+  // (Requires messages/conversations in the supabase_realtime publication —
+  // migration 016.)
   useEffect(() => {
     if (!businessId) return
 
     const channel = supabase
       .channel(`conversations:${businessId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'conversations',
+          filter: `business_id=eq.${businessId}`,
+        },
+        (payload) => {
+          const row = payload.new as DbConversationRow
+          if (typeof row.id !== 'string') return
+          setConversationList((prev) =>
+            prev.some((c) => c.id === row.id)
+              ? prev
+              : [mapDbConversationToConversation({ ...row, customers: null, messages: [] }), ...prev],
+          )
+        },
+      )
       .on(
         'postgres_changes',
         {
@@ -389,12 +421,18 @@ export default function ChatsInboxPage() {
           filter: `business_id=eq.${businessId}`,
         },
         (payload) => {
-          const updated = payload.new as { id?: string; customer_name?: string | null; status?: string | null }
+          const updated = payload.new as {
+            id?: string
+            customer_name?: string | null
+            status?: string | null
+            updated_at?: string | null
+          }
           if (typeof updated.id !== 'string') return
+          const conversationId = updated.id
 
           setConversationList((prev) =>
             prev.map((c) => {
-              if (c.id !== updated.id) return c
+              if (c.id !== conversationId) return c
               return {
                 ...c,
                 customerName:
@@ -402,9 +440,30 @@ export default function ChatsInboxPage() {
                     ? updated.customer_name.trim()
                     : c.customerName,
                 status: updated.status ? normalizeStatus(updated.status) : c.status,
+                time: updated.updated_at ? formatRelativeTime(updated.updated_at) : c.time,
               }
             }),
           )
+
+          // The API bumps updated_at on every message, so refresh the preview
+          // for conversations the owner is not currently reading.
+          void (async () => {
+            const { data: msg } = await supabase
+              .from('messages')
+              .select('content, created_at')
+              .eq('conversation_id', conversationId)
+              .order('created_at', { ascending: false })
+              .limit(1)
+              .maybeSingle()
+            if (!msg?.content) return
+            setConversationList((prev) =>
+              prev.map((c) =>
+                c.id === conversationId
+                  ? { ...c, preview: msg.content, time: formatRelativeTime(msg.created_at) }
+                  : c,
+              ),
+            )
+          })()
         },
       )
       .subscribe()
@@ -413,6 +472,32 @@ export default function ChatsInboxPage() {
       void supabase.removeChannel(channel)
     }
   }, [businessId])
+
+  // ── Refresh the transcript when opening a conversation ──────────────────────
+  // Messages that arrived while another thread was selected are not in state
+  // (the message subscription only covers the selected conversation).
+  useEffect(() => {
+    if (!selectedId) return
+    let cancelled = false
+    void (async () => {
+      const { data: rows } = await supabase
+        .from('messages')
+        .select('id, role, content, created_at')
+        .eq('conversation_id', selectedId)
+        .order('created_at', { ascending: true })
+      if (cancelled || !rows) return
+      setConversationList((prev) =>
+        prev.map((c) => {
+          if (c.id !== selectedId) return c
+          if (rows.length <= c.messages.length) return c
+          return { ...c, messages: (rows as DbMessageRow[]).map(mapDbMessageToMessage) }
+        }),
+      )
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [selectedId])
 
   // ── Patch phone/email when syncGuestInfo updates the customers record ────
   useEffect(() => {
@@ -577,6 +662,11 @@ export default function ChatsInboxPage() {
           }
         } else {
           manualAssistantMessage = mapDbMessageToMessage(insertedAssistant as DbMessageRow)
+          // Keep updated_at in sync so ordering and the stale auto-close see this reply.
+          void supabase
+            .from('conversations')
+            .update({ updated_at: new Date().toISOString() })
+            .eq('id', conversationId)
         }
 
         setConversationList((prev) =>

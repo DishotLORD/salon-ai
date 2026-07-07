@@ -1,13 +1,11 @@
 'use client'
 
 import Link from 'next/link'
-import { motion, useReducedMotion } from 'framer-motion'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { formatCalgaryTime } from '@/lib/booking-wall-clock'
 import { parsePartySizeFromServiceName } from '@/lib/appointment-service-name'
 import { appointmentInstantFromRaw } from '@/lib/reservation-schedule'
-import { parseDiningZoneRow } from '@/lib/dining-zones'
 import { bk } from '@/lib/bookings-compact-ui'
 import { parseGuestNotes, serializeGuestNotes } from '@/lib/guest-preferences'
 import type { CrmCustomer } from '@/lib/crm-customer'
@@ -20,9 +18,7 @@ import {
   type CrmGuestTag,
   unknownGuestAvatarStyle,
 } from '@/lib/guest-display'
-import { slideInRight, oceanTransition } from '@/lib/ocean-motion'
 import { supabase } from '@/lib/supabase'
-import { t } from '@/lib/dashboard-theme'
 
 export type { CrmCustomer } from '@/lib/crm-customer'
 
@@ -47,43 +43,58 @@ function statusLabel(raw: string | null): string {
 
 function statusColors(raw: string | null): { bg: string; color: string } {
   const s = (raw ?? 'pending').toLowerCase()
-  if (s === 'confirmed') return { bg: '#dcfce7', color: '#16a34a' }
-  if (s === 'cancelled' || s === 'canceled') return { bg: '#fee2e2', color: '#dc2626' }
-  if (s === 'seated' || s === 'completed') return { bg: '#dbeafe', color: '#2563eb' }
-  if (s === 'no-show' || s === 'noshow') return { bg: '#f1f5f9', color: '#64748b' }
-  return { bg: '#fef3c7', color: '#d97706' }
+  if (s === 'confirmed') return { bg: 'var(--bk-green-bg)', color: 'var(--bk-green)' }
+  if (s === 'cancelled' || s === 'canceled') return { bg: 'var(--bk-danger-bg)', color: 'var(--bk-danger)' }
+  if (s === 'seated' || s === 'completed') return { bg: 'var(--bk-blue-bg)', color: 'var(--bk-blue)' }
+  if (s === 'no-show' || s === 'noshow') return { bg: 'var(--bk-surface)', color: 'var(--bk-body)' }
+  return { bg: 'var(--bk-amber-bg)', color: 'var(--bk-amber)' }
 }
 
-function TagChip({ tag }: { tag: CrmGuestTag }) {
-  const ts = crmTagChipStyle(tag)
+function TagChips({ tags }: { tags: CrmGuestTag[] }) {
   return (
-    <span
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 4,
-        padding: '3px 10px',
-        borderRadius: 999,
-        fontSize: 10,
-        fontWeight: 600,
-        background: ts.bg,
-        border: `1px solid ${ts.border}`,
-        color: ts.color,
-      }}
-    >
-      {tag === 'Loyal' ? (
-        <span style={{ fontSize: 9 }} aria-hidden>
-          ★
-        </span>
-      ) : (
-        <span style={{ width: 5, height: 5, borderRadius: '50%', background: ts.dot }} />
-      )}
-      {tag}
-    </span>
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+      {tags.map((tag) => {
+        const ts = crmTagChipStyle(tag)
+        return (
+          <span
+            key={tag}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+              padding: '3px 9px',
+              borderRadius: 999,
+              fontSize: 10,
+              fontWeight: 700,
+              background: ts.bg,
+              border: `1px solid ${ts.border}`,
+              color: ts.color,
+            }}
+          >
+            {tag === 'Loyal' ? (
+              <span style={{ fontSize: 8, lineHeight: 1 }} aria-hidden>
+                ★
+              </span>
+            ) : (
+              <span style={{ width: 5, height: 5, borderRadius: '50%', background: ts.dot }} />
+            )}
+            {tag}
+          </span>
+        )
+      })}
+    </div>
   )
 }
 
-function GuestAvatar({ name, isUnknown, size = 46 }: { name: string; isUnknown: boolean; size?: number }) {
+function GuestAvatar({
+  name,
+  isUnknown,
+  size = 50,
+}: {
+  name: string
+  isUnknown: boolean
+  size?: number
+}) {
   const hue = guestNameHue(name)
   return (
     <div
@@ -100,7 +111,7 @@ function GuestAvatar({ name, isUnknown, size = 46 }: { name: string; isUnknown: 
         color: isUnknown ? unknownGuestAvatarStyle.color : '#ffffff',
         fontSize: size * 0.38,
         fontWeight: 600,
-        boxShadow: '0 2px 8px rgba(15,23,42,0.12)',
+        boxShadow: 'var(--bk-shadow-md)',
       }}
     >
       {getGuestInitials(name)}
@@ -108,16 +119,507 @@ function GuestAvatar({ name, isUnknown, size = 46 }: { name: string; isUnknown: 
   )
 }
 
-function PreferenceRow({ label, value, accent }: { label: string; value: string; accent: string }) {
+function TabBar({
+  tabs,
+  active,
+  onChange,
+}: {
+  tabs: string[]
+  active: string
+  onChange: (t: string) => void
+}) {
+  return (
+    <div style={{ display: 'flex', gap: 4, borderBottom: bk.border, padding: '0 2px' }}>
+      {tabs.map((tt) => {
+        const on = tt === active
+        return (
+          <button
+            key={tt}
+            type="button"
+            onClick={() => onChange(tt)}
+            style={{
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              padding: '11px 12px',
+              fontFamily: bk.font,
+              fontSize: 12.5,
+              fontWeight: on ? 700 : 500,
+              color: on ? 'var(--bk-head)' : 'var(--bk-body)',
+              boxShadow: on ? 'inset 0 -2px 0 var(--bk-head)' : 'none',
+              transition: 'color 0.15s ease',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {tt}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+function StatTrio({ customer }: { customer: CrmCustomer }) {
+  const items = [
+    { label: 'Bookings', value: String(customer.bookingCount) },
+    { label: 'Last booking', value: customer.lastBooking === '—' ? 'Never' : customer.lastBooking },
+    { label: 'Avg party', value: formatAvgPartySize(customer.avgPartySize) },
+  ]
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(3, 1fr)',
+        gap: 8,
+        padding: 12,
+        borderRadius: bk.radiusSm,
+        background: 'var(--bk-surface)',
+        border: bk.border,
+      }}
+    >
+      {items.map(({ label, value }) => (
+        <div key={label} style={{ textAlign: 'center' }}>
+          <div
+            style={{
+              fontSize: 9,
+              fontWeight: 700,
+              color: 'var(--bk-muted)',
+              textTransform: 'uppercase',
+              letterSpacing: '0.06em',
+            }}
+          >
+            {label}
+          </div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--bk-head)', marginTop: 5 }}>{value}</div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function VisitSparkline({ appointments }: { appointments: AppointmentRow[] }) {
+  const months = useMemo(() => {
+    const now = new Date()
+    const result: { key: string; label: string; count: number }[] = []
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+      result.push({
+        key: `${d.getFullYear()}-${d.getMonth()}`,
+        label: d.toLocaleDateString(undefined, { month: 'short' }),
+        count: 0,
+      })
+    }
+    for (const a of appointments) {
+      const d = appointmentInstantFromRaw(a.scheduled_at)
+      const k = `${d.getFullYear()}-${d.getMonth()}`
+      const m = result.find((x) => x.key === k)
+      if (m) m.count += 1
+    }
+    return result
+  }, [appointments])
+
+  const max = Math.max(1, ...months.map((m) => m.count))
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, height: 64, padding: '0 2px' }}>
+      {months.map((m) => (
+        <div
+          key={m.key}
+          style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}
+        >
+          <div style={{ width: '100%', display: 'flex', alignItems: 'flex-end', height: 44 }}>
+            <div
+              style={{
+                width: '100%',
+                borderRadius: 4,
+                height: `${Math.max(6, (m.count / max) * 44)}px`,
+                background:
+                  m.count > 0
+                    ? 'linear-gradient(180deg, #93c5fd, #3b82f6)'
+                    : 'var(--bk-grid-soft)',
+              }}
+            />
+          </div>
+          <span style={{ fontSize: 9, color: 'var(--bk-muted)', fontWeight: 600 }}>{m.label}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function OverviewTab({
+  customer,
+  appointments,
+  notes,
+  setNotes,
+  saving,
+  conversationId,
+}: {
+  customer: CrmCustomer
+  appointments: AppointmentRow[]
+  notes: string
+  setNotes: (v: string) => void
+  saving: boolean
+  conversationId: string | null
+}) {
+  return (
+    <div style={{ display: 'grid', gap: 16 }}>
+      <StatTrio customer={customer} />
+
+      <div>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginBottom: 7,
+          }}
+        >
+          <span style={sectionLabel}>Staff notes</span>
+          <span
+            style={{
+              fontSize: 10,
+              color: saving ? 'var(--bk-muted)' : 'var(--bk-green)',
+              fontWeight: 600,
+            }}
+          >
+            {saving ? 'Saving…' : 'Saved'}
+          </span>
+        </div>
+        <textarea
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          placeholder="Dietary restrictions, seating preferences, special occasions…"
+          rows={4}
+          style={{
+            width: '100%',
+            boxSizing: 'border-box',
+            borderRadius: 8,
+            border: bk.border,
+            background: 'var(--bk-surface)',
+            color: 'var(--bk-head)',
+            padding: '10px 12px',
+            resize: 'vertical',
+            outline: 'none',
+            fontFamily: bk.font,
+            fontSize: 13,
+            lineHeight: 1.5,
+          }}
+        />
+      </div>
+
+      <div>
+        <div style={{ ...sectionLabel, marginBottom: 8 }}>Visit rhythm</div>
+        <VisitSparkline appointments={appointments} />
+      </div>
+
+      <div style={{ display: 'flex', gap: 8 }}>
+        {conversationId ? (
+          <Link
+            href={`/dashboard/chats?conversation=${conversationId}`}
+            style={{
+              flex: 1,
+              padding: '9px 12px',
+              borderRadius: 8,
+              border: 'none',
+              background: 'var(--bk-inverse)',
+              color: 'var(--bk-inverse-text)',
+              fontSize: 12,
+              fontWeight: 600,
+              textAlign: 'center',
+              textDecoration: 'none',
+            }}
+          >
+            Open chat
+          </Link>
+        ) : (
+          <Link
+            href="/dashboard/chats"
+            style={{
+              flex: 1,
+              padding: '9px 12px',
+              borderRadius: 8,
+              border: bk.border,
+              background: 'var(--bk-card)',
+              color: 'var(--bk-body)',
+              fontSize: 12,
+              fontWeight: 600,
+              textAlign: 'center',
+              textDecoration: 'none',
+            }}
+          >
+            Chats
+          </Link>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function HistoryTab({
+  appointments,
+  appointmentsLoading,
+  zoneNameById,
+}: {
+  appointments: AppointmentRow[]
+  appointmentsLoading: boolean
+  zoneNameById: Map<string, string>
+}) {
+  const counts = appointments.reduce<Record<string, number>>((acc, a) => {
+    const s = a.status ?? 'pending'
+    acc[s] = (acc[s] ?? 0) + 1
+    return acc
+  }, {})
+
+  const summary = [
+    { k: 'seated', label: 'Seated' },
+    { k: 'completed', label: 'Completed' },
+    { k: 'confirmed', label: 'Upcoming' },
+    { k: 'cancelled', label: 'Cancelled' },
+    { k: 'no-show', label: 'No-show' },
+  ].filter((s) => counts[s.k])
+
+  if (appointmentsLoading) {
+    return <div style={{ fontSize: 12, color: 'var(--bk-muted)', padding: '8px 0' }}>Loading…</div>
+  }
+
+  return (
+    <div style={{ display: 'grid', gap: 14 }}>
+      {summary.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {summary.map((s) => {
+            const sc = statusColors(s.k)
+            return (
+              <span
+                key={s.k}
+                style={{
+                  fontSize: 11,
+                  color: sc.color,
+                  background: sc.bg,
+                  borderRadius: 999,
+                  padding: '4px 10px',
+                  fontWeight: 600,
+                }}
+              >
+                {counts[s.k]} {s.label}
+              </span>
+            )
+          })}
+        </div>
+      )}
+
+      {appointments.length === 0 ? (
+        <div style={{ fontSize: 12, color: 'var(--bk-muted)', padding: '8px 0' }}>No bookings yet</div>
+      ) : (
+        <div style={{ display: 'grid', gap: 0 }}>
+          {appointments.map((a, i) => {
+            const d = appointmentInstantFromRaw(a.scheduled_at)
+            const party =
+              a.party_size != null && a.party_size > 0
+                ? a.party_size
+                : parsePartySizeFromServiceName(a.service_name)
+            const zoneLabel = a.zone_id ? zoneNameById.get(a.zone_id) : null
+            const sc = statusColors(a.status)
+            const last = i === appointments.length - 1
+            return (
+              <div key={a.id} style={{ display: 'flex', gap: 12 }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    width: 12,
+                    flexShrink: 0,
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 9,
+                      height: 9,
+                      borderRadius: '50%',
+                      background: sc.color,
+                      marginTop: 14,
+                      flexShrink: 0,
+                      boxShadow: `0 0 0 3px ${sc.bg}`,
+                    }}
+                  />
+                  {!last && (
+                    <span
+                      style={{ flex: 1, width: 2, background: 'var(--bk-surface)', marginTop: 2 }}
+                    />
+                  )}
+                </div>
+                <div style={{ flex: 1, paddingBottom: last ? 0 : 12 }}>
+                  <div
+                    style={{
+                      padding: '10px 12px',
+                      borderRadius: 8,
+                      border: bk.border,
+                      background: 'var(--bk-card)',
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: 10,
+                    }}
+                  >
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--bk-head)' }}>
+                        {d.toLocaleDateString(undefined, {
+                          month: 'short',
+                          day: 'numeric',
+                          year: 'numeric',
+                        })}{' '}
+                        · {formatCalgaryTime(d)}
+                      </div>
+                      {(party != null || zoneLabel) && (
+                        <div style={{ fontSize: 11, color: 'var(--bk-body)', marginTop: 3 }}>
+                          {party != null ? `Party of ${party}` : null}
+                          {party != null && zoneLabel ? ' · ' : null}
+                          {zoneLabel ?? null}
+                        </div>
+                      )}
+                      {a.notes?.trim() && (
+                        <div
+                          style={{
+                            fontSize: 11,
+                            color: 'var(--bk-muted)',
+                            marginTop: 4,
+                            fontStyle: 'italic',
+                            lineHeight: 1.4,
+                          }}
+                        >
+                          {a.notes.trim()}
+                        </div>
+                      )}
+                    </div>
+                    <span
+                      style={{
+                        fontSize: 9,
+                        fontWeight: 700,
+                        padding: '2px 7px',
+                        borderRadius: 999,
+                        background: sc.bg,
+                        color: sc.color,
+                        flexShrink: 0,
+                      }}
+                    >
+                      {statusLabel(a.status)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function PreferencesTab({ guestPrefs }: { guestPrefs: ReturnType<typeof parseGuestNotes> }) {
+  const has = guestPrefs.allergies || guestPrefs.preferences || guestPrefs.occasions
+  if (!has) {
+    return (
+      <div style={{ textAlign: 'center', padding: '28px 16px' }}>
+        <div
+          style={{
+            width: 42,
+            height: 42,
+            borderRadius: 12,
+            background: 'var(--bk-surface)',
+            border: bk.border,
+            display: 'grid',
+            placeItems: 'center',
+            margin: '0 auto 12px',
+          }}
+        >
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="var(--bk-muted)"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M12 2 2 7l10 5 10-5-10-5Z" />
+            <path d="m2 17 10 5 10-5" />
+            <path d="m2 12 10 5 10-5" />
+          </svg>
+        </div>
+        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--bk-head)' }}>No preferences yet</div>
+        <p
+          style={{
+            fontSize: 12,
+            color: 'var(--bk-muted)',
+            marginTop: 6,
+            lineHeight: 1.5,
+            maxWidth: 260,
+            marginLeft: 'auto',
+            marginRight: 'auto',
+          }}
+        >
+          As this guest chats with your AI concierge, allergies, seating preferences and special
+          occasions are captured automatically.
+        </p>
+      </div>
+    )
+  }
+  return (
+    <div style={{ display: 'grid', gap: 14 }}>
+      <div style={{ display: 'grid', gap: 7 }}>
+        {guestPrefs.allergies && (
+          <PrefRow label="Allergies / dietary" value={guestPrefs.allergies} accent="var(--bk-danger)" />
+        )}
+        {guestPrefs.preferences && (
+          <PrefRow label="Preferences" value={guestPrefs.preferences} accent="var(--bk-blue)" />
+        )}
+        {guestPrefs.occasions && (
+          <PrefRow label="Occasions" value={guestPrefs.occasions} accent="var(--bk-amber)" />
+        )}
+      </div>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 7,
+          fontSize: 10.5,
+          color: 'var(--bk-muted)',
+        }}
+      >
+        <span
+          style={{
+            width: 6,
+            height: 6,
+            borderRadius: '50%',
+            background: 'var(--bk-accent)',
+            flexShrink: 0,
+          }}
+        />
+        Captured automatically from guest conversations.
+      </div>
+    </div>
+  )
+}
+
+function PrefRow({
+  label,
+  value,
+  accent,
+}: {
+  label: string
+  value: string
+  accent: string
+}) {
   return (
     <div
       style={{
         display: 'flex',
         gap: 10,
-        padding: '8px 10px',
+        padding: '10px 12px',
         borderRadius: 8,
         border: bk.border,
-        background: '#fafafa',
+        background: 'var(--bk-surface)',
         borderLeft: `3px solid ${accent}`,
       }}
     >
@@ -125,7 +627,7 @@ function PreferenceRow({ label, value, accent }: { label: string; value: string;
         style={{
           fontSize: 10,
           fontWeight: 700,
-          color: '#64748b',
+          color: 'var(--bk-body)',
           textTransform: 'uppercase',
           letterSpacing: '0.06em',
           flexShrink: 0,
@@ -134,9 +636,17 @@ function PreferenceRow({ label, value, accent }: { label: string; value: string;
       >
         {label}
       </span>
-      <span style={{ fontSize: 12.5, color: '#0f172a', lineHeight: 1.45 }}>{value}</span>
+      <span style={{ fontSize: 12.5, color: 'var(--bk-head)', lineHeight: 1.45 }}>{value}</span>
     </div>
   )
+}
+
+const sectionLabel: React.CSSProperties = {
+  fontSize: 10,
+  fontWeight: 700,
+  color: 'var(--bk-body)',
+  textTransform: 'uppercase',
+  letterSpacing: '0.08em',
 }
 
 export type CrmGuestDetailProps = {
@@ -154,9 +664,9 @@ export function CrmGuestDetail({
   onNotesSaved,
   onDelete,
 }: CrmGuestDetailProps) {
-  const reduceMotion = useReducedMotion()
   const guestPrefs = useMemo(() => parseGuestNotes(customer.notes), [customer.notes])
   const ownerNotesBaseline = guestPrefs.ownerNotes ?? ''
+  const [tab, setTab] = useState('Overview')
   const [notes, setNotes] = useState(ownerNotesBaseline)
   const [notesSaving, setNotesSaving] = useState(false)
   const [appointments, setAppointments] = useState<AppointmentRow[]>([])
@@ -166,19 +676,58 @@ export function CrmGuestDetail({
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [mounted, setMounted] = useState(false)
+  const [animate, setAnimate] = useState(true)
+  const [closing, setClosing] = useState(false)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const curIdRef = useRef<string | null>(null)
 
   const displayName = displayGuestName(customer.name)
-  const lastBookingLabel = customer.lastBooking === '—' ? 'Never' : customer.lastBooking
 
+  // reset panel state when the selected guest changes
   useEffect(() => {
-    setNotes(ownerNotesBaseline)
-    setConfirmDelete(false)
-    setDeleteError(null)
+    if (curIdRef.current !== customer.id) {
+      curIdRef.current = customer.id
+      setTab('Overview')
+      setNotes(ownerNotesBaseline)
+      setConfirmDelete(false)
+      setDeleteError(null)
+      setClosing(false)
+    }
   }, [customer.id, ownerNotesBaseline])
+
+  // slide-in with rAF-freeze fallback (headless / invisible frames)
+  useEffect(() => {
+    let painted = false
+    const raf = requestAnimationFrame(() => {
+      painted = true
+    })
+    const start = setTimeout(() => setMounted(true), 20)
+    const fallback = setTimeout(() => {
+      if (!painted) {
+        setAnimate(false)
+        setMounted(true)
+      }
+    }, 140)
+    return () => {
+      cancelAnimationFrame(raf)
+      clearTimeout(start)
+      clearTimeout(fallback)
+    }
+  }, [])
+
+  // Esc to close
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') handleClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
 
   useEffect(() => {
     let cancelled = false
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- show spinner before async history fetch
     setAppointmentsLoading(true)
     void (async () => {
       const { data } = await supabase
@@ -206,9 +755,7 @@ export function CrmGuestDetail({
         .eq('business_id', businessId)
       if (!cancelled) {
         const m = new Map<string, string>()
-        for (const row of data ?? []) {
-          m.set(String(row.id), String(row.name))
-        }
+        for (const row of data ?? []) m.set(String(row.id), String(row.name))
         setZoneNameById(m)
       }
     })()
@@ -238,8 +785,6 @@ export function CrmGuestDetail({
     async (value: string) => {
       if (!businessId) return
       setNotesSaving(true)
-      // Preserve any structured preferences captured by the AI concierge; only
-      // the owner's free-text portion is edited here.
       const serialized = serializeGuestNotes({ ...guestPrefs, ownerNotes: value })
       const { error } = await supabase
         .from('customers')
@@ -252,16 +797,19 @@ export function CrmGuestDetail({
     [businessId, customer.id, guestPrefs, onNotesSaved],
   )
 
-  useEffect(() => {
-    if (notes === ownerNotesBaseline) return
+  function handleNotesChange(value: string) {
+    setNotes(value)
+    setNotesSaving(true)
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(() => {
-      void persistNotes(notes)
+      void persistNotes(value)
     }, 450)
-    return () => {
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
-    }
-  }, [notes, ownerNotesBaseline, persistNotes])
+  }
+
+  function handleClose() {
+    setClosing(true)
+    setTimeout(onClose, 280)
+  }
 
   async function handleDelete() {
     setDeleting(true)
@@ -280,414 +828,249 @@ export function CrmGuestDetail({
     onDelete(customer.id)
   }
 
-  const contactLine =
-    customer.phone && customer.phone !== '—'
-      ? customer.phone
-      : customer.email || 'No contact yet'
+  const contactHasPhone = customer.phone && customer.phone !== '—'
 
   return (
-    <motion.aside
-      initial="hidden"
-      animate="visible"
-      variants={slideInRight}
-      transition={oceanTransition(reduceMotion)}
-      style={{
-        background: '#ffffff',
-        borderRadius: bk.radius,
-        border: bk.border,
-        boxShadow: bk.shadow,
-        padding: 16,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 14,
-        fontFamily: bk.font,
-        maxHeight: 'calc(100vh - 72px)',
-        overflowY: 'auto',
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, flex: 1 }}>
-          {customer.tags.map((tag) => (
-            <TagChip key={tag} tag={tag} />
-          ))}
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close"
-          style={{
-            width: 28,
-            height: 28,
-            borderRadius: 8,
-            border: bk.border,
-            background: '#f8fafc',
-            color: '#64748b',
-            cursor: 'pointer',
-            fontSize: 14,
-            flexShrink: 0,
-          }}
-        >
-          ×
-        </button>
-      </div>
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <GuestAvatar name={customer.name} isUnknown={customer.isUnknownGuest} />
-        <div style={{ minWidth: 0 }}>
-          <div
-            style={{
-              fontSize: 16,
-              fontWeight: 700,
-              color: customer.isUnknownGuest ? '#94a3b8' : '#0f172a',
-              letterSpacing: '-0.02em',
-            }}
-          >
-            {displayName}
-          </div>
-          {customer.isUnknownGuest && (
-            <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>From AI chat</div>
-          )}
-          <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>Joined {customer.joined}</div>
-        </div>
-      </div>
-
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-        {customer.phone && customer.phone !== '—' && (
-          <a
-            href={`tel:${customer.phone.replace(/\s/g, '')}`}
-            style={{
-              padding: '6px 12px',
-              borderRadius: 999,
-              border: bk.border,
-              background: '#f8fafc',
-              fontSize: 12,
-              fontWeight: 500,
-              color: '#0f172a',
-              textDecoration: 'none',
-            }}
-          >
-            {customer.phone}
-          </a>
-        )}
-        {customer.email && (
-          <a
-            href={`mailto:${customer.email}`}
-            style={{
-              padding: '6px 12px',
-              borderRadius: 999,
-              border: bk.border,
-              background: '#f8fafc',
-              fontSize: 12,
-              fontWeight: 500,
-              color: '#0f172a',
-              textDecoration: 'none',
-              maxWidth: '100%',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {customer.email}
-          </a>
-        )}
-        {contactLine === 'No contact yet' && (
-          <span style={{ fontSize: 12, color: '#94a3b8' }}>{contactLine}</span>
-        )}
-      </div>
-
+    <div style={{ position: 'fixed', inset: 0, zIndex: 200 }}>
+      {/* backdrop */}
       <div
+        onClick={handleClose}
         style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(3, 1fr)',
-          gap: 8,
-          padding: 10,
-          borderRadius: bk.radiusSm,
-          background: '#f8fafc',
-          border: bk.border,
+          position: 'absolute',
+          inset: 0,
+          background: 'rgba(15,23,42,0.32)',
+          backdropFilter: 'blur(2px)',
+          WebkitBackdropFilter: 'blur(2px)',
+          opacity: closing ? 0 : mounted ? 1 : 0,
+          transition: animate ? 'opacity 0.26s ease' : 'none',
+        }}
+      />
+
+      {/* panel */}
+      <aside
+        style={{
+          position: 'absolute',
+          top: 0,
+          right: 0,
+          height: '100vh',
+          width: 'min(440px, 92vw)',
+          background: 'var(--bk-card)',
+          borderLeft: bk.border,
+          boxShadow: '-12px 0 40px rgba(15,23,42,0.16)',
+          display: 'flex',
+          flexDirection: 'column',
+          fontFamily: bk.font,
+          transform: closing || !mounted ? 'translateX(100%)' : 'translateX(0)',
+          transition: animate ? 'transform 0.34s cubic-bezier(0.22,1,0.36,1)' : 'none',
         }}
       >
-        {[
-          { label: 'Bookings', value: String(customer.bookingCount) },
-          { label: 'Last booking', value: lastBookingLabel },
-          { label: 'Avg party', value: formatAvgPartySize(customer.avgPartySize) },
-        ].map(({ label, value }) => (
-          <div key={label} style={{ textAlign: 'center' }}>
-            <div
-              style={{
-                fontSize: 9,
-                fontWeight: 700,
-                color: '#94a3b8',
-                textTransform: 'uppercase',
-                letterSpacing: '0.06em',
-              }}
-            >
-              {label}
-            </div>
-            <div style={{ fontSize: 12, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>{value}</div>
-          </div>
-        ))}
-      </div>
-
-      <div>
-        <div
-          style={{
-            fontSize: 10,
-            fontWeight: 700,
-            color: '#64748b',
-            textTransform: 'uppercase',
-            letterSpacing: '0.08em',
-            marginBottom: 8,
-          }}
-        >
-          Booking history
-        </div>
-        {appointmentsLoading ? (
-          <div style={{ fontSize: 12, color: '#94a3b8' }}>Loading…</div>
-        ) : appointments.length === 0 ? (
-          <div style={{ fontSize: 12, color: '#94a3b8', padding: '8px 0' }}>No bookings yet</div>
-        ) : (
-          <div style={{ display: 'grid', gap: 6, maxHeight: 280, overflowY: 'auto' }}>
-            {appointments.map((a) => {
-              const d = appointmentInstantFromRaw(a.scheduled_at)
-              const party =
-                a.party_size != null && a.party_size > 0
-                  ? a.party_size
-                  : parsePartySizeFromServiceName(a.service_name)
-              const zoneLabel = a.zone_id ? zoneNameById.get(a.zone_id) : null
-              const sc = statusColors(a.status)
-              return (
-                <div
-                  key={a.id}
-                  style={{
-                    padding: '9px 10px',
-                    borderRadius: 8,
-                    border: bk.border,
-                    background: '#fafafa',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 10,
-                  }}
-                >
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: '#0f172a' }}>
-                      {d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
-                      {' · '}
-                      {formatCalgaryTime(d)}
-                    </div>
-                    {(party != null || zoneLabel) && (
-                      <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
-                        {party != null ? `Party of ${party}` : null}
-                        {party != null && zoneLabel ? ' · ' : null}
-                        {zoneLabel ? zoneLabel : null}
-                      </div>
-                    )}
-                    {a.notes?.trim() && (
-                      <div
-                        style={{
-                          fontSize: 11,
-                          color: '#94a3b8',
-                          marginTop: 3,
-                          fontStyle: 'italic',
-                          lineHeight: 1.4,
-                        }}
-                      >
-                        {a.notes.trim()}
-                      </div>
-                    )}
-                  </div>
-                  <span
-                    style={{
-                      fontSize: 9,
-                      fontWeight: 700,
-                      padding: '2px 6px',
-                      borderRadius: 999,
-                      background: sc.bg,
-                      color: sc.color,
-                      flexShrink: 0,
-                    }}
-                  >
-                    {statusLabel(a.status)}
-                  </span>
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </div>
-
-      {(guestPrefs.allergies || guestPrefs.preferences || guestPrefs.occasions) && (
-        <div>
+        {/* header */}
+        <div style={{ padding: '16px 18px 0', flexShrink: 0 }}>
           <div
             style={{
-              fontSize: 10,
-              fontWeight: 700,
-              color: '#64748b',
-              textTransform: 'uppercase',
-              letterSpacing: '0.08em',
-              marginBottom: 8,
+              display: 'flex',
+              alignItems: 'flex-start',
+              justifyContent: 'space-between',
+              gap: 8,
             }}
           >
-            Guest preferences
-          </div>
-          <div style={{ display: 'grid', gap: 6 }}>
-            {guestPrefs.allergies && (
-              <PreferenceRow label="Allergies / dietary" value={guestPrefs.allergies} accent="#dc2626" />
-            )}
-            {guestPrefs.preferences && (
-              <PreferenceRow label="Preferences" value={guestPrefs.preferences} accent="#2563eb" />
-            )}
-            {guestPrefs.occasions && (
-              <PreferenceRow label="Occasions" value={guestPrefs.occasions} accent="#d97706" />
-            )}
-          </div>
-          <div style={{ marginTop: 6, fontSize: 10, color: '#94a3b8' }}>
-            Captured automatically from guest conversations.
-          </div>
-        </div>
-      )}
-
-      <div>
-        <label
-          style={{
-            display: 'block',
-            marginBottom: 6,
-            fontSize: 10,
-            fontWeight: 700,
-            color: '#64748b',
-            textTransform: 'uppercase',
-            letterSpacing: '0.08em',
-          }}
-        >
-          Notes
-        </label>
-        <textarea
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          placeholder="Dietary restrictions, seating preferences, special occasions…"
-          rows={4}
-          style={{
-            width: '100%',
-            boxSizing: 'border-box',
-            borderRadius: 8,
-            border: bk.border,
-            background: '#f8fafc',
-            color: '#0f172a',
-            padding: '10px 12px',
-            resize: 'vertical',
-            outline: 'none',
-            fontFamily: 'inherit',
-            fontSize: 13,
-            lineHeight: 1.5,
-          }}
-        />
-        <div style={{ marginTop: 4, fontSize: 10, color: '#94a3b8' }}>
-          {notesSaving ? 'Saving…' : 'Saved to your account'}
-        </div>
-      </div>
-
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        {conversationId ? (
-          <Link
-            href={`/dashboard/chats?conversation=${conversationId}`}
-            style={{
-              flex: 1,
-              minWidth: 120,
-              padding: '8px 12px',
-              borderRadius: 8,
-              border: 'none',
-              background: '#0f172a',
-              color: '#fff',
-              fontSize: 12,
-              fontWeight: 600,
-              textAlign: 'center',
-              textDecoration: 'none',
-            }}
-          >
-            Open chat
-          </Link>
-        ) : (
-          <Link
-            href="/dashboard/chats"
-            style={{
-              flex: 1,
-              minWidth: 120,
-              padding: '8px 12px',
-              borderRadius: 8,
-              border: bk.border,
-              background: '#fff',
-              color: '#64748b',
-              fontSize: 12,
-              fontWeight: 600,
-              textAlign: 'center',
-              textDecoration: 'none',
-            }}
-          >
-            Chats
-          </Link>
-        )}
-      </div>
-
-      <div style={{ borderTop: `1px solid ${t.borderSoft}`, paddingTop: 12 }}>
-        {deleteError && (
-          <div style={{ marginBottom: 8, fontSize: 11, color: t.danger }}>{deleteError}</div>
-        )}
-        {confirmDelete ? (
-          <div style={{ display: 'flex', gap: 8 }}>
+            <TagChips tags={customer.tags} />
             <button
               type="button"
-              onClick={() => setConfirmDelete(false)}
+              onClick={handleClose}
+              aria-label="Close"
               style={{
-                flex: 1,
-                padding: '8px 0',
+                width: 30,
+                height: 30,
                 borderRadius: 8,
                 border: bk.border,
-                background: '#fff',
+                background: 'var(--bk-surface)',
+                color: 'var(--bk-body)',
+                cursor: 'pointer',
+                fontSize: 16,
+                flexShrink: 0,
+                lineHeight: 1,
+              }}
+            >
+              ×
+            </button>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 13, marginTop: 14 }}>
+            <GuestAvatar name={customer.name} isUnknown={customer.isUnknownGuest} size={50} />
+            <div style={{ minWidth: 0 }}>
+              <div
+                style={{
+                  fontSize: 17,
+                  fontWeight: 700,
+                  color: customer.isUnknownGuest ? 'var(--bk-muted)' : 'var(--bk-head)',
+                  letterSpacing: '-0.02em',
+                }}
+              >
+                {displayName}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--bk-muted)', marginTop: 3 }}>
+                {customer.isUnknownGuest ? 'From AI chat · ' : ''}Joined {customer.joined}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12, marginBottom: 14 }}>
+            {contactHasPhone && (
+              <a
+                href={`tel:${customer.phone.replace(/\s/g, '')}`}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 999,
+                  border: bk.border,
+                  background: 'var(--bk-surface)',
+                  fontSize: 12,
+                  fontWeight: 500,
+                  color: 'var(--bk-head)',
+                  textDecoration: 'none',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {customer.phone}
+              </a>
+            )}
+            {customer.email && (
+              <a
+                href={`mailto:${customer.email}`}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 999,
+                  border: bk.border,
+                  background: 'var(--bk-surface)',
+                  fontSize: 12,
+                  fontWeight: 500,
+                  color: 'var(--bk-head)',
+                  textDecoration: 'none',
+                  maxWidth: '100%',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {customer.email}
+              </a>
+            )}
+            {!contactHasPhone && !customer.email && (
+              <span style={{ fontSize: 12, color: 'var(--bk-muted)' }}>No contact yet</span>
+            )}
+          </div>
+
+          <TabBar
+            tabs={['Overview', 'Booking History', 'Preferences']}
+            active={tab}
+            onChange={setTab}
+          />
+        </div>
+
+        {/* tab body */}
+        <div
+          key={tab}
+          style={{
+            flex: 1,
+            overflowY: 'auto',
+            padding: '16px 18px 18px',
+            animation: 'oc-tab-fade 0.22s cubic-bezier(0.22,1,0.36,1)',
+          }}
+        >
+          {tab === 'Overview' && (
+            <OverviewTab
+              customer={customer}
+              appointments={appointments}
+              notes={notes}
+              setNotes={handleNotesChange}
+              saving={notesSaving}
+              conversationId={conversationId}
+            />
+          )}
+          {tab === 'Booking History' && (
+            <HistoryTab
+              appointments={appointments}
+              appointmentsLoading={appointmentsLoading}
+              zoneNameById={zoneNameById}
+            />
+          )}
+          {tab === 'Preferences' && <PreferencesTab guestPrefs={guestPrefs} />}
+        </div>
+
+        {/* footer */}
+        <div style={{ flexShrink: 0, borderTop: bk.border, padding: '12px 18px' }}>
+          {deleteError && (
+            <div style={{ marginBottom: 8, fontSize: 11, color: 'var(--bk-danger)' }}>{deleteError}</div>
+          )}
+          {confirmDelete ? (
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(false)}
+                style={{
+                  flex: 1,
+                  padding: '9px 0',
+                  borderRadius: 8,
+                  border: bk.border,
+                  background: 'var(--bk-card)',
+                  color: 'var(--bk-body)',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  fontFamily: bk.font,
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={() => void handleDelete()}
+                style={{
+                  flex: 1,
+                  padding: '9px 0',
+                  borderRadius: 8,
+                  border: '1px solid rgba(239,68,68,0.4)',
+                  background: 'rgba(239,68,68,0.1)',
+                  color: 'var(--bk-danger)',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: deleting ? 'not-allowed' : 'pointer',
+                  fontFamily: bk.font,
+                }}
+              >
+                {deleting ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setConfirmDelete(true)}
+              style={{
+                width: '100%',
+                padding: '9px 0',
+                borderRadius: 8,
+                border: '1px solid rgba(239,68,68,0.35)',
+                background: 'transparent',
+                color: 'var(--bk-danger)',
                 fontSize: 12,
                 fontWeight: 600,
                 cursor: 'pointer',
+                fontFamily: bk.font,
               }}
             >
-              Cancel
+              Delete guest
             </button>
-            <button
-              type="button"
-              disabled={deleting}
-              onClick={() => void handleDelete()}
-              style={{
-                flex: 1,
-                padding: '8px 0',
-                borderRadius: 8,
-                border: '1px solid rgba(239,68,68,0.4)',
-                background: 'rgba(239,68,68,0.1)',
-                color: '#dc2626',
-                fontSize: 12,
-                fontWeight: 700,
-                cursor: deleting ? 'not-allowed' : 'pointer',
-              }}
-            >
-              {deleting ? 'Deleting…' : 'Delete'}
-            </button>
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setConfirmDelete(true)}
-            style={{
-              width: '100%',
-              padding: '8px 0',
-              borderRadius: 8,
-              border: '1px solid rgba(239,68,68,0.35)',
-              background: 'transparent',
-              color: '#dc2626',
-              fontSize: 12,
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >
-            Delete guest
-          </button>
-        )}
-      </div>
-    </motion.aside>
+          )}
+        </div>
+      </aside>
+
+      <style>{`
+        @keyframes oc-tab-fade {
+          from { opacity: 0; transform: translateY(4px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
+    </div>
   )
 }

@@ -12,6 +12,9 @@ export async function GET(request: Request) {
   const dateParam = searchParams.get('date')?.trim()
   const partyRaw = searchParams.get('partySize') ?? searchParams.get('party')
   const zoneId = searchParams.get('zoneId')?.trim() || null
+  // When editing an existing reservation, exclude it from the occupancy count —
+  // otherwise a booking can "collide with itself" and fail to re-save.
+  const excludeAppointmentId = searchParams.get('exclude')?.trim() || undefined
 
   if (!businessId) {
     return NextResponse.json({ error: 'business_id is required' }, { status: 400 })
@@ -38,6 +41,7 @@ export async function GET(request: Request) {
     existing: ctx.existingBookings,
     settings: ctx.bookingSettings,
     now,
+    excludeAppointmentId,
     zones: ctx.zones,
     partySize,
     zoneId,

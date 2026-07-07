@@ -1,12 +1,13 @@
 import type { CSSProperties } from 'react'
 
-/** Compact density tokens for the Bookings dashboard (light layout). */
+/** Compact density tokens for the Bookings dashboard. Colors resolve through
+ * the --bk-* variables in globals.css, which follow <html data-theme>. */
 
 export const bk = {
   radius: 12,
   radiusSm: 8,
-  border: '1px solid #e2e8f0',
-  shadow: '0 1px 2px rgba(15,23,42,0.04)',
+  border: '1px solid var(--bk-border)',
+  shadow: 'var(--bk-shadow)',
   font: 'var(--font-plus-jakarta), system-ui, sans-serif',
   gap: 10,
   gapMd: 12,
@@ -27,7 +28,7 @@ export const bk = {
 } as const
 
 export const bkCard: CSSProperties = {
-  background: '#ffffff',
+  background: 'var(--bk-card)',
   borderRadius: bk.radius,
   border: bk.border,
   boxShadow: bk.shadow,

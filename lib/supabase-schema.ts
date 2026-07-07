@@ -27,3 +27,12 @@ export function isDiningZonesSchemaError(message: string | undefined): boolean {
 
 export const DINING_ZONES_MIGRATION_HINT =
   'To save dining zones, run supabase/migrations/009_dining_zones.sql in Supabase Dashboard → SQL Editor, then reload this page.'
+
+export function isPaymentSettingsSchemaError(message: string | undefined): boolean {
+  if (!message) return false
+  const lower = message.toLowerCase()
+  return lower.includes('payment_settings') && (lower.includes('schema') || lower.includes('column'))
+}
+
+export const PAYMENT_SETTINGS_MIGRATION_HINT =
+  'To save deposit settings, run supabase/migrations/013_payment_deposits.sql in Supabase Dashboard → SQL Editor, then reload this page.'

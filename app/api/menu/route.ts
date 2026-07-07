@@ -1,33 +1,19 @@
 import { NextResponse } from 'next/server'
 
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { createClient } from '@/lib/supabase-server'
+import { verifyBusinessOwner } from '@/lib/verify-business-owner'
 
-// Verify the session user owns the given business_id. Returns the user id on
-// success, or a NextResponse error to return immediately.
-async function verifyOwner(
-  business_id: unknown,
-): Promise<{ userId: string } | NextResponse> {
+// Verify the session user may administer the given business_id (owner or
+// manager). Returns true on success, or a NextResponse error to return.
+async function verifyOwner(business_id: unknown): Promise<true | NextResponse> {
   if (typeof business_id !== 'string' || !business_id) {
     return NextResponse.json({ error: 'business_id required' }, { status: 400 })
   }
-  const authClient = await createClient()
-  const {
-    data: { user },
-  } = await authClient.auth.getUser()
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-  const { data: biz } = await supabaseAdmin
-    .from('businesses')
-    .select('id')
-    .eq('id', business_id)
-    .eq('user_id', user.id)
-    .maybeSingle()
-  if (!biz) {
+  const allowed = await verifyBusinessOwner(business_id)
+  if (!allowed) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
-  return { userId: user.id }
+  return true
 }
 
 // ── GET /api/menu?business_id=… ───────────────────────────────────────────────

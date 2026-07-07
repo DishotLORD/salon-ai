@@ -10,6 +10,8 @@ export type BookingSettings = {
   max_advance_days: number
   /** Require a phone number or email from the guest before the bot may book. */
   require_contact_before_booking: boolean
+  /** Average spend per guest (CAD) used to estimate revenue in analytics. 0 = not set. */
+  average_check: number
 }
 
 export const DEFAULT_BOOKING_SETTINGS: BookingSettings = {
@@ -19,6 +21,7 @@ export const DEFAULT_BOOKING_SETTINGS: BookingSettings = {
   min_notice_minutes: 0,
   max_advance_days: 180,
   require_contact_before_booking: true,
+  average_check: 0,
 }
 
 function clampInt(
@@ -65,5 +68,9 @@ export function parseBookingSettings(raw: unknown): BookingSettings {
       typeof row.require_contact_before_booking === 'boolean'
         ? row.require_contact_before_booking
         : DEFAULT_BOOKING_SETTINGS.require_contact_before_booking,
+    average_check:
+      typeof row.average_check === 'number' && Number.isFinite(row.average_check) && row.average_check >= 0
+        ? Math.min(100000, row.average_check)
+        : DEFAULT_BOOKING_SETTINGS.average_check,
   }
 }

@@ -12,6 +12,7 @@ import {
   type SettingsCategoryId,
 } from '@/components/settings-category-nav'
 import { BookingSettingsPanel } from '@/components/booking-settings-panel'
+import { TeamMembersPanel } from '@/components/team-members-panel'
 import { DiningZonesPanel, type DiningZoneDraft } from '@/components/dining-zones-panel'
 import { WorkingHoursPanel } from '@/components/working-hours-panel'
 import {
@@ -24,6 +25,11 @@ import {
   parseBookingSettings,
   type BookingSettings,
 } from '@/lib/booking-settings'
+import {
+  DEFAULT_NOTIFICATION_SETTINGS,
+  parseNotificationSettings,
+  type NotificationSettings,
+} from '@/lib/notification-settings'
 import { defaultMainDiningZone, parseDiningZoneRow, slugifyZoneName } from '@/lib/dining-zones'
 import { oceanTransition, settingsPanelHeavy } from '@/lib/ocean-motion'
 import {
@@ -34,21 +40,28 @@ import {
 } from '@/lib/operating-hours'
 import { supabase } from '@/lib/supabase'
 import {
+  DEFAULT_PAYMENT_SETTINGS,
+  parsePaymentSettings,
+  type PaymentSettings,
+} from '@/lib/payment-settings'
+import {
   BOOKING_SETTINGS_MIGRATION_HINT,
   DINING_ZONES_MIGRATION_HINT,
   isBookingSettingsSchemaError,
   isDiningZonesSchemaError,
   isOperatingHoursSchemaError,
+  isPaymentSettingsSchemaError,
   OPERATING_HOURS_MIGRATION_HINT,
+  PAYMENT_SETTINGS_MIGRATION_HINT,
 } from '@/lib/supabase-schema'
 import { card, t } from '@/lib/dashboard-theme'
 
 const BUSINESS_SELECT_WITH_BOOKING =
-  'id, name, email, phone, business_type, address, system_prompt, agent_name, language, menu_pdf_text, operating_hours, booking_settings'
+  'id, name, email, phone, business_type, address, system_prompt, agent_name, language, menu_pdf_text, operating_hours, booking_settings, notification_settings'
 const BUSINESS_SELECT_WITH_HOURS =
-  'id, name, email, phone, business_type, address, system_prompt, agent_name, language, menu_pdf_text, operating_hours'
+  'id, name, email, phone, business_type, address, system_prompt, agent_name, language, menu_pdf_text, operating_hours, notification_settings'
 const BUSINESS_SELECT_BASE =
-  'id, name, email, phone, business_type, address, system_prompt, agent_name, language, menu_pdf_text'
+  'id, name, email, phone, business_type, address, system_prompt, agent_name, language, menu_pdf_text, notification_settings'
 
 type TabId = 'general' | 'ai' | 'menu' | 'notifications' | 'widget' | 'billing'
 type CategoryId = SettingsCategoryId
@@ -100,7 +113,7 @@ const migrationHintBox: React.CSSProperties = {
   borderRadius: 8,
   border: '1px solid rgba(220, 38, 38, 0.35)',
   background: 'rgba(220, 38, 38, 0.06)',
-  color: '#b91c1c',
+  color: 'var(--bk-danger)',
   fontSize: 12,
   lineHeight: 1.5,
 }
@@ -108,17 +121,17 @@ const migrationHintBox: React.CSSProperties = {
 const settingsFont = 'var(--font-plus-jakarta, system-ui, sans-serif)'
 
 const s = {
-  bg: '#f8fafc',
-  panel: '#ffffff',
-  text: '#0f172a',
-  textMuted: '#64748b',
-  border: 'rgba(0,0,0,0.08)',
-  hover: '#f1f5f9',
-  iconBg: '#f1f5f9',
+  bg: 'var(--bk-bg)',
+  panel: 'var(--bk-card)',
+  text: 'var(--bk-head)',
+  textMuted: 'var(--bk-body)',
+  border: 'var(--bk-border)',
+  hover: 'var(--bk-surface)',
+  iconBg: 'var(--bk-surface)',
   activeBg: 'rgba(56,189,248,0.08)',
   activeBorder: '#38bdf8',
   accent: '#38bdf8',
-  shadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)',
+  shadow: 'var(--bk-shadow)',
 } as const
 
 function tabToCategory(tab: TabId): CategoryId {
@@ -302,7 +315,7 @@ function FloatingSelect({ label, value, onChange, options }: FloatingSelectProps
         }}
       >
         {options.map((option) => (
-          <option key={option.value} value={option.value} style={{ color: t.text, background: '#ffffff' }}>
+          <option key={option.value} value={option.value} style={{ color: 'var(--bk-head)', background: 'var(--bk-card)' }}>
             {option.label}
           </option>
         ))}
@@ -346,6 +359,7 @@ function SettingsPageInner() {
 
   useEffect(() => {
     if (categoryParam === 'reservations') {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- sync active category with URL changes
       setActiveCategory('reservations')
     }
   }, [categoryParam])
@@ -379,13 +393,16 @@ function SettingsPageInner() {
   )
   const [agentName, setAgentName] = useState('AI Concierge')
   const [language, setLanguage] = useState('English (US)')
-  const [escalateComplaint, setEscalateComplaint] = useState(true)
-  const [escalateLargeParty, setEscalateLargeParty] = useState(true)
-  const [escalateAllergy, setEscalateAllergy] = useState(true)
 
-  const [emailNotifs, setEmailNotifs] = useState(true)
-  const [smsNotifs, setSmsNotifs] = useState(false)
-  const [digest, setDigest] = useState('daily')
+  const [notificationSettings, setNotificationSettings] = useState<NotificationSettings>(
+    DEFAULT_NOTIFICATION_SETTINGS,
+  )
+
+  const [paymentSettings, setPaymentSettings] = useState<PaymentSettings>({
+    ...DEFAULT_PAYMENT_SETTINGS,
+  })
+  const [paymentSchemaReady, setPaymentSchemaReady] = useState(true)
+  const [depositDraft, setDepositDraft] = useState('')
 
 
   const [widgetOrigin] = useState(() =>
@@ -424,7 +441,8 @@ function SettingsPageInner() {
     activeCategory === 'restaurant' ||
     activeCategory === 'reservations' ||
     activeCategory === 'ai' ||
-    activeCategory === 'integrations'
+    activeCategory === 'integrations' ||
+    activeCategory === 'billing'
 
   const widgetEmbedSnippet = useMemo(() => {
     if (!businessRowId || !widgetOrigin) {
@@ -505,6 +523,24 @@ function SettingsPageInner() {
         if (schemaReady) {
           setHours(parseOperatingHours(data.operating_hours))
         }
+        setNotificationSettings(parseNotificationSettings(data.notification_settings))
+      }
+
+      // Deposit settings (tolerates the payment_settings column not existing yet).
+      const payRes = await supabase
+        .from('businesses')
+        .select('payment_settings')
+        .eq('user_id', userId)
+        .maybeSingle()
+      if (!isMounted) return
+      if (payRes.error) {
+        if (isPaymentSettingsSchemaError(payRes.error.message)) setPaymentSchemaReady(false)
+      } else if (payRes.data) {
+        const parsed = parsePaymentSettings(
+          (payRes.data as { payment_settings?: unknown }).payment_settings,
+        )
+        setPaymentSettings(parsed)
+        setDepositDraft(parsed.deposit_per_guest > 0 ? String(parsed.deposit_per_guest) : '')
       }
       setIsLoading(false)
     }
@@ -573,11 +609,13 @@ function SettingsPageInner() {
 
   useEffect(() => {
     if (!businessRowId || activeCategory !== 'reservations') return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async zone fetch syncs external Supabase state
     void loadZonesForBusiness(businessRowId)
     const stored = localStorage.getItem(`activity_resources_${businessRowId}`)
     if (stored) {
       try { setActivityResources(JSON.parse(stored)) } catch { /* ignore */ }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- loadZonesForBusiness identity changes every render; keyed by businessRowId
   }, [businessRowId, activeCategory])
 
   const saveReservations = async (bizId: string) => {
@@ -668,6 +706,34 @@ function SettingsPageInner() {
     return true
   }
 
+  const savePayments = async (bizId: string) => {
+    if (!paymentSchemaReady) {
+      setSaveError(PAYMENT_SETTINGS_MIGRATION_HINT)
+      return false
+    }
+    const parsed = parseFloat(depositDraft)
+    const perGuest = Number.isFinite(parsed) && parsed >= 0 ? Math.min(10000, parsed) : 0
+    const next: PaymentSettings = {
+      deposit_enabled: paymentSettings.deposit_enabled,
+      deposit_per_guest: perGuest,
+    }
+    const { error } = await supabase
+      .from('businesses')
+      .update({ payment_settings: next })
+      .eq('id', bizId)
+    if (error) {
+      if (isPaymentSettingsSchemaError(error.message)) {
+        setPaymentSchemaReady(false)
+        setSaveError(PAYMENT_SETTINGS_MIGRATION_HINT)
+      } else {
+        setSaveError(error.message ?? 'Failed to save deposit settings')
+      }
+      return false
+    }
+    setPaymentSettings(next)
+    return true
+  }
+
   const handleSave = async () => {
     if (isSaving || isLoading) {
       return
@@ -696,7 +762,7 @@ function SettingsPageInner() {
     setSaveError('')
     setSaveSucceeded(false)
 
-    if (activeCategory === 'reservations') {
+    if (activeCategory === 'reservations' || activeCategory === 'billing') {
       let bizId = businessRowId
       if (!bizId) {
         const { data: row } = await supabase.from('businesses').select('id').eq('user_id', userId).maybeSingle()
@@ -708,7 +774,8 @@ function SettingsPageInner() {
         setIsSaving(false)
         return
       }
-      const ok = await saveReservations(bizId)
+      const ok =
+        activeCategory === 'billing' ? await savePayments(bizId) : await saveReservations(bizId)
       setIsSaving(false)
       if (ok) {
         setSaveSucceeded(true)
@@ -738,6 +805,7 @@ function SettingsPageInner() {
       system_prompt: systemPrompt,
       agent_name: agentName,
       language,
+      notification_settings: notificationSettings,
     }
 
     const payloadWithHours = { ...basePayload, operating_hours: hours }
@@ -970,12 +1038,24 @@ function SettingsPageInner() {
     }
 
     if (activeCategory === 'team') {
+      if (!businessRowId) {
+        return (
+          <SettingsPlaceholder
+            reduceMotion={reduceMotion}
+            title="Team management"
+            description="Save your restaurant profile first (Restaurant tab), then invite staff here."
+          />
+        )
+      }
       return (
-        <SettingsPlaceholder
-          reduceMotion={reduceMotion}
-          title="Team management"
-          description="Invite staff, assign roles, and control who can access your dashboard. Coming soon."
-        />
+        <div style={{ display: 'grid', gap: 16, maxWidth: 760 }}>
+          <div style={{ borderRadius: 12, border: `1px solid ${s.border}`, background: s.panel, padding: 18, boxShadow: s.shadow }}>
+            <div style={{ color: s.textMuted, fontSize: 11, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', marginBottom: 12 }}>
+              Team members
+            </div>
+            <TeamMembersPanel businessId={businessRowId} ownerEmail={businessEmail || null} s={s} />
+          </div>
+        </div>
       )
     }
 
@@ -1097,7 +1177,7 @@ function SettingsPageInner() {
                   borderRadius: 8,
                   border: '1px solid rgba(220, 38, 38, 0.35)',
                   background: 'rgba(220, 38, 38, 0.06)',
-                  color: '#b91c1c',
+                  color: 'var(--bk-danger)',
                   fontSize: 12,
                   lineHeight: 1.5,
                 }}
@@ -1147,10 +1227,28 @@ function SettingsPageInner() {
             >
               Escalation Rules
             </div>
+            <p style={{ margin: '-2px 0 2px', fontSize: 12, color: t.textMuted, lineHeight: 1.5 }}>
+              When triggered, the concierge quietly alerts you by email and keeps helping the guest.
+            </p>
             {[
-              { label: 'Guest complaint', checked: escalateComplaint, onChange: setEscalateComplaint },
-              { label: 'Large party (8+ guests)', checked: escalateLargeParty, onChange: setEscalateLargeParty },
-              { label: 'Allergy or dietary risk', checked: escalateAllergy, onChange: setEscalateAllergy },
+              {
+                label: 'Guest complaint',
+                checked: notificationSettings.escalate_complaint,
+                onChange: (v: boolean) =>
+                  setNotificationSettings((p) => ({ ...p, escalate_complaint: v })),
+              },
+              {
+                label: 'Large party (8+ guests)',
+                checked: notificationSettings.escalate_large_party,
+                onChange: (v: boolean) =>
+                  setNotificationSettings((p) => ({ ...p, escalate_large_party: v })),
+              },
+              {
+                label: 'Allergy or dietary risk',
+                checked: notificationSettings.escalate_allergy,
+                onChange: (v: boolean) =>
+                  setNotificationSettings((p) => ({ ...p, escalate_allergy: v })),
+              },
             ].map((item) => (
               <label
                 key={item.label}
@@ -1272,7 +1370,7 @@ function SettingsPageInner() {
                     style={{ ...fieldStyle, WebkitAppearance: 'none', appearance: 'none' }}
                   >
                     {MENU_CATEGORIES.map((c) => (
-                      <option key={c} value={c} style={{ background: '#0d1f3c' }}>{c}</option>
+                      <option key={c} value={c} style={{ background: 'var(--bk-card)', color: 'var(--bk-head)' }}>{c}</option>
                     ))}
                   </select>
                 </div>
@@ -1559,41 +1657,58 @@ function SettingsPageInner() {
                 Choose how OceanCore alerts you about reservations and escalations.
               </p>
             </div>
-            {[
-              {
-                label: 'Email me when a new reservation comes in',
-                checked: emailNotifs,
-                onChange: setEmailNotifs,
-              },
-              {
-                label: 'SMS alerts for urgent escalations',
-                checked: smsNotifs,
-                onChange: setSmsNotifs,
-              },
-            ].map((item) => (
-              <label
-                key={item.label}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: 12,
-                  borderRadius: 12,
-                  border: `1px solid ${s.border}`,
-                  background: s.panel,
-                  padding: '16px 18px',
-                  color: s.text,
-                  fontSize: 14,
-                }}
-              >
-                {item.label}
-                <input type="checkbox" checked={item.checked} onChange={(event) => item.onChange(event.target.checked)} />
-              </label>
-            ))}
+              {[
+                {
+                  label: 'Email me when a new reservation comes in',
+                  checked: notificationSettings.email_on_reservation,
+                  onChange: (v: boolean) =>
+                    setNotificationSettings((p) => ({ ...p, email_on_reservation: v })),
+                },
+                {
+                  label: 'Email me when a new guest starts a chat',
+                  checked: notificationSettings.email_on_new_chat,
+                  onChange: (v: boolean) =>
+                    setNotificationSettings((p) => ({ ...p, email_on_new_chat: v })),
+                },
+                {
+                  label: 'Email guests a booking confirmation (when their email is known)',
+                  checked: notificationSettings.email_guest_confirmation,
+                  onChange: (v: boolean) =>
+                    setNotificationSettings((p) => ({ ...p, email_guest_confirmation: v })),
+                },
+              ].map((item) => (
+                <label
+                  key={item.label}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 12,
+                    borderRadius: 12,
+                    border: `1px solid ${s.border}`,
+                    background: s.panel,
+                    padding: '16px 18px',
+                    color: s.text,
+                    fontSize: 14,
+                  }}
+                >
+                  {item.label}
+                  <input
+                    type="checkbox"
+                    checked={item.checked}
+                    onChange={(event) => item.onChange(event.target.checked)}
+                  />
+                </label>
+              ))}
             <FloatingSelect
               label="Digest Frequency"
-              value={digest}
-              onChange={setDigest}
+              value={notificationSettings.digest_frequency}
+              onChange={(v) =>
+                setNotificationSettings((p) => ({
+                  ...p,
+                  digest_frequency: v as 'daily' | 'weekly' | 'off',
+                }))
+              }
               options={[
                 { value: 'daily', label: 'Daily summary' },
                 { value: 'weekly', label: 'Weekly summary' },
@@ -1678,8 +1793,109 @@ function SettingsPageInner() {
     }
 
     if (activeCategory === 'billing') {
+      const depositPreview = parseFloat(depositDraft)
+      const previewValid = Number.isFinite(depositPreview) && depositPreview > 0
       return (
         <div style={{ display: 'grid', gap: 16, maxWidth: 760 }}>
+          {/* Reservation deposits */}
+          <div style={{ borderRadius: 12, border: `1px solid ${s.border}`, background: s.panel, padding: 18, boxShadow: s.shadow }}>
+            <div style={{ color: s.textMuted, fontSize: 11, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase' }}>
+              Reservation deposits
+            </div>
+            {!paymentSchemaReady && (
+              <div style={{ ...migrationHintBox, marginTop: 12 }}>{PAYMENT_SETTINGS_MIGRATION_HINT}</div>
+            )}
+            <p style={{ margin: '10px 0 14px', color: s.textMuted, fontSize: 13, lineHeight: 1.6 }}>
+              Collect a per-guest deposit through Stripe when the AI concierge books a table.
+              Guests receive a secure payment link; the reservation is confirmed automatically
+              once the deposit is paid. Deposits reduce no-shows significantly.
+            </p>
+
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 12,
+                padding: '12px 14px',
+                borderRadius: 10,
+                border: `1px solid ${s.border}`,
+                background: paymentSettings.deposit_enabled ? s.activeBg : s.bg,
+                cursor: 'pointer',
+              }}
+            >
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: s.text }}>Require deposit</div>
+                <div style={{ fontSize: 12, color: s.textMuted, marginTop: 2 }}>
+                  The bot mentions the deposit before booking and shares the payment link after
+                </div>
+              </div>
+              <input
+                type="checkbox"
+                checked={paymentSettings.deposit_enabled}
+                disabled={!paymentSchemaReady || isSaving}
+                onChange={(e) =>
+                  setPaymentSettings((prev) => ({ ...prev, deposit_enabled: e.target.checked }))
+                }
+              />
+            </label>
+
+            <div style={{ marginTop: 14, display: 'grid', gap: 6 }}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: s.textMuted }}>
+                Deposit per guest (CAD)
+              </label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ position: 'relative', width: 160 }}>
+                  <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: s.textMuted, fontSize: 14 }}>
+                    $
+                  </span>
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.5"
+                    value={depositDraft}
+                    disabled={!paymentSchemaReady || isSaving}
+                    onChange={(e) => setDepositDraft(e.target.value)}
+                    placeholder="10"
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px 10px 24px',
+                      borderRadius: 10,
+                      border: `1px solid ${s.border}`,
+                      fontSize: 14,
+                      color: s.text,
+                      background: 'var(--bk-card)',
+                    }}
+                  />
+                </div>
+                {previewValid && paymentSettings.deposit_enabled && (
+                  <span style={{ fontSize: 12, color: s.textMuted }}>
+                    Party of 4 pays ${(depositPreview * 4).toFixed(2)} CAD
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div
+              style={{
+                marginTop: 16,
+                padding: '10px 12px',
+                borderRadius: 8,
+                background: s.bg,
+                border: `1px solid ${s.border}`,
+                fontSize: 12,
+                color: s.textMuted,
+                lineHeight: 1.6,
+              }}
+            >
+              Stripe keys are configured on the server via <code>STRIPE_SECRET_KEY</code> and{' '}
+              <code>STRIPE_WEBHOOK_SECRET</code> environment variables. Point the Stripe webhook
+              to <code>/api/payments/webhook</code>. Until the keys are set, bookings work
+              normally without a deposit.
+            </div>
+          </div>
+
+          {/* Plan */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14 }}>
             <div style={{ borderRadius: 12, border: `1px solid ${s.border}`, background: s.panel, padding: 16, boxShadow: s.shadow }}>
               <div style={{ color: s.textMuted, fontSize: 11, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase' }}>
@@ -1689,17 +1905,10 @@ function SettingsPageInner() {
             </div>
             <div style={{ borderRadius: 12, border: `1px solid ${s.border}`, background: s.panel, padding: 16, boxShadow: s.shadow }}>
               <div style={{ color: s.textMuted, fontSize: 11, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase' }}>
-                Payment Method
+                Subscription
               </div>
-              <div style={{ marginTop: 10, color: s.text, fontSize: 20, fontWeight: 700 }}>Not configured</div>
+              <div style={{ marginTop: 10, color: s.text, fontSize: 20, fontWeight: 700 }}>Free during beta</div>
             </div>
-          </div>
-          <div style={{ borderRadius: 12, border: `1px solid ${s.border}`, background: s.panel, padding: 18, boxShadow: s.shadow }}>
-            <div style={{ color: s.text, fontSize: 18, fontWeight: 700 }}>Billing</div>
-            <p style={{ margin: '10px 0 0', color: s.textMuted, fontSize: 14, lineHeight: 1.65 }}>
-              Subscription and invoices are not enabled yet.
-              Stripe billing will appear here when launched.
-            </p>
           </div>
         </div>
       )
@@ -1874,7 +2083,7 @@ function SettingsPageInner() {
                     {showSaveActions ? (
                       <div style={{ display: 'grid', gap: 8, justifyItems: isMobile ? 'stretch' : 'end', width: isMobile ? '100%' : 'auto' }}>
                         {saveError ? (
-                          <div style={{ color: '#dc2626', fontSize: 13, fontWeight: 600 }}>{saveError}</div>
+                          <div style={{ color: 'var(--bk-danger)', fontSize: 13, fontWeight: 600 }}>{saveError}</div>
                         ) : null}
                         <motion.button
                           type="button"
@@ -1891,12 +2100,12 @@ function SettingsPageInner() {
                             backgroundColor: saveSucceeded
                               ? '#0f766e'
                               : isLoading || isSaving
-                                ? '#e2e8f0'
+                                ? 'var(--bk-surface-2)'
                                 : '#38bdf8',
                             color: saveSucceeded
                               ? '#ffffff'
                               : isLoading || isSaving
-                                ? '#64748b'
+                                ? 'var(--bk-body)'
                                 : '#0f172a',
                           }}
                           transition={{ duration: reduceMotion ? 0 : 0.28, ease: [0.22, 1, 0.36, 1] }}

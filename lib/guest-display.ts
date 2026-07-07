@@ -1,6 +1,6 @@
 export type CrmGuestTag = 'New' | 'Regular' | 'Loyal' | 'No-show' | 'Large party'
 
-export type GuestTagFilter = 'All' | 'New' | 'Regular' | 'Loyal' | 'No-show'
+export type GuestTagFilter = 'All' | 'New' | 'Regular' | 'Loyal' | 'No-show' | 'Large party'
 
 export type GuestTagMetricsInput = {
   bookingCount: number
@@ -100,8 +100,8 @@ export function guestNameHue(name: string): number {
 
 /** Flat grey avatar for unknown guests */
 export const unknownGuestAvatarStyle = {
-  background: 'linear-gradient(135deg, #e2e8f0 0%, #cbd5e1 100%)',
-  color: '#94a3b8',
+  background: 'linear-gradient(135deg, var(--bk-surface-2) 0%, var(--bk-border-strong) 100%)',
+  color: 'var(--bk-body)',
 } as const
 
 export function deriveGuestTags(input: GuestTagMetricsInput): CrmGuestTag[] {
@@ -120,23 +120,23 @@ export function deriveGuestTags(input: GuestTagMetricsInput): CrmGuestTag[] {
 
 export function guestMatchesFilter(tags: CrmGuestTag[], filter: GuestTagFilter): boolean {
   if (filter === 'All') return true
-  return tags.includes(filter)
+  return tags.includes(filter as CrmGuestTag)
 }
 
 export function crmTagChipStyle(tag: CrmGuestTag): TagChipStyle {
   switch (tag) {
     case 'New':
-      return { bg: '#dcfce7', border: '#bbf7d0', color: '#16a34a', dot: '#16a34a' }
+      return { bg: 'var(--bk-green-bg)', border: 'var(--bk-green-border)', color: 'var(--bk-green)', dot: 'var(--bk-green)' }
     case 'Regular':
-      return { bg: '#dbeafe', border: '#bfdbfe', color: '#2563eb', dot: '#2563eb' }
+      return { bg: 'var(--bk-blue-bg)', border: 'var(--bk-blue-border)', color: 'var(--bk-blue)', dot: 'var(--bk-blue)' }
     case 'Loyal':
-      return { bg: '#ede9fe', border: '#ddd6fe', color: '#7c3aed', dot: '#7c3aed' }
+      return { bg: 'var(--bk-purple-bg)', border: 'var(--bk-purple-bg)', color: 'var(--bk-purple)', dot: 'var(--bk-purple)' }
     case 'No-show':
-      return { bg: '#fee2e2', border: '#fecaca', color: '#dc2626', dot: '#dc2626' }
+      return { bg: 'var(--bk-danger-bg)', border: 'var(--bk-danger-border)', color: 'var(--bk-danger)', dot: 'var(--bk-danger)' }
     case 'Large party':
-      return { bg: '#ffedd5', border: '#fed7aa', color: '#ea580c', dot: '#ea580c' }
+      return { bg: 'var(--bk-amber-bg)', border: 'var(--bk-amber-bg)', color: 'var(--bk-amber)', dot: 'var(--bk-amber)' }
     default:
-      return { bg: '#f1f5f9', border: '#e2e8f0', color: '#64748b', dot: '#64748b' }
+      return { bg: 'var(--bk-surface)', border: 'var(--bk-border)', color: 'var(--bk-body)', dot: 'var(--bk-body)' }
   }
 }
 
@@ -153,4 +153,4 @@ export function formatGuestDisplayDate(value: string | null | undefined): string
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-export const GUEST_TAG_FILTERS: GuestTagFilter[] = ['All', 'New', 'Regular', 'Loyal', 'No-show']
+export const GUEST_TAG_FILTERS: GuestTagFilter[] = ['All', 'New', 'Regular', 'Loyal', 'No-show', 'Large party']

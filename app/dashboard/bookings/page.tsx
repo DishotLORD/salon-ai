@@ -1,10 +1,13 @@
 'use client'
 
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
+import { useRouter } from 'next/navigation'
 import type { CSSProperties } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
+import { resolveBusinessAccess } from '@/lib/business-access'
 import { BookingsDayChips, BookingsDayEmptyStrip } from '@/components/bookings-day-chips'
+import { WaitlistPanel } from '@/components/waitlist-panel'
 import { BookingsLightCalendar } from '@/components/bookings-light-calendar'
 import { BookingsDayTimeline } from '@/components/bookings-day-timeline'
 import { DashboardOceanNav } from '@/components/dashboard-ocean-nav'
@@ -941,8 +944,10 @@ function ReservationModal({
   const appointmentId = editReservation?.id ?? null
 
   const nowDefault = new Date()
-  const defaultDate = initialDate ?? nowDefault.toISOString().split('T')[0]
-  const defaultTime = `${String(nowDefault.getHours() + 1).padStart(2, '0')}:00`
+  // toDateIso uses local date parts — toISOString() would flip to tomorrow's
+  // date every evening (UTC is ahead of Calgary).
+  const defaultDate = initialDate ?? toDateIso(nowDefault)
+  const defaultTime = `${String(Math.min(23, nowDefault.getHours() + 1)).padStart(2, '0')}:00`
 
   const [hydrating, setHydrating] = useState(isEdit)
   const [guestName, setGuestName] = useState('')
@@ -1008,12 +1013,14 @@ function ReservationModal({
 
   useEffect(() => {
     if (!timeRange) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- re-snap time when the day's operating hours change
     setTime((prev) => snapToGrid(timeToMinutes(prev), timeRange))
   }, [date, timeRange])
 
   useEffect(() => {
     if (!isEdit || !appointmentId) {
       if (!isEdit) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- reset modal fields when switching add/edit mode
         setGuestName('')
         setPartySize(2)
         setDate(defaultDate)
@@ -1084,13 +1091,21 @@ function ReservationModal({
     const notesValue = specialRequests.trim() || null
     const serviceName = buildServiceName(guestName, partySize, tableNumber, specialRequests)
 
-    if (businessId) {
+    // Editing without moving the slot (status/notes tweaks, incl. past bookings)
+    // must not be blocked by the availability check — past slots are never "open".
+    const slotUnchanged =
+      isEdit &&
+      editReservation != null &&
+      editReservation.scheduledAt.getTime() === scheduledAt.getTime()
+
+    if (businessId && !slotUnchanged) {
       const params = new URLSearchParams({
         business_id: businessId,
         date,
         partySize: String(partySize),
       })
       if (zoneId) params.set('zoneId', zoneId)
+      if (isEdit && appointmentId) params.set('exclude', appointmentId)
       try {
         const availRes = await fetch(`/api/bookings/availability?${params}`)
         const availJson = (await availRes.json()) as {
@@ -1461,7 +1476,7 @@ function ReservationModal({
                     ref={dateInputRef}
                     type="date"
                     value={date}
-                    min={isEdit ? undefined : new Date().toISOString().split('T')[0]}
+                    min={isEdit ? undefined : toDateIso(new Date())}
                     onChange={(e) => setDate(e.target.value)}
                     onFocus={() => setFocusedField('date')}
                     onBlur={() => setFocusedField(null)}
@@ -1629,7 +1644,7 @@ function ReservationModal({
               border: 'none',
               borderRadius: 10,
               background: saving || hydrating ? t.bgSubtle : t.accent,
-              color: saving || hydrating ? t.textSubtle : '#0f172a',
+              color: saving || hydrating ? t.textSubtle : 'var(--bk-head)',
               fontWeight: 600,
               fontSize: 14,
               cursor: saving || hydrating ? 'not-allowed' : 'pointer',
@@ -1651,7 +1666,7 @@ function ReservationModal({
                     height: 14,
                     borderRadius: '50%',
                     border: '2px solid rgba(15,23,42,0.15)',
-                    borderTopColor: '#0f172a',
+                    borderTopColor: 'var(--bk-head)',
                     display: 'inline-block',
                   }}
                 />
@@ -1697,8 +1712,10 @@ function GuestProfileDrawer({
   guestName: string
   onClose: () => void
 }) {
+  const router = useRouter()
   const [profile, setProfile] = useState<GuestProfile | null>(null)
   const [loading, setLoading] = useState(true)
+  const [ctaHover, setCtaHover] = useState(false)
 
   useEffect(() => {
     void (async () => {
@@ -1738,23 +1755,26 @@ function GuestProfileDrawer({
         transition={{ type: 'spring', stiffness: 340, damping: 32 }}
         style={{
           position: 'fixed', top: 0, right: 0, bottom: 0, zIndex: 301,
-          width: 340,
+          width: 380,
           background: 'var(--t-glass-bg)',
           backdropFilter: 'blur(28px)',
           WebkitBackdropFilter: 'blur(28px)',
           borderLeft: `1px solid ${t.border}`,
-          boxShadow: '-20px 0 60px rgba(0,0,0,0.5)',
+          boxShadow: '-24px 0 64px rgba(0,0,0,0.28)',
           display: 'flex', flexDirection: 'column',
           overflowY: 'auto',
         }}
       >
         {/* Header */}
-        <div style={{ padding: '20px 20px 16px', borderBottom: `1px solid ${t.borderSoft}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ fontSize: 13, fontWeight: 700, color: t.textMuted, letterSpacing: '0.1em', textTransform: 'uppercase' }}>Guest Profile</span>
+        <div style={{ padding: '22px 24px 18px', borderBottom: `1px solid ${t.borderSoft}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: 12.5, fontWeight: 700, color: t.textMuted, letterSpacing: '0.12em', textTransform: 'uppercase' }}>Guest Profile</span>
           <button
             type="button"
             onClick={onClose}
-            style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${t.border}`, background: 'transparent', color: t.textMuted, cursor: 'pointer', display: 'grid', placeItems: 'center', fontSize: 16 }}
+            aria-label="Close"
+            style={{ width: 30, height: 30, borderRadius: 9, border: `1px solid ${t.border}`, background: 'transparent', color: t.textMuted, cursor: 'pointer', display: 'grid', placeItems: 'center', fontSize: 16, transition: 'background 0.15s, color 0.15s' }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = t.bgSurfaceMuted; e.currentTarget.style.color = t.text }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = t.textMuted }}
           >
             ×
           </button>
@@ -1765,26 +1785,26 @@ function GuestProfileDrawer({
             Loading…
           </div>
         ) : (
-          <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 20 }}>
+          <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: 22 }}>
             {/* Avatar + name */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
               <div style={{
-                width: 56, height: 56, borderRadius: '50%', flexShrink: 0,
-                background: `linear-gradient(135deg, hsl(${hue} 60% 65%), hsl(${(hue + 35) % 360} 50% 42%))`,
+                width: 60, height: 60, borderRadius: '50%', flexShrink: 0,
+                background: `linear-gradient(135deg, hsl(${hue} 62% 62%), hsl(${(hue + 35) % 360} 55% 40%))`,
                 display: 'grid', placeItems: 'center',
-                fontSize: 18, fontWeight: 700, color: '#fff',
-                boxShadow: `0 0 0 3px rgba(${hue},${hue},255,0.15)`,
+                fontSize: 19, fontWeight: 700, color: '#ffffff',
+                boxShadow: `0 4px 14px hsla(${hue}, 55%, 45%, 0.35), 0 0 0 3px ${t.bgSurfaceMuted}`,
               }}>
                 {initials}
               </div>
               <div>
-                <div style={{ fontSize: 17, fontWeight: 700, color: t.text }}>{profile?.name ?? guestName}</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: t.text, letterSpacing: '-0.01em' }}>{profile?.name ?? guestName}</div>
                 {profile?.tags && profile.tags.length > 0 && (
-                  <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', gap: 6, marginTop: 7, flexWrap: 'wrap' }}>
                     {profile.tags.map((tag) => {
                       const tc = TAG_COLORS[tag] ?? { bg: t.bgSurfaceMuted, color: t.textMuted }
                       return (
-                        <span key={tag} style={{ padding: '2px 8px', borderRadius: 999, fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', background: tc.bg, color: tc.color }}>
+                        <span key={tag} style={{ padding: '3px 9px', borderRadius: 999, fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', background: tc.bg, color: tc.color }}>
                           {tag}
                         </span>
                       )
@@ -1795,12 +1815,12 @@ function GuestProfileDrawer({
             </div>
 
             {/* Contact */}
-            <div style={{ background: t.bgSurfaceMuted, borderRadius: 12, border: `1px solid ${t.borderSoft}`, overflow: 'hidden' }}>
+            <div style={{ background: t.bgSurfaceMuted, borderRadius: 14, border: `1px solid ${t.borderSoft}`, overflow: 'hidden' }}>
               {[
-                { label: 'Phone', value: profile?.phone || '—' },
-                { label: 'Email', value: profile?.email || '—' },
+                { label: 'Phone', value: profile?.phone || 'Not provided' },
+                { label: 'Email', value: profile?.email || 'Not provided' },
               ].map(({ label, value }, i, arr) => (
-                <div key={label} style={{ padding: '12px 16px', borderBottom: i < arr.length - 1 ? `1px solid ${t.borderSoft}` : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                <div key={label} style={{ padding: '13px 16px', borderBottom: i < arr.length - 1 ? `1px solid ${t.borderSoft}` : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
                   <span style={{ fontSize: 12, color: t.textMuted, fontWeight: 500, flexShrink: 0 }}>{label}</span>
                   <span style={{ fontSize: 13, color: t.text, fontWeight: 600, textAlign: 'right', wordBreak: 'break-all' }}>{value}</span>
                 </div>
@@ -1810,15 +1830,35 @@ function GuestProfileDrawer({
             {/* Stats */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
               {[
-                { label: 'Total visits', value: String(profile?.total_bookings ?? 0) },
-                { label: 'Last visit', value: profile?.last_visit ? new Date(profile.last_visit).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—' },
+                { label: 'Total Visits', value: String(profile?.total_bookings ?? 0) },
+                { label: 'Last Visit', value: profile?.last_visit ? new Date(profile.last_visit).toLocaleDateString('en-CA', { month: 'short', day: 'numeric' }) : 'Never' },
               ].map(({ label, value }) => (
-                <div key={label} style={{ background: t.bgSurfaceMuted, borderRadius: 10, border: `1px solid ${t.borderSoft}`, padding: '12px 14px' }}>
-                  <div style={{ fontSize: 11, color: t.textMuted, marginBottom: 4 }}>{label}</div>
-                  <div style={{ fontSize: 18, fontWeight: 700, color: t.text }}>{value}</div>
+                <div key={label} style={{ background: t.bgSurfaceMuted, borderRadius: 12, border: `1px solid ${t.borderSoft}`, padding: '13px 14px' }}>
+                  <div style={{ fontSize: 11, color: t.textMuted, marginBottom: 4, fontWeight: 500 }}>{label}</div>
+                  <div style={{ fontSize: 19, fontWeight: 700, color: t.text }}>{value}</div>
                 </div>
               ))}
             </div>
+
+            {/* Open in CRM */}
+            <button
+              type="button"
+              onClick={() => router.push(`/dashboard/crm?guest=${customerId}`)}
+              onMouseEnter={() => setCtaHover(true)}
+              onMouseLeave={() => setCtaHover(false)}
+              style={{
+                width: '100%', padding: '13px 16px', borderRadius: 12,
+                border: 'none', background: t.accent,
+                color: '#ffffff', fontSize: 13.5, fontWeight: 700, cursor: 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                boxShadow: ctaHover ? `0 6px 18px ${t.accentSoftBg}` : `0 2px 8px ${t.accentSoftBg}`,
+                transform: ctaHover ? 'translateY(-1px)' : 'translateY(0)',
+                transition: 'transform 0.15s ease, box-shadow 0.15s ease',
+              }}
+            >
+              View Full Profile in CRM
+              <span style={{ transition: 'transform 0.15s ease', transform: ctaHover ? 'translateX(3px)' : 'translateX(0)' }}>→</span>
+            </button>
           </div>
         )}
       </motion.div>
@@ -1828,6 +1868,7 @@ function GuestProfileDrawer({
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 export default function BookingsPage() {
+  const [guestDrawer, setGuestDrawer] = useState<{ customerId: string; guestName: string } | null>(null)
   const [monthOffset, setMonthOffset] = useState(0)
   const [selectedDay, setSelectedDay] = useState<Date | null>(null)
   const [rightTab, setRightTab] = useState<'day' | 'week' | 'all'>('day')
@@ -1837,7 +1878,6 @@ export default function BookingsPage() {
   const [showAddModal, setShowAddModal] = useState(false)
   const [editReservation, setEditReservation] = useState<Reservation | null>(null)
   const [prefilledDate, setPrefilledDate] = useState<string | undefined>(undefined)
-  const [guestDrawer, setGuestDrawer] = useState<{ customerId: string; guestName: string } | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'confirmed' | 'pending' | 'cancelled'>('all')
   const [operatingHours, setOperatingHours] = useState<OperatingHours>(DEFAULT_OPERATING_HOURS)
@@ -1907,6 +1947,7 @@ export default function BookingsPage() {
   // already-mapped rows once the zone map arrives (or changes).
   useEffect(() => {
     if (zoneNameById.size === 0) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- back-fill zone names after async zones fetch
     setReservations((prev) => {
       let changed = false
       const next = prev.map((r) => {
@@ -1946,13 +1987,9 @@ export default function BookingsPage() {
         return
       }
 
-      const { data: business } = await supabase
-        .from('businesses')
-        .select('id')
-        .eq('user_id', user.id)
-        .maybeSingle()
+      const access = await resolveBusinessAccess()
 
-      if (!business?.id) {
+      if (!access) {
         if (!isCancelled()) {
           setReservations([])
           setBusinessId(null)
@@ -1960,6 +1997,7 @@ export default function BookingsPage() {
         }
         return
       }
+      const business = { id: access.businessId }
 
       if (!isCancelled()) {
         setBusinessId((prev) => (prev === business.id ? prev : business.id))
@@ -2048,6 +2086,7 @@ export default function BookingsPage() {
   )
 
   const fetchReservationsRef = useRef(fetchReservations)
+  // eslint-disable-next-line react-hooks/refs -- latest-ref pattern so subscriptions call the current fetcher
   fetchReservationsRef.current = fetchReservations
 
   useEffect(() => {
@@ -2295,11 +2334,11 @@ export default function BookingsPage() {
   }
 
   const lightStatusColors: Record<ResStatus, { bg: string; color: string }> = {
-    confirmed: { bg: '#dcfce7', color: '#16a34a' },
-    seated:    { bg: '#dbeafe', color: '#2563eb' },
-    pending:   { bg: '#fef3c7', color: '#d97706' },
-    cancelled: { bg: '#fee2e2', color: '#dc2626' },
-    'no-show': { bg: '#f1f5f9', color: '#64748b' },
+    confirmed: { bg: 'var(--bk-green-bg)', color: 'var(--bk-green)' },
+    seated:    { bg: 'var(--bk-blue-bg)', color: 'var(--bk-blue)' },
+    pending:   { bg: 'var(--bk-amber-bg)', color: 'var(--bk-amber)' },
+    cancelled: { bg: 'var(--bk-danger-bg)', color: 'var(--bk-danger)' },
+    'no-show': { bg: 'var(--bk-surface)', color: 'var(--bk-body)' },
   }
 
   const showModal = showAddModal || editReservation !== null
@@ -2317,19 +2356,19 @@ export default function BookingsPage() {
       <tr
         key={r.id}
         style={{
-          borderBottom: '1px solid #f1f5f9',
-          borderLeft: `3px solid ${isNext ? '#6366f1' : 'transparent'}`,
+          borderBottom: '1px solid var(--bk-surface)',
+          borderLeft: `3px solid ${isNext ? 'var(--bk-indigo)' : 'transparent'}`,
           transition: 'background 0.1s',
         }}
         onMouseEnter={(e) => {
-          e.currentTarget.style.background = '#f8fafc'
+          e.currentTarget.style.background = 'var(--bk-surface)'
         }}
         onMouseLeave={(e) => {
           e.currentTarget.style.background = 'transparent'
         }}
       >
         <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' as const }}>
-          <span style={{ fontSize: bk.body, fontWeight: 700, color: '#0f172a' }}>
+          <span style={{ fontSize: bk.body, fontWeight: 700, color: 'var(--bk-head)' }}>
             {fmtTime(r.scheduledAt)}
           </span>
         </td>
@@ -2338,7 +2377,7 @@ export default function BookingsPage() {
             style={{
               fontSize: bk.body,
               fontWeight: 700,
-              color: '#0f172a',
+              color: 'var(--bk-head)',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap' as const,
@@ -2346,7 +2385,7 @@ export default function BookingsPage() {
           >
             {r.customerId ? (
               <span
-                style={{ cursor: 'pointer', borderBottom: '1px dashed #cbd5e1' }}
+                style={{ cursor: 'pointer', borderBottom: '1px dashed var(--bk-border-strong)' }}
                 onClick={() =>
                   setGuestDrawer({ customerId: r.customerId!, guestName: r.guestName })
                 }
@@ -2360,7 +2399,7 @@ export default function BookingsPage() {
           <div
             style={{
               fontSize: bk.micro,
-              color: '#94a3b8',
+              color: 'var(--bk-muted)',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap' as const,
@@ -2396,9 +2435,9 @@ export default function BookingsPage() {
                 style={{
                   padding: '3px 6px',
                   borderRadius: 5,
-                  border: '1px solid #bbf7d0',
-                  background: '#f0fdf4',
-                  color: '#16a34a',
+                  border: '1px solid var(--bk-green-border)',
+                  background: 'var(--bk-green-bg)',
+                  color: 'var(--bk-green)',
                   fontSize: 9,
                   fontWeight: 700,
                   cursor: 'pointer',
@@ -2415,9 +2454,9 @@ export default function BookingsPage() {
                 style={{
                   padding: '3px 6px',
                   borderRadius: 5,
-                  border: '1px solid #fecaca',
-                  background: '#fef2f2',
-                  color: '#dc2626',
+                  border: '1px solid var(--bk-danger-border)',
+                  background: 'var(--bk-danger-bg)',
+                  color: 'var(--bk-danger)',
                   fontSize: 9,
                   fontWeight: 700,
                   cursor: 'pointer',
@@ -2435,7 +2474,7 @@ export default function BookingsPage() {
                 height: 22,
                 borderRadius: 5,
                 border: bk.border,
-                background: '#ffffff',
+                background: 'var(--bk-card)',
                 cursor: 'pointer',
                 display: 'grid',
                 placeItems: 'center',
@@ -2443,9 +2482,9 @@ export default function BookingsPage() {
               }}
             >
               <svg width="12" height="3" viewBox="0 0 12 3" fill="none">
-                <circle cx="1.5" cy="1.5" r="1.2" fill="#94a3b8" />
-                <circle cx="6" cy="1.5" r="1.2" fill="#94a3b8" />
-                <circle cx="10.5" cy="1.5" r="1.2" fill="#94a3b8" />
+                <circle cx="1.5" cy="1.5" r="1.2" fill="var(--bk-muted)" />
+                <circle cx="6" cy="1.5" r="1.2" fill="var(--bk-muted)" />
+                <circle cx="10.5" cy="1.5" r="1.2" fill="var(--bk-muted)" />
               </svg>
             </button>
           </div>
@@ -2474,11 +2513,11 @@ export default function BookingsPage() {
             colSpan={4}
             style={{
               padding: '8px 10px',
-              background: '#fafafa',
+              background: 'var(--bk-surface)',
               fontSize: bk.caption,
               fontWeight: 700,
-              color: '#64748b',
-              borderBottom: '1px solid #e2e8f0',
+              color: 'var(--bk-body)',
+              borderBottom: '1px solid var(--bk-border)',
             }}
           >
             {d.toLocaleDateString('en-US', {
@@ -2517,8 +2556,8 @@ export default function BookingsPage() {
     padding: '5px 12px',
     borderRadius: bk.radiusSm,
     border: active ? 'none' : bk.border,
-    background: active ? '#0f172a' : '#ffffff',
-    color: active ? '#ffffff' : '#64748b',
+    background: active ? 'var(--bk-inverse)' : 'var(--bk-card)',
+    color: active ? 'var(--bk-inverse-text)' : 'var(--bk-body)',
     fontSize: bk.caption,
     fontWeight: 600,
     cursor: 'pointer',
@@ -2587,10 +2626,10 @@ export default function BookingsPage() {
 
   return (
     <>
-      <DashboardOceanNav activeNav="Bookings" flatBackground="#f8fafc">
+      <DashboardOceanNav activeNav="Bookings" flatBackground="var(--bk-bg)">
         {({ isMobile, openNav }) => (
           <main style={{
-            background: '#f8fafc',
+            background: 'var(--bk-bg)',
             minHeight: '100vh',
             margin: isMobile ? '-20px -16px' : '-36px',
             padding: isMobile ? bk.pagePadMobile : bk.pagePad,
@@ -2637,28 +2676,28 @@ export default function BookingsPage() {
             ) : (
               /* ── Desktop top bar ── */
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingBottom: 14, fontFamily: bk.font, flexWrap: 'wrap' as const }}>
-                <h1 style={{ margin: 0, fontSize: bk.h1, fontWeight: 700, color: '#0f172a', letterSpacing: '-0.02em', whiteSpace: 'nowrap' as const, marginRight: 6 }}>
+                <h1 style={{ margin: 0, fontSize: bk.h1, fontWeight: 700, color: 'var(--bk-head)', letterSpacing: '-0.02em', whiteSpace: 'nowrap' as const, marginRight: 6 }}>
                   Reservations
                 </h1>
 
                 {/* Date navigator */}
-                <div style={{ display: 'flex', alignItems: 'center', background: '#ffffff', border: bk.border, borderRadius: bk.radiusSm, overflow: 'hidden' }}>
-                  <button type="button" onClick={() => navigateDayOffset(-1)} style={{ width: 30, height: bk.controlH, border: 'none', borderRight: '1px solid #e2e8f0', background: 'transparent', color: '#64748b', cursor: 'pointer', fontSize: 15, display: 'grid', placeItems: 'center' }}>‹</button>
+                <div style={{ display: 'flex', alignItems: 'center', background: 'var(--bk-card)', border: bk.border, borderRadius: bk.radiusSm, overflow: 'hidden' }}>
+                  <button type="button" onClick={() => navigateDayOffset(-1)} style={{ width: 30, height: bk.controlH, border: 'none', borderRight: '1px solid var(--bk-border)', background: 'transparent', color: 'var(--bk-body)', cursor: 'pointer', fontSize: 15, display: 'grid', placeItems: 'center' }}>‹</button>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 10px' }}>
                     <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                      <rect x="1" y="2.5" width="12" height="10" rx="1.5" stroke="#94a3b8" strokeWidth="1.2"/>
-                      <path d="M1 5.5h12" stroke="#94a3b8" strokeWidth="1.2"/>
-                      <path d="M4.5 1v2M9.5 1v2" stroke="#94a3b8" strokeWidth="1.2" strokeLinecap="round"/>
+                      <rect x="1" y="2.5" width="12" height="10" rx="1.5" stroke="var(--bk-muted)" strokeWidth="1.2"/>
+                      <path d="M1 5.5h12" stroke="var(--bk-muted)" strokeWidth="1.2"/>
+                      <path d="M4.5 1v2M9.5 1v2" stroke="var(--bk-muted)" strokeWidth="1.2" strokeLinecap="round"/>
                     </svg>
-                    <span style={{ fontSize: bk.body, fontWeight: 600, color: '#0f172a', whiteSpace: 'nowrap' as const }}>
+                    <span style={{ fontSize: bk.body, fontWeight: 600, color: 'var(--bk-head)', whiteSpace: 'nowrap' as const }}>
                       {effectiveDay.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
                     </span>
                   </div>
-                  <button type="button" onClick={() => navigateDayOffset(1)} style={{ width: 30, height: bk.controlH, border: 'none', borderLeft: '1px solid #e2e8f0', background: 'transparent', color: '#64748b', cursor: 'pointer', fontSize: 15, display: 'grid', placeItems: 'center' }}>›</button>
+                  <button type="button" onClick={() => navigateDayOffset(1)} style={{ width: 30, height: bk.controlH, border: 'none', borderLeft: '1px solid var(--bk-border)', background: 'transparent', color: 'var(--bk-body)', cursor: 'pointer', fontSize: 15, display: 'grid', placeItems: 'center' }}>›</button>
                 </div>
 
                 {/* Today pill */}
-                <button type="button" onClick={() => { setSelectedDay(today); setMonthOffset(0) }} style={{ padding: '6px 12px', background: '#ffffff', border: bk.border, borderRadius: bk.radiusSm, fontSize: bk.body, fontWeight: 500, color: '#0f172a', cursor: 'pointer', whiteSpace: 'nowrap' as const }}>
+                <button type="button" onClick={() => { setSelectedDay(today); setMonthOffset(0) }} style={{ padding: '6px 12px', background: 'var(--bk-card)', border: bk.border, borderRadius: bk.radiusSm, fontSize: bk.body, fontWeight: 500, color: 'var(--bk-head)', cursor: 'pointer', whiteSpace: 'nowrap' as const }}>
                   Today
                 </button>
 
@@ -2667,15 +2706,15 @@ export default function BookingsPage() {
                 {/* Search */}
                 <div style={{ position: 'relative' as const, flex: '0 1 300px', minWidth: 180 }}>
                   <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ position: 'absolute' as const, left: 10, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' as const }}>
-                    <circle cx="6" cy="6" r="4.5" stroke="#94a3b8" strokeWidth="1.2"/>
-                    <path d="M9.5 9.5L12 12" stroke="#94a3b8" strokeWidth="1.2" strokeLinecap="round"/>
+                    <circle cx="6" cy="6" r="4.5" stroke="var(--bk-muted)" strokeWidth="1.2"/>
+                    <path d="M9.5 9.5L12 12" stroke="var(--bk-muted)" strokeWidth="1.2" strokeLinecap="round"/>
                   </svg>
                   <input
                     type="search"
-                    placeholder="Search by guest name, phone or email..."
+                    placeholder="Search by guest name or notes..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    style={{ width: '100%', padding: '6px 10px 6px 28px', background: '#ffffff', border: bk.border, borderRadius: bk.radiusSm, fontSize: bk.body, color: '#0f172a', outline: 'none', boxSizing: 'border-box' as const, fontFamily: 'inherit' }}
+                    style={{ width: '100%', padding: '6px 10px 6px 28px', background: 'var(--bk-card)', border: bk.border, borderRadius: bk.radiusSm, fontSize: bk.body, color: 'var(--bk-head)', outline: 'none', boxSizing: 'border-box' as const, fontFamily: 'inherit' }}
                   />
                 </div>
 
@@ -2684,14 +2723,14 @@ export default function BookingsPage() {
                   <button
                     type="button"
                     onClick={() => setFiltersOpen((o) => !o)}
-                    style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 12px', background: '#ffffff', border: bk.border, borderRadius: bk.radiusSm, fontSize: bk.body, fontWeight: 500, color: '#374151', cursor: 'pointer', whiteSpace: 'nowrap' as const }}
+                    style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 12px', background: 'var(--bk-card)', border: bk.border, borderRadius: bk.radiusSm, fontSize: bk.body, fontWeight: 500, color: 'var(--bk-text)', cursor: 'pointer', whiteSpace: 'nowrap' as const }}
                   >
                     <svg width="14" height="10" viewBox="0 0 14 10" fill="none">
-                      <path d="M1 1.5h12M3 5h8M5 8.5h4" stroke="#64748b" strokeWidth="1.2" strokeLinecap="round"/>
+                      <path d="M1 1.5h12M3 5h8M5 8.5h4" stroke="var(--bk-body)" strokeWidth="1.2" strokeLinecap="round"/>
                     </svg>
                     Filters
                     {advancedFiltersActive(advancedFilters) && (
-                      <span style={{ minWidth: 16, height: 16, borderRadius: 8, background: '#6366f1', color: '#fff', fontSize: 9, fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px' }}>!</span>
+                      <span style={{ minWidth: 16, height: 16, borderRadius: 8, background: 'var(--bk-indigo)', color: '#ffffff', fontSize: 9, fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px' }}>!</span>
                     )}
                   </button>
                   {filtersOpen && (
@@ -2703,16 +2742,16 @@ export default function BookingsPage() {
                         zIndex: 40,
                         width: 240,
                         padding: 12,
-                        background: '#ffffff',
+                        background: 'var(--bk-card)',
                         border: bk.border,
                         borderRadius: bk.radiusSm,
-                        boxShadow: '0 8px 24px rgba(15,23,42,0.12)',
+                        boxShadow: 'var(--bk-shadow-pop)',
                         display: 'grid',
                         gap: 10,
                       }}
                     >
-                      <div style={{ fontSize: bk.micro, color: '#94a3b8' }}>Filters apply to loaded month</div>
-                      <label style={{ display: 'grid', gap: 4, fontSize: bk.caption, color: '#374151' }}>
+                      <div style={{ fontSize: bk.micro, color: 'var(--bk-muted)' }}>Filters apply to loaded month</div>
+                      <label style={{ display: 'grid', gap: 4, fontSize: bk.caption, color: 'var(--bk-text)' }}>
                         Min party size
                         <select
                           value={advancedFilters.minPartySize ?? ''}
@@ -2732,7 +2771,7 @@ export default function BookingsPage() {
                           ))}
                         </select>
                       </label>
-                      <label style={{ display: 'grid', gap: 4, fontSize: bk.caption, color: '#374151' }}>
+                      <label style={{ display: 'grid', gap: 4, fontSize: bk.caption, color: 'var(--bk-text)' }}>
                         Source
                         <select
                           value={advancedFilters.source}
@@ -2756,7 +2795,7 @@ export default function BookingsPage() {
                           setAdvancedFilters(DEFAULT_ADVANCED_FILTERS)
                           setTableVisibleCount(10)
                         }}
-                        style={{ padding: '6px 10px', border: bk.border, borderRadius: 6, background: '#fff', fontSize: bk.caption, cursor: 'pointer', color: '#64748b' }}
+                        style={{ padding: '6px 10px', border: bk.border, borderRadius: 6, background: 'var(--bk-card)', fontSize: bk.caption, cursor: 'pointer', color: 'var(--bk-body)' }}
                       >
                         Reset filters
                       </button>
@@ -2765,7 +2804,7 @@ export default function BookingsPage() {
                 </div>
 
                 {/* + New Reservation */}
-                <button type="button" onClick={() => setShowAddModal(true)} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 14px', background: '#0f172a', border: 'none', borderRadius: bk.radiusSm, fontSize: bk.body, fontWeight: 600, color: '#ffffff', cursor: 'pointer', whiteSpace: 'nowrap' as const }}>
+                <button type="button" onClick={() => setShowAddModal(true)} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 14px', background: 'var(--bk-inverse)', border: 'none', borderRadius: bk.radiusSm, fontSize: bk.body, fontWeight: 600, color: 'var(--bk-card)', cursor: 'pointer', whiteSpace: 'nowrap' as const }}>
                   <span style={{ fontSize: 14, lineHeight: 1 }}>+</span>
                   New Reservation
                 </button>
@@ -2776,15 +2815,15 @@ export default function BookingsPage() {
                     type="button"
                     onClick={handleBellClick}
                     title="Show pending reservations"
-                    style={{ width: bk.controlH, height: bk.controlH, borderRadius: '50%', border: bk.border, background: '#ffffff', cursor: 'pointer', display: 'grid', placeItems: 'center' }}
+                    style={{ width: bk.controlH, height: bk.controlH, borderRadius: '50%', border: bk.border, background: 'var(--bk-card)', cursor: 'pointer', display: 'grid', placeItems: 'center' }}
                   >
                     <svg width="16" height="17" viewBox="0 0 16 17" fill="none">
-                      <path d="M8 1.5C5.515 1.5 3.5 3.515 3.5 6v3.25L2 11v.75h12V11l-1.5-1.75V6C12.5 3.515 10.485 1.5 8 1.5z" stroke="#374151" strokeWidth="1.2" strokeLinejoin="round"/>
-                      <path d="M6.5 12.25a1.5 1.5 0 0 0 3 0" stroke="#374151" strokeWidth="1.2" strokeLinecap="round"/>
+                      <path d="M8 1.5C5.515 1.5 3.5 3.515 3.5 6v3.25L2 11v.75h12V11l-1.5-1.75V6C12.5 3.515 10.485 1.5 8 1.5z" stroke="var(--bk-text)" strokeWidth="1.2" strokeLinejoin="round"/>
+                      <path d="M6.5 12.25a1.5 1.5 0 0 0 3 0" stroke="var(--bk-text)" strokeWidth="1.2" strokeLinecap="round"/>
                     </svg>
                   </button>
                   {!loading && pendingBadgeCount > 0 && (
-                    <span style={{ position: 'absolute' as const, top: -1, right: -1, minWidth: 16, height: 16, borderRadius: 8, background: '#6366f1', color: '#fff', fontSize: 9, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px', border: '2px solid #f8fafc' }}>
+                    <span style={{ position: 'absolute' as const, top: -1, right: -1, minWidth: 16, height: 16, borderRadius: 8, background: 'var(--bk-indigo)', color: '#ffffff', fontSize: 9, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px', border: '2px solid var(--bk-bg)' }}>
                       {pendingBadgeCount > 9 ? '9+' : pendingBadgeCount}
                     </span>
                   )}
@@ -2914,38 +2953,38 @@ export default function BookingsPage() {
                 {/* Card 1 — context label */}
                 <div style={{ ...bkCard, padding: bk.cardPad }}>
                   <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 8 }}>
-                    <span style={{ fontSize: bk.caption, fontWeight: 600, color: '#64748b' }}>{bookingKpi.card1Label}</span>
-                    <div style={{ width: 28, height: 28, borderRadius: bk.radiusSm, background: '#ede9fe', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+                    <span style={{ fontSize: bk.caption, fontWeight: 600, color: 'var(--bk-body)' }}>{bookingKpi.card1Label}</span>
+                    <div style={{ width: 28, height: 28, borderRadius: bk.radiusSm, background: 'var(--bk-purple-bg)', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
                       <svg width="15" height="15" viewBox="0 0 18 18" fill="none">
-                        <rect x="2" y="3.5" width="14" height="12" rx="2" stroke="#7c3aed" strokeWidth="1.4"/>
-                        <path d="M2 7.5h14" stroke="#7c3aed" strokeWidth="1.4"/>
-                        <path d="M6 2v2M12 2v2" stroke="#7c3aed" strokeWidth="1.4" strokeLinecap="round"/>
+                        <rect x="2" y="3.5" width="14" height="12" rx="2" stroke="var(--bk-purple)" strokeWidth="1.4"/>
+                        <path d="M2 7.5h14" stroke="var(--bk-purple)" strokeWidth="1.4"/>
+                        <path d="M6 2v2M12 2v2" stroke="var(--bk-purple)" strokeWidth="1.4" strokeLinecap="round"/>
                       </svg>
                     </div>
                   </div>
-                  <div style={{ fontSize: bk.statValue, fontWeight: 700, color: '#0f172a', lineHeight: 1, letterSpacing: '-0.02em', marginBottom: 2 }}>
+                  <div style={{ fontSize: bk.statValue, fontWeight: 700, color: 'var(--bk-head)', lineHeight: 1, letterSpacing: '-0.02em', marginBottom: 2 }}>
                     {loading ? '—' : bookingKpi.totalCount}
                   </div>
-                  <div style={{ fontSize: bk.caption, color: '#94a3b8', marginBottom: 6 }}>reservations</div>
-                  <div style={{ fontSize: bk.caption, fontWeight: 600, color: '#64748b' }}>{loading ? '—' : bookingKpi.subtitle1}</div>
+                  <div style={{ fontSize: bk.caption, color: 'var(--bk-muted)', marginBottom: 6 }}>reservations</div>
+                  <div style={{ fontSize: bk.caption, fontWeight: 600, color: 'var(--bk-body)' }}>{loading ? '—' : bookingKpi.subtitle1}</div>
                 </div>
 
                 {/* Upcoming */}
                 <div style={{ ...bkCard, padding: bk.cardPad }}>
                   <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 8 }}>
-                    <span style={{ fontSize: bk.caption, fontWeight: 600, color: '#64748b' }}>Upcoming</span>
-                    <div style={{ width: 28, height: 28, borderRadius: bk.radiusSm, background: '#dbeafe', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+                    <span style={{ fontSize: bk.caption, fontWeight: 600, color: 'var(--bk-body)' }}>Upcoming</span>
+                    <div style={{ width: 28, height: 28, borderRadius: bk.radiusSm, background: 'var(--bk-blue-bg)', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
                       <svg width="15" height="15" viewBox="0 0 18 18" fill="none">
-                        <circle cx="9" cy="9" r="7" stroke="#2563eb" strokeWidth="1.4"/>
-                        <path d="M9 5.5V9l2.5 2" stroke="#2563eb" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+                        <circle cx="9" cy="9" r="7" stroke="var(--bk-blue)" strokeWidth="1.4"/>
+                        <path d="M9 5.5V9l2.5 2" stroke="var(--bk-blue)" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
                       </svg>
                     </div>
                   </div>
-                  <div style={{ fontSize: bk.statValue, fontWeight: 700, color: '#0f172a', lineHeight: 1, letterSpacing: '-0.02em', marginBottom: 2 }}>
+                  <div style={{ fontSize: bk.statValue, fontWeight: 700, color: 'var(--bk-head)', lineHeight: 1, letterSpacing: '-0.02em', marginBottom: 2 }}>
                     {loading ? '—' : bookingKpi.upcomingCount}
                   </div>
-                  <div style={{ fontSize: bk.caption, color: '#94a3b8', marginBottom: 6 }}>reservations</div>
-                  <div style={{ fontSize: bk.caption, fontWeight: 600, color: '#2563eb' }}>
+                  <div style={{ fontSize: bk.caption, color: 'var(--bk-muted)', marginBottom: 6 }}>reservations</div>
+                  <div style={{ fontSize: bk.caption, fontWeight: 600, color: 'var(--bk-blue)' }}>
                     {loading ? '—' : bookingKpi.subtitle2}
                   </div>
                 </div>
@@ -2953,23 +2992,23 @@ export default function BookingsPage() {
                 {/* Confirmed */}
                 <div style={{ ...bkCard, padding: bk.cardPad }}>
                   <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 8 }}>
-                    <span style={{ fontSize: bk.caption, fontWeight: 600, color: '#64748b' }}>Confirmed</span>
-                    <div style={{ width: 28, height: 28, borderRadius: bk.radiusSm, background: '#dcfce7', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+                    <span style={{ fontSize: bk.caption, fontWeight: 600, color: 'var(--bk-body)' }}>Confirmed</span>
+                    <div style={{ width: 28, height: 28, borderRadius: bk.radiusSm, background: 'var(--bk-green-bg)', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
                       <svg width="15" height="15" viewBox="0 0 18 18" fill="none">
-                        <circle cx="9" cy="9" r="7" stroke="#16a34a" strokeWidth="1.4"/>
-                        <path d="M6 9l2 2 4-4" stroke="#16a34a" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+                        <circle cx="9" cy="9" r="7" stroke="var(--bk-green)" strokeWidth="1.4"/>
+                        <path d="M6 9l2 2 4-4" stroke="var(--bk-green)" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
                       </svg>
                     </div>
                   </div>
-                  <div style={{ fontSize: bk.statValue, fontWeight: 700, color: '#0f172a', lineHeight: 1, letterSpacing: '-0.02em', marginBottom: 2 }}>
+                  <div style={{ fontSize: bk.statValue, fontWeight: 700, color: 'var(--bk-head)', lineHeight: 1, letterSpacing: '-0.02em', marginBottom: 2 }}>
                     {loading ? '—' : bookingKpi.confirmedCount}
                   </div>
-                  <div style={{ fontSize: bk.caption, color: '#94a3b8', marginBottom: 6 }}>reservations</div>
+                  <div style={{ fontSize: bk.caption, color: 'var(--bk-muted)', marginBottom: 6 }}>reservations</div>
                   <div>
-                    <div style={{ height: 3, background: '#f1f5f9', borderRadius: 2, overflow: 'hidden', marginBottom: 4 }}>
-                      <div style={{ height: '100%', width: `${loading ? 0 : bookingKpi.confirmedPct}%`, background: '#16a34a', borderRadius: 2, transition: 'width 0.4s ease' }} />
+                    <div style={{ height: 3, background: 'var(--bk-surface)', borderRadius: 2, overflow: 'hidden', marginBottom: 4 }}>
+                      <div style={{ height: '100%', width: `${loading ? 0 : bookingKpi.confirmedPct}%`, background: 'var(--bk-green)', borderRadius: 2, transition: 'width 0.4s ease' }} />
                     </div>
-                    <div style={{ fontSize: bk.micro, color: '#64748b' }}>
+                    <div style={{ fontSize: bk.micro, color: 'var(--bk-body)' }}>
                       {loading ? '—' : `${bookingKpi.confirmedPct}%`} of {bookingKpi.scope === 'day' ? 'day' : bookingKpi.scope === 'month' ? 'month' : 'today'}
                     </div>
                   </div>
@@ -2978,28 +3017,28 @@ export default function BookingsPage() {
                 {/* Cancelled */}
                 <div style={{ ...bkCard, padding: bk.cardPad }}>
                   <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 8 }}>
-                    <span style={{ fontSize: bk.caption, fontWeight: 600, color: '#64748b' }}>Cancelled</span>
+                    <span style={{ fontSize: bk.caption, fontWeight: 600, color: 'var(--bk-body)' }}>Cancelled</span>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <button
                         type="button"
                         onClick={handleViewAllCancelled}
-                        style={{ fontSize: bk.micro, fontWeight: 600, color: '#6366f1', cursor: 'pointer', background: 'none', border: 'none', padding: 0 }}
+                        style={{ fontSize: bk.micro, fontWeight: 600, color: 'var(--bk-indigo)', cursor: 'pointer', background: 'none', border: 'none', padding: 0 }}
                       >
                         View all
                       </button>
-                      <div style={{ width: 28, height: 28, borderRadius: bk.radiusSm, background: '#fee2e2', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+                      <div style={{ width: 28, height: 28, borderRadius: bk.radiusSm, background: 'var(--bk-danger-bg)', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
                         <svg width="15" height="15" viewBox="0 0 18 18" fill="none">
-                          <circle cx="9" cy="9" r="7" stroke="#dc2626" strokeWidth="1.4"/>
-                          <path d="M6.5 6.5l5 5M11.5 6.5l-5 5" stroke="#dc2626" strokeWidth="1.4" strokeLinecap="round"/>
+                          <circle cx="9" cy="9" r="7" stroke="var(--bk-danger)" strokeWidth="1.4"/>
+                          <path d="M6.5 6.5l5 5M11.5 6.5l-5 5" stroke="var(--bk-danger)" strokeWidth="1.4" strokeLinecap="round"/>
                         </svg>
                       </div>
                     </div>
                   </div>
-                  <div style={{ fontSize: bk.statValue, fontWeight: 700, color: '#0f172a', lineHeight: 1, letterSpacing: '-0.02em', marginBottom: 2 }}>
+                  <div style={{ fontSize: bk.statValue, fontWeight: 700, color: 'var(--bk-head)', lineHeight: 1, letterSpacing: '-0.02em', marginBottom: 2 }}>
                     {loading ? '—' : bookingKpi.cancelledCount}
                   </div>
-                  <div style={{ fontSize: bk.caption, color: '#94a3b8', marginBottom: 6 }}>reservations</div>
-                  <div style={{ fontSize: bk.caption, fontWeight: 600, color: '#ef4444' }}>{loading ? '—' : bookingKpi.subtitle4}</div>
+                  <div style={{ fontSize: bk.caption, color: 'var(--bk-muted)', marginBottom: 6 }}>reservations</div>
+                  <div style={{ fontSize: bk.caption, fontWeight: 600, color: 'var(--bk-danger)' }}>{loading ? '—' : bookingKpi.subtitle4}</div>
                 </div>
               </div>
 
@@ -3041,9 +3080,9 @@ export default function BookingsPage() {
                 <div ref={rightPanelRef} style={{ ...bkCard, overflow: 'hidden' }}>
 
                   {/* Filter tabs + list scope */}
-                  <div style={{ padding: '10px 12px', borderBottom: '1px solid #e2e8f0', display: 'grid', gap: 6 }}>
+                  <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--bk-border)', display: 'grid', gap: 6 }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' as const }}>
-                      <span style={{ fontSize: bk.body, fontWeight: 700, color: '#0f172a' }}>
+                      <span style={{ fontSize: bk.body, fontWeight: 700, color: 'var(--bk-head)' }}>
                         {loading ? '—' : tableListTitle}
                       </span>
                       {selectedDay ? (
@@ -3051,14 +3090,14 @@ export default function BookingsPage() {
                           <button
                             type="button"
                             onClick={handleShowAllMonth}
-                            style={{ fontSize: bk.caption, color: '#6366f1', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                            style={{ fontSize: bk.caption, color: 'var(--bk-indigo)', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
                           >
                             All month
                           </button>
                           <button
                             type="button"
                             onClick={handleShowAllMonth}
-                            style={{ fontSize: bk.caption, color: '#94a3b8', fontWeight: 500, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                            style={{ fontSize: bk.caption, color: 'var(--bk-muted)', fontWeight: 500, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
                           >
                             Clear ×
                           </button>
@@ -3078,8 +3117,8 @@ export default function BookingsPage() {
                                 padding: '5px 11px',
                                 borderRadius: 999,
                                 border: active ? 'none' : bk.border,
-                                background: active ? '#0f172a' : '#ffffff',
-                                color: active ? '#ffffff' : '#64748b',
+                                background: active ? 'var(--bk-inverse)' : 'var(--bk-card)',
+                                color: active ? 'var(--bk-inverse-text)' : 'var(--bk-body)',
                                 fontSize: bk.caption,
                                 fontWeight: active ? 600 : 500,
                                 cursor: 'pointer',
@@ -3092,7 +3131,7 @@ export default function BookingsPage() {
                         })}
                       </div>
                       {tableSearchHint && (
-                        <span style={{ fontSize: bk.micro, color: '#94a3b8', fontWeight: 500 }}>{tableSearchHint}</span>
+                        <span style={{ fontSize: bk.micro, color: 'var(--bk-muted)', fontWeight: 500 }}>{tableSearchHint}</span>
                       )}
                     </div>
                   </div>
@@ -3102,7 +3141,7 @@ export default function BookingsPage() {
                     <div>
                       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
-                          <tr style={{ background: '#fafafa', borderBottom: '1px solid #e2e8f0' }}>
+                          <tr style={{ background: 'var(--bk-surface)', borderBottom: '1px solid var(--bk-border)' }}>
                             {(['Time', 'Guest', 'Status', ''] as const).map((col, i) => (
                               <th
                                 key={i}
@@ -3111,7 +3150,7 @@ export default function BookingsPage() {
                                   textAlign: 'left',
                                   fontSize: 9,
                                   fontWeight: 700,
-                                  color: '#94a3b8',
+                                  color: 'var(--bk-muted)',
                                   textTransform: 'uppercase' as const,
                                   letterSpacing: '0.08em',
                                   whiteSpace: 'nowrap' as const,
@@ -3126,18 +3165,18 @@ export default function BookingsPage() {
                         <tbody>
                           {loading ? (
                             Array.from({ length: 5 }).map((_, i) => (
-                              <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                              <tr key={i} style={{ borderBottom: '1px solid var(--bk-surface)' }}>
                                 {[48, 100, 52, 24].map((w, c) => (
                                   <td key={c} style={{ padding: '7px 10px' }}>
-                                    <div style={{ height: 11, borderRadius: 5, background: '#f1f5f9', width: w }} />
-                                    {c === 1 && <div style={{ height: 9, borderRadius: 4, background: '#f8fafc', width: 72, marginTop: 5 }} />}
+                                    <div style={{ height: 11, borderRadius: 5, background: 'var(--bk-surface)', width: w }} />
+                                    {c === 1 && <div style={{ height: 9, borderRadius: 4, background: 'var(--bk-bg)', width: 72, marginTop: 5 }} />}
                                   </td>
                                 ))}
                               </tr>
                             ))
                           ) : filteredTableReservations.length === 0 ? (
                             <tr>
-                              <td colSpan={4} style={{ padding: '24px 10px', textAlign: 'center', color: '#94a3b8', fontSize: bk.caption }}>
+                              <td colSpan={4} style={{ padding: '24px 10px', textAlign: 'center', color: 'var(--bk-muted)', fontSize: bk.caption }}>
                                 No reservations
                               </td>
                             </tr>
@@ -3150,11 +3189,11 @@ export default function BookingsPage() {
 
                     {/* Load more */}
                     {!loading && filteredTableReservations.length > tableVisibleCount && (
-                      <div style={{ padding: '12px', borderTop: '1px solid #f1f5f9', textAlign: 'center' as const }}>
+                      <div style={{ padding: '12px', borderTop: '1px solid var(--bk-surface)', textAlign: 'center' as const }}>
                         <button
                           type="button"
                           onClick={() => setTableVisibleCount((c) => c + 10)}
-                          style={{ padding: '8px 20px', background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 12, fontWeight: 500, color: '#64748b', cursor: 'pointer' }}
+                          style={{ padding: '8px 20px', background: 'var(--bk-card)', border: '1px solid var(--bk-border)', borderRadius: 8, fontSize: 12, fontWeight: 500, color: 'var(--bk-body)', cursor: 'pointer' }}
                         >
                           Load more ↓
                         </button>
@@ -3166,6 +3205,17 @@ export default function BookingsPage() {
 
               </motion.div>
               </>
+            )}
+
+            {/* ── WAITLIST ── */}
+            {businessId && (
+              <div style={{ marginTop: 14 }}>
+                <WaitlistPanel
+                  businessId={businessId}
+                  zoneNameById={zoneNameById}
+                  onConverted={() => void fetchReservationsRef.current(() => false, { silent: true })}
+                />
+              </div>
             )}
 
             {/* ── MODAL ── */}

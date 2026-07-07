@@ -1,7 +1,7 @@
 'use client'
 
 import type { CSSProperties, PointerEvent } from 'react'
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 
 import { t } from '@/lib/dashboard-theme'
 import { BOOKING_SLOT_MINUTES } from '@/lib/operating-hours'
@@ -63,28 +63,25 @@ export function TimeRangeDial({
   const openDigital = formatDigitalClock(open, range, slots)
   const closeDigital = formatDigitalClock(close, range, slots)
 
-  const pickFromClientX = useCallback(
-    (clientX: number, target: DragTarget) => {
-      const el = trackRef.current
-      if (!el || disabled) return
-      const rect = el.getBoundingClientRect()
-      const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width))
-      const mins = range.start + pct * (range.end - range.start)
-      const snapped = snapToGrid(mins, range, slots)
-      const snappedMin = timeToTimelineMinutes(snapped, range)
+  const pickFromClientX = (clientX: number, target: DragTarget) => {
+    const el = trackRef.current
+    if (!el || disabled) return
+    const rect = el.getBoundingClientRect()
+    const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width))
+    const mins = range.start + pct * (range.end - range.start)
+    const snapped = snapToGrid(mins, range, slots)
+    const snappedMin = timeToTimelineMinutes(snapped, range)
 
-      if (target === 'open') {
-        const nextClose =
-          snappedMin >= closeMin ? snapToGrid(snappedMin + range.step, range, slots) : close
-        onChange(snapped, nextClose)
-      } else if (snappedMin <= openMin) {
-        onChange(open, snapToGrid(openMin + range.step, range, slots))
-      } else {
-        onChange(open, snapped)
-      }
-    },
-    [close, closeMin, disabled, onChange, open, openMin, range, slots],
-  )
+    if (target === 'open') {
+      const nextClose =
+        snappedMin >= closeMin ? snapToGrid(snappedMin + range.step, range, slots) : close
+      onChange(snapped, nextClose)
+    } else if (snappedMin <= openMin) {
+      onChange(open, snapToGrid(openMin + range.step, range, slots))
+    } else {
+      onChange(open, snapped)
+    }
+  }
 
   const handleTrackPointerDown = (e: PointerEvent<HTMLDivElement>) => {
     if (disabled) return

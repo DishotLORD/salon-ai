@@ -6,7 +6,7 @@ import OpenAI from 'openai'
 export const maxDuration = 120 // 2 minutes for OCR of large PDFs
 
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { createClient } from '@/lib/supabase-server'
+import { verifyBusinessOwner } from '@/lib/verify-business-owner'
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const pdfParse = require('pdf-parse') as (buf: Buffer) => Promise<{ text: string; numpages: number }>
@@ -114,15 +114,11 @@ function parsedPdfLikelyIncomplete(text: string, pageCount: number): boolean {
 }
 
 // ── Auth helper ───────────────────────────────────────────────────────────────
-async function verifyOwner(business_id: string): Promise<{ userId: string } | NextResponse> {
-  const authClient = await createClient()
-  const { data: { user } } = await authClient.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  const { data: biz } = await supabaseAdmin
-    .from('businesses').select('id')
-    .eq('id', business_id).eq('user_id', user.id).maybeSingle()
-  if (!biz) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-  return { userId: user.id }
+// Owner or manager may manage the menu (matches verifyBusinessOwner semantics).
+async function verifyOwner(business_id: string): Promise<true | NextResponse> {
+  const allowed = await verifyBusinessOwner(business_id)
+  if (!allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  return true
 }
 
 // ── POST /api/menu/pdf ────────────────────────────────────────────────────────

@@ -2,15 +2,16 @@
 
 import type { CSSProperties, ReactNode } from 'react'
 import Link from 'next/link'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 
 import { DashboardLogoutButton } from '@/components/dashboard-logout-button'
+import { OceanCoreLogo } from '@/components/oceancore-logo'
 import { drawerOverlay, drawerPanelLeft, oceanTransition } from '@/lib/ocean-motion'
 import { supabase } from '@/lib/supabase'
 import { t, sidebar } from '@/lib/dashboard-theme'
 
-export type OceanDashboardNavId = 'Dashboard' | 'Chats' | 'Bookings' | 'CRM' | 'Settings'
+export type OceanDashboardNavId = 'Dashboard' | 'Chats' | 'Bookings' | 'CRM' | 'Analytics' | 'Settings'
 
 type DashboardOceanNavProps = {
   activeNav: OceanDashboardNavId
@@ -33,6 +34,28 @@ type NavItem = {
 }
 
 const SIDEBAR_WIDTH = 240
+
+// Theme lives on <html data-theme> (set pre-hydration by the inline script in
+// app/layout.tsx); useSyncExternalStore keeps React in sync without a
+// post-mount setState.
+const themeListeners = new Set<() => void>()
+
+function subscribeTheme(listener: () => void) {
+  themeListeners.add(listener)
+  return () => {
+    themeListeners.delete(listener)
+  }
+}
+
+function getThemeSnapshot(): 'dark' | 'light' {
+  return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark'
+}
+
+function setGlobalTheme(next: 'dark' | 'light') {
+  localStorage.setItem('theme', next)
+  document.documentElement.dataset.theme = next
+  for (const listener of themeListeners) listener()
+}
 
 function IconDashboard() {
   return (
@@ -80,103 +103,30 @@ function IconSettings() {
   )
 }
 
+function IconAnalytics() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="18" y1="20" x2="18" y2="10" />
+      <line x1="12" y1="20" x2="12" y2="4" />
+      <line x1="6" y1="20" x2="6" y2="14" />
+    </svg>
+  )
+}
+
 const navItems: NavItem[] = [
   { id: 'Dashboard', href: '/dashboard', icon: <IconDashboard /> },
   { id: 'Chats', href: '/dashboard/chats', icon: <IconChats /> },
   { id: 'Bookings', href: '/dashboard/bookings', icon: <IconBookings /> },
   { id: 'CRM', href: '/dashboard/crm', icon: <IconCRM /> },
+  { id: 'Analytics', href: '/dashboard/analytics', icon: <IconAnalytics /> },
   { id: 'Settings', href: '/dashboard/settings', icon: <IconSettings /> },
 ]
 
 function AnimatedWaveLogo() {
-  const ocean = 'Ocean'.split('')
-  const core = 'Core'.split('')
-
   return (
     <Link href="/dashboard" style={{ textDecoration: 'none' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '28px 24px 20px' }}>
-
-        {/* Icon */}
-        <motion.div
-          initial={{ scale: 0.5, opacity: 0, rotate: -15 }}
-          animate={{ scale: 1, opacity: 1, rotate: 0 }}
-          transition={{ duration: 0.6, ease: [0.34, 1.56, 0.64, 1] }}
-          style={{ position: 'relative', width: 36, height: 36, flexShrink: 0 }}
-        >
-          <motion.div
-            animate={{ boxShadow: [`0 0 0px rgba(96,184,255,0)`, `0 0 16px rgba(96,184,255,0.5)`, `0 0 0px rgba(96,184,255,0)`] }}
-            transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut', delay: 1 }}
-            style={{ borderRadius: 10, overflow: 'hidden' }}
-          >
-            <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
-              <rect width="36" height="36" rx="10" fill="rgba(96,184,255,0.12)" />
-              <motion.path
-                d="M6 22c3-5 5-8 9-8s6 5 9 5 4-2.5 6-5"
-                stroke={t.accent}
-                strokeWidth="2"
-                strokeLinecap="round"
-                fill="none"
-                initial={{ pathLength: 0, opacity: 0 }}
-                animate={{ pathLength: 1, opacity: 1, d: [
-                  'M6 22c3-5 5-8 9-8s6 5 9 5 4-2.5 6-5',
-                  'M6 20c3-3 5-6 9-6s6 4 9 6 4-1 6-4',
-                  'M6 22c3-5 5-8 9-8s6 5 9 5 4-2.5 6-5',
-                ]}}
-                transition={{ pathLength: { duration: 0.8, delay: 0.3 }, opacity: { duration: 0.3, delay: 0.3 }, d: { duration: 3, repeat: Infinity, ease: 'easeInOut', delay: 1.2 } }}
-              />
-              <motion.path
-                d="M6 17c3-3 5-5 9-5s6 3 9 3 4-1.5 6-3"
-                stroke={t.accent}
-                strokeWidth="1.2"
-                strokeLinecap="round"
-                fill="none"
-                initial={{ pathLength: 0, opacity: 0 }}
-                animate={{ pathLength: 1, opacity: 0.35, d: [
-                  'M6 17c3-3 5-5 9-5s6 3 9 3 4-1.5 6-3',
-                  'M6 15c3-2 5-4 9-4s6 3 9 4 4-1 6-3',
-                  'M6 17c3-3 5-5 9-5s6 3 9 3 4-1.5 6-3',
-                ]}}
-                transition={{ pathLength: { duration: 0.8, delay: 0.5 }, opacity: { duration: 0.3, delay: 0.5 }, d: { duration: 3, repeat: Infinity, ease: 'easeInOut', delay: 1.7 } }}
-              />
-            </svg>
-          </motion.div>
-        </motion.div>
-
-        {/* Text */}
-        <div>
-          <div style={{ fontFamily: 'var(--font-playfair, Georgia, serif)', fontSize: 18, fontWeight: 700, lineHeight: 1, letterSpacing: '-0.01em', display: 'flex', overflow: 'hidden' }}>
-            {ocean.map((char, i) => (
-              <motion.span
-                key={`o-${i}`}
-                initial={{ y: 20, opacity: 0 }}
-                animate={{ y: 0, opacity: 1 }}
-                transition={{ duration: 0.4, delay: 0.1 + i * 0.05, ease: [0.22, 1, 0.36, 1] }}
-                style={{ color: t.accent, display: 'inline-block' }}
-              >
-                {char}
-              </motion.span>
-            ))}
-            {core.map((char, i) => (
-              <motion.span
-                key={`c-${i}`}
-                initial={{ y: 20, opacity: 0 }}
-                animate={{ y: 0, opacity: 1 }}
-                transition={{ duration: 0.4, delay: 0.35 + i * 0.05, ease: [0.22, 1, 0.36, 1] }}
-                style={{ color: sidebar.text, display: 'inline-block' }}
-              >
-                {char}
-              </motion.span>
-            ))}
-          </div>
-          <motion.div
-            initial={{ opacity: 0, x: -8 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.4, delay: 0.7 }}
-            style={{ fontSize: 10, color: sidebar.textMuted, letterSpacing: '0.22em', textTransform: 'uppercase', marginTop: 4, fontWeight: 600 }}
-          >
-            Restaurant AI
-          </motion.div>
-        </div>
+      <div style={{ padding: '24px 20px 18px' }}>
+        <OceanCoreLogo variant="sidebar" theme="dark" />
       </div>
     </Link>
   )
@@ -204,21 +154,11 @@ export function DashboardOceanNav({ activeNav, fillViewport, flatBackground, chi
   const [isDrawerOpen, setDrawerOpen] = useState(false)
   const [userEmail, setUserEmail] = useState<string | null>(null)
   const [logoutOpen, setLogoutOpen] = useState(false)
-  const [theme, setTheme] = useState<'dark' | 'light'>('dark')
+  const theme = useSyncExternalStore(subscribeTheme, getThemeSnapshot, () => 'dark' as const)
   const reduceMotion = useReducedMotion()
 
-  useEffect(() => {
-    const stored = localStorage.getItem('theme')
-    const initial = stored === 'light' ? 'light' : 'dark'
-    setTheme(initial)
-    document.documentElement.dataset.theme = initial
-  }, [])
-
   const toggleTheme = useCallback(() => {
-    const next = theme === 'dark' ? 'light' : 'dark'
-    setTheme(next)
-    localStorage.setItem('theme', next)
-    document.documentElement.dataset.theme = next
+    setGlobalTheme(theme === 'dark' ? 'light' : 'dark')
   }, [theme])
 
   useEffect(() => {

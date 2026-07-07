@@ -15,7 +15,7 @@ const labelStyle: React.CSSProperties = {
   fontWeight: 700,
   letterSpacing: '0.14em',
   textTransform: 'uppercase',
-  color: '#64748b',
+  color: 'var(--bk-body)',
 }
 
 const inputStyle: React.CSSProperties = {
@@ -24,7 +24,7 @@ const inputStyle: React.CSSProperties = {
   borderRadius: 10,
   border: '1px solid rgba(15, 23, 42, 0.1)',
   fontSize: 14,
-  color: '#0f172a',
+  color: 'var(--bk-head)',
   background: '#fff',
   boxSizing: 'border-box',
 }
@@ -48,7 +48,7 @@ export function BookingSettingsPanel({
 
   return (
     <div style={{ display: 'grid', gap: 16 }}>
-      <p style={{ margin: 0, fontSize: 13, color: '#64748b', lineHeight: 1.55 }}>
+      <p style={{ margin: 0, fontSize: 13, color: 'var(--bk-body)', lineHeight: 1.55 }}>
         Global defaults used when no dining zone is selected. The AI concierge and manual
         bookings use these limits together with your zones.
       </p>
@@ -132,7 +132,7 @@ export function BookingSettingsPanel({
           padding: '12px 14px',
           borderRadius: 10,
           border: '1px solid rgba(15, 23, 42, 0.1)',
-          background: '#f8fafc',
+          background: 'var(--bk-surface)',
           cursor: disabled ? 'not-allowed' : 'pointer',
         }}
       >
@@ -146,10 +146,10 @@ export function BookingSettingsPanel({
           style={{ marginTop: 2, width: 16, height: 16, flexShrink: 0, cursor: 'inherit' }}
         />
         <span style={{ display: 'grid', gap: 3 }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: '#0f172a' }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--bk-head)' }}>
             Require contact before booking
           </span>
-          <span style={{ fontSize: 12, color: '#64748b', lineHeight: 1.5 }}>
+          <span style={{ fontSize: 12, color: 'var(--bk-body)', lineHeight: 1.5 }}>
             The AI concierge must collect a phone number or email before confirming a
             reservation — so you can send confirmations and recognize returning guests.
           </span>
@@ -166,8 +166,8 @@ export function BookingSettingsPanel({
           fontWeight: 600,
           borderRadius: 8,
           border: '1px solid rgba(15, 23, 42, 0.12)',
-          background: '#f8fafc',
-          color: '#475569',
+          background: 'var(--bk-surface)',
+          color: 'var(--bk-text)',
           cursor: disabled ? 'not-allowed' : 'pointer',
         }}
       >

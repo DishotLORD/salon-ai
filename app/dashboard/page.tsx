@@ -1,8 +1,9 @@
 import { redirect } from 'next/navigation'
 
+import { resolveBusinessAccessServer } from '@/lib/business-access-server'
 import { createClient } from '@/lib/supabase-server'
 
-import { DashboardClient, type RecentActivity } from './dashboard-client'
+import { DashboardClient, type RecentActivity, type ZoneOccupancy } from './dashboard-client'
 
 const ACTIVITY_LIMIT = 4
 
@@ -21,10 +22,15 @@ export default async function Dashboard() {
     redirect('/auth/login')
   }
 
+  const access = await resolveBusinessAccessServer(supabase, user.id)
+  if (!access) {
+    redirect('/onboarding')
+  }
+
   const { data: business } = await supabase
     .from('businesses')
     .select('id, name, agent_name')
-    .eq('user_id', user.id)
+    .eq('id', access.businessId)
     .maybeSingle()
 
   if (!business) {
@@ -118,6 +124,38 @@ export default async function Dashboard() {
     }
   })
 
+  // ── Zone occupancy for today ──────────────────────────────────────────────
+  const todayEndISO = new Date(new Date().setHours(23, 59, 59, 999)).toISOString()
+
+  const { data: zonesData } = await supabase
+    .from('dining_zones')
+    .select('id, name, max_concurrent_parties, sort_order')
+    .eq('business_id', businessId)
+    .eq('is_active', true)
+    .order('sort_order')
+
+  const { data: todayAppts } = await supabase
+    .from('appointments')
+    .select('zone_id, party_size')
+    .eq('business_id', businessId)
+    .in('status', ['pending', 'confirmed', 'seated'])
+    .gte('scheduled_at', todayStartISO)
+    .lte('scheduled_at', todayEndISO)
+
+  const guestsByZone = new Map<string, number>()
+  for (const appt of todayAppts ?? []) {
+    if (appt.zone_id) {
+      guestsByZone.set(String(appt.zone_id), (guestsByZone.get(String(appt.zone_id)) ?? 0) + (appt.party_size ?? 0))
+    }
+  }
+
+  const zoneOccupancy: ZoneOccupancy[] = (zonesData ?? []).map((z) => ({
+    id: String(z.id),
+    name: String(z.name),
+    capacity: Number(z.max_concurrent_parties) || 0,
+    guestsToday: guestsByZone.get(String(z.id)) ?? 0,
+  }))
+
   return (
     <DashboardClient
       businessDisplayName={businessDisplayName}
@@ -126,6 +164,7 @@ export default async function Dashboard() {
       activeChats={activeChats}
       messageCount={messageCount}
       recentActivity={recentActivity}
+      zoneOccupancy={zoneOccupancy}
     />
   )
 }

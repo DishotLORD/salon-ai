@@ -105,6 +105,90 @@ input[type="number"] { -moz-appearance: textfield; }
   --t-glass-highlight: rgba(255,255,255,0.55);
 }
 
+/* =========================================================== */
+/* "bk" compact design system (Bookings / CRM / Analytics)     */
+/* Light is the design default; dark harmonizes with --t-*.    */
+/* =========================================================== */
+
+:root,
+[data-theme="light"] {
+  --bk-bg: #f8fafc;                 /* page background */
+  --bk-card: #ffffff;               /* card / input surface */
+  --bk-surface: #f1f5f9;            /* muted surface: tracks, chips, hover */
+  --bk-surface-2: #e2e8f0;          /* deeper surface */
+  --bk-grid: #f1f5f9;               /* chart gridlines */
+  --bk-grid-soft: #eef2f7;
+  --bk-border: #e2e8f0;
+  --bk-border-strong: #cbd5e1;
+  --bk-head: #0f172a;               /* headings / strongest text */
+  --bk-text: #334155;               /* primary body text */
+  --bk-body: #64748b;               /* secondary text */
+  --bk-muted: #94a3b8;              /* faint text */
+  --bk-inverse: #0f172a;            /* dark tooltips / primary buttons / active pills */
+  --bk-inverse-hover: #1e293b;
+  --bk-inverse-text: #ffffff;
+  --bk-toggle-active: #ffffff;      /* active segment of segmented controls */
+  --bk-accent: #0ea5e9;
+  --bk-accent-soft: rgba(14,165,233,0.10);
+  --bk-indigo: #6366f1;
+  --bk-danger: #dc2626;
+  --bk-danger-bg: #fee2e2;
+  --bk-danger-border: #fecaca;
+  --bk-green: #16a34a;
+  --bk-green-bg: #dcfce7;
+  --bk-green-border: #bbf7d0;
+  --bk-amber: #d97706;
+  --bk-amber-bg: #fef3c7;
+  --bk-blue: #2563eb;
+  --bk-blue-bg: #dbeafe;
+  --bk-blue-border: #bfdbfe;
+  --bk-purple: #7c3aed;
+  --bk-purple-bg: #ede9fe;
+  --bk-shadow: 0 1px 2px rgba(15,23,42,0.04);
+  --bk-shadow-md: 0 1px 3px rgba(15,23,42,0.12);
+  --bk-shadow-pop: 0 10px 24px rgba(15,23,42,0.3);
+  --bk-weekend: rgba(15,23,42,0.025);
+}
+
+[data-theme="dark"] {
+  --bk-bg: #0a1628;
+  --bk-card: #101f36;
+  --bk-surface: rgba(255,255,255,0.06);
+  --bk-surface-2: rgba(255,255,255,0.11);
+  --bk-grid: rgba(255,255,255,0.06);
+  --bk-grid-soft: rgba(255,255,255,0.045);
+  --bk-border: rgba(255,255,255,0.10);
+  --bk-border-strong: rgba(255,255,255,0.22);
+  --bk-head: #e8eef7;
+  --bk-text: #c3d0e3;
+  --bk-body: #92a8c5;
+  --bk-muted: #61799a;
+  --bk-inverse: #334155;
+  --bk-inverse-hover: #3e4f66;
+  --bk-inverse-text: #ffffff;
+  --bk-toggle-active: rgba(255,255,255,0.16);
+  --bk-accent: #38bdf8;
+  --bk-accent-soft: rgba(56,189,248,0.14);
+  --bk-indigo: #818cf8;
+  --bk-danger: #f87171;
+  --bk-danger-bg: rgba(248,113,113,0.14);
+  --bk-danger-border: rgba(248,113,113,0.35);
+  --bk-green: #4ade80;
+  --bk-green-bg: rgba(74,222,128,0.14);
+  --bk-green-border: rgba(74,222,128,0.35);
+  --bk-amber: #fbbf24;
+  --bk-amber-bg: rgba(251,191,36,0.14);
+  --bk-blue: #93c5fd;
+  --bk-blue-bg: rgba(59,130,246,0.18);
+  --bk-blue-border: rgba(59,130,246,0.40);
+  --bk-purple: #a78bfa;
+  --bk-purple-bg: rgba(139,92,246,0.16);
+  --bk-shadow: 0 1px 2px rgba(0,0,0,0.4);
+  --bk-shadow-md: 0 1px 3px rgba(0,0,0,0.5);
+  --bk-shadow-pop: 0 10px 24px rgba(0,0,0,0.6);
+  --bk-weekend: rgba(255,255,255,0.03);
+}
+
 :root {
   /* Core canvas & ink */
   --ocean-black: #070b12;
@@ -228,7 +312,6 @@ input[type="number"] { -moz-appearance: textfield; }
 
 html {
   color-scheme: light;
-  scroll-behavior: smooth;
 }
 
 @keyframes fadeUp {
@@ -271,6 +354,34 @@ body {
   pointer-events: none;
   z-index: 1;
 }
+
+/* ─── Split auth layout ─────────────────────────────────────── */
+
+.split-auth {
+  min-height: 100vh;
+}
+
+.pulse-dot {
+  animation: pulse-dot 2.4s ease-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%   { box-shadow: 0 0 0 0 rgba(74,222,128,0.55); }
+  70%  { box-shadow: 0 0 0 9px rgba(74,222,128,0); }
+  100% { box-shadow: 0 0 0 0 rgba(74,222,128,0); }
+}
+
+@media (max-width: 880px) {
+  .split-auth {
+    grid-template-columns: 1fr !important;
+  }
+  .split-auth aside {
+    padding: 30px 28px 34px !important;
+    min-height: auto !important;
+  }
+}
+
+/* ─── End split auth ─────────────────────────────────────────── */
 
 ::selection {
   background: var(--ocean-sky-muted);

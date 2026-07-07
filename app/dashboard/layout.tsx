@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { redirect } from 'next/navigation'
 
+import { resolveBusinessAccessServer } from '@/lib/business-access-server'
 import { createClient } from '@/lib/supabase-server'
 
 export default async function DashboardLayout({ children }: { children: ReactNode }) {
@@ -13,13 +14,9 @@ export default async function DashboardLayout({ children }: { children: ReactNod
     redirect('/auth/login')
   }
 
-  const { data: business } = await supabase
-    .from('businesses')
-    .select('id')
-    .eq('user_id', user.id)
-    .maybeSingle()
+  const access = await resolveBusinessAccessServer(supabase, user.id)
 
-  if (!business) {
+  if (!access) {
     redirect('/onboarding')
   }
 

@@ -88,7 +88,7 @@ export function defaultMainDiningZone(
     slug: 'main-dining',
     max_concurrent_parties: 150,
     min_party_size: 1,
-    max_party_size: 12,
+    max_party_size: 999,
     turnover_minutes: 70,
     is_active: true,
     sort_order: 0,

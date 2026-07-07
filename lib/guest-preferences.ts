@@ -79,6 +79,8 @@ function appendUnique(
   const base = existing?.trim()
   if (!base) return add
   if (base.toLowerCase().includes(add.toLowerCase())) return base
+  // The new value covers the old one (e.g. a fuller allergy note) — replace.
+  if (add.toLowerCase().includes(base.toLowerCase())) return add
   return `${base}; ${add}`
 }
 

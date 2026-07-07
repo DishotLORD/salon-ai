@@ -7,7 +7,7 @@ const labelStyle: React.CSSProperties = {
   fontWeight: 700,
   letterSpacing: '0.12em',
   textTransform: 'uppercase',
-  color: '#94a3b8',
+  color: 'var(--bk-muted)',
 }
 
 const inputStyle: React.CSSProperties = {
@@ -18,7 +18,7 @@ const inputStyle: React.CSSProperties = {
   fontSize: 13,
   boxSizing: 'border-box',
   background: '#fff',
-  color: '#0f172a',
+  color: 'var(--bk-head)',
   fontFamily: 'inherit',
 }
 
@@ -114,7 +114,7 @@ export function ActivityResourcesPanel({
     border: '1px solid rgba(15,23,42,0.08)',
     borderRadius: 10,
     padding: '12px 14px',
-    background: '#fafafa',
+    background: 'var(--bk-surface)',
     display: 'grid',
     gap: 10,
   }
@@ -135,7 +135,7 @@ export function ActivityResourcesPanel({
   return (
     <div style={{ display: 'grid', gap: 10 }}>
       {resources.length === 0 && (
-        <p style={{ margin: 0, fontSize: 12, color: '#94a3b8', textAlign: 'center', padding: '12px 0' }}>
+        <p style={{ margin: 0, fontSize: 12, color: 'var(--bk-muted)', textAlign: 'center', padding: '12px 0' }}>
           No activities configured — add one below.
         </p>
       )}
@@ -149,8 +149,8 @@ export function ActivityResourcesPanel({
                 width: 30,
                 height: 30,
                 borderRadius: 7,
-                background: resource.active ? '#ede9fe' : '#f1f5f9',
-                color: resource.active ? '#7c3aed' : '#94a3b8',
+                background: resource.active ? 'var(--bk-purple-bg)' : 'var(--bk-surface)',
+                color: resource.active ? 'var(--bk-purple)' : 'var(--bk-muted)',
                 display: 'grid',
                 placeItems: 'center',
                 flexShrink: 0,
@@ -183,16 +183,16 @@ export function ActivityResourcesPanel({
                 checked={resource.active}
                 onChange={(e) => update(resource.id, { active: e.target.checked })}
                 disabled={disabled}
-                style={{ width: 14, height: 14, cursor: 'inherit', accentColor: '#6366f1' }}
+                style={{ width: 14, height: 14, cursor: 'inherit', accentColor: 'var(--bk-indigo)' }}
               />
-              <span style={{ fontSize: 11, color: '#64748b', whiteSpace: 'nowrap' }}>Active</span>
+              <span style={{ fontSize: 11, color: 'var(--bk-body)', whiteSpace: 'nowrap' }}>Active</span>
             </label>
 
             {/* Reorder */}
-            <button type="button" onClick={() => move(idx, -1)} disabled={disabled || idx === 0} style={{ ...actionBtn, opacity: disabled || idx === 0 ? 0.3 : 1, fontSize: 12, color: '#64748b' }}>
+            <button type="button" onClick={() => move(idx, -1)} disabled={disabled || idx === 0} style={{ ...actionBtn, opacity: disabled || idx === 0 ? 0.3 : 1, fontSize: 12, color: 'var(--bk-body)' }}>
               ↑
             </button>
-            <button type="button" onClick={() => move(idx, 1)} disabled={disabled || idx === resources.length - 1} style={{ ...actionBtn, opacity: disabled || idx === resources.length - 1 ? 0.3 : 1, fontSize: 12, color: '#64748b' }}>
+            <button type="button" onClick={() => move(idx, 1)} disabled={disabled || idx === resources.length - 1} style={{ ...actionBtn, opacity: disabled || idx === resources.length - 1 ? 0.3 : 1, fontSize: 12, color: 'var(--bk-body)' }}>
               ↓
             </button>
 
@@ -201,7 +201,7 @@ export function ActivityResourcesPanel({
               type="button"
               onClick={() => remove(resource.id)}
               disabled={disabled}
-              style={{ ...actionBtn, border: 'none', background: '#fee2e2', color: '#dc2626' }}
+              style={{ ...actionBtn, border: 'none', background: 'var(--bk-danger-bg)', color: 'var(--bk-danger)' }}
             >
               <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
                 <path d="M1.5 1.5l7 7M8.5 1.5l-7 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
@@ -239,7 +239,7 @@ export function ActivityResourcesPanel({
           borderRadius: 9,
           border: '1.5px dashed rgba(99,102,241,0.35)',
           background: 'transparent',
-          color: '#6366f1',
+          color: 'var(--bk-indigo)',
           fontSize: 13,
           fontWeight: 600,
           cursor: disabled ? 'not-allowed' : 'pointer',
