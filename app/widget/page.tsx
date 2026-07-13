@@ -502,9 +502,18 @@ function WidgetPageInner() {
       .slice(lastContactAskIdx + 1)
       .some((m) => m.sender === 'customer' && looksLikeContactValue(m.text))
 
+  // The contact card must ALWAYS show an input — never make the guest tap a pill
+  // to reveal a field. Default to phone (email if the ask was email-only), and
+  // let the pills switch between them.
+  const contactAskText =
+    lastContactAskIdx !== -1 ? messages[lastContactAskIdx].text.toLowerCase() : ''
+  const defaultContactMode: 'phone' | 'email' =
+    /\bemail\b/.test(contactAskText) && !/\bphone\b/.test(contactAskText) ? 'email' : 'phone'
+  const effectiveContactMode = contactMode ?? defaultContactMode
+
   const phoneReady = contactPhone.replace(/\D/g, '').length >= 7
   const emailReady = !!contactEmail.trim()
-  const canSubmit = contactMode === 'phone' ? phoneReady : emailReady
+  const canSubmit = effectiveContactMode === 'phone' ? phoneReady : emailReady
 
   // Fresh conversation → offer quick-start chips instead of a blank input.
   const showQuickChips =
@@ -989,12 +998,12 @@ function WidgetPageInner() {
 
                     <div style={{ display: 'flex', gap: 7 }}>
                       {(['phone', 'email'] as const).map((mode) => {
-                        const active = contactMode === mode
+                        const active = effectiveContactMode === mode
                         return (
                           <button
                             key={mode}
                             type="button"
-                            onClick={() => setContactMode(active ? null : mode)}
+                            onClick={() => setContactMode(mode)}
                             style={{
                               flex: 1,
                               padding: '9px 0',
@@ -1014,66 +1023,53 @@ function WidgetPageInner() {
                       })}
                     </div>
 
-                    <AnimatePresence initial={false} mode="wait">
-                      {contactMode && (
-                        <motion.div
-                          key={contactMode}
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: 'auto' }}
-                          exit={{ opacity: 0, height: 0 }}
-                          transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-                          style={{ overflow: 'hidden' }}
-                        >
-                          <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
-                            <input
-                              autoFocus
-                              type={contactMode === 'phone' ? 'tel' : 'email'}
-                              value={contactMode === 'phone' ? contactPhone : contactEmail}
-                              onChange={(e) =>
-                                contactMode === 'phone'
-                                  ? setContactPhone(formatPhone(e.target.value))
-                                  : setContactEmail(e.target.value)
-                              }
-                              onKeyDown={(e) => { if (e.key === 'Enter' && canSubmit) void handleContactSubmit() }}
-                              placeholder={contactMode === 'phone' ? '(403) ___-____' : 'name@email.com'}
-                              style={{
-                                flex: 1,
-                                border: '1px solid var(--ocean-border)',
-                                borderRadius: 10,
-                                padding: '9px 11px',
-                                fontSize: 14,
-                                outline: 'none',
-                                background: 'var(--ocean-deep)',
-                                color: 'var(--ocean-text)',
-                                boxSizing: 'border-box',
-                              }}
-                            />
-                            <button
-                              type="button"
-                              onClick={() => void handleContactSubmit()}
-                              disabled={isLoading || !canSubmit}
-                              aria-label="Submit contact"
-                              style={{
-                                border: 'none',
-                                borderRadius: 10,
-                                padding: '9px 14px',
-                                cursor: isLoading || !canSubmit ? 'not-allowed' : 'pointer',
-                                background: isLoading || !canSubmit
-                                  ? 'var(--ocean-border)'
-                                  : 'linear-gradient(135deg, var(--ocean-sky) 0%, #0ea5e9 100%)',
-                                color: isLoading || !canSubmit ? 'var(--ocean-text-subtle)' : '#04121f',
-                                fontWeight: 700,
-                                fontSize: 16,
-                                lineHeight: 1,
-                                transition: 'background 0.15s',
-                              }}
-                            >
-                              →
-                            </button>
-                          </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
+                    <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+                      <input
+                        type={effectiveContactMode === 'phone' ? 'tel' : 'email'}
+                        inputMode={effectiveContactMode === 'phone' ? 'tel' : 'email'}
+                        value={effectiveContactMode === 'phone' ? contactPhone : contactEmail}
+                        onChange={(e) =>
+                          effectiveContactMode === 'phone'
+                            ? setContactPhone(formatPhone(e.target.value))
+                            : setContactEmail(e.target.value)
+                        }
+                        onKeyDown={(e) => { if (e.key === 'Enter' && canSubmit) void handleContactSubmit() }}
+                        placeholder={effectiveContactMode === 'phone' ? '(403) ___-____' : 'name@email.com'}
+                        style={{
+                          flex: 1,
+                          border: '1px solid var(--ocean-border)',
+                          borderRadius: 10,
+                          padding: '9px 11px',
+                          fontSize: 14,
+                          outline: 'none',
+                          background: 'var(--ocean-deep)',
+                          color: 'var(--ocean-text)',
+                          boxSizing: 'border-box',
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void handleContactSubmit()}
+                        disabled={isLoading || !canSubmit}
+                        aria-label="Submit contact"
+                        style={{
+                          border: 'none',
+                          borderRadius: 10,
+                          padding: '9px 14px',
+                          cursor: isLoading || !canSubmit ? 'not-allowed' : 'pointer',
+                          background: isLoading || !canSubmit
+                            ? 'var(--ocean-border)'
+                            : 'linear-gradient(135deg, var(--ocean-sky) 0%, #0ea5e9 100%)',
+                          color: isLoading || !canSubmit ? 'var(--ocean-text-subtle)' : '#04121f',
+                          fontWeight: 700,
+                          fontSize: 16,
+                          lineHeight: 1,
+                          transition: 'background 0.15s',
+                        }}
+                      >
+                        →
+                      </button>
+                    </div>
                   </motion.div>
               )}
             </div>
