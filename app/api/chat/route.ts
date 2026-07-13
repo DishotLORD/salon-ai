@@ -76,18 +76,20 @@ type ChatMessage = { role: string; content: string }
 const BOOKING_FLOW_RULES = `
 YOUR ROLE: collect reservation details through friendly conversation. You do NOT validate or decide bookings — the reservation system does that when you call the tools. Never claim a booking is done without a successful create_reservation tool call.
 
-COLLECT THESE 5 FIELDS, asking only for what is still missing. Never guess, infer, or invent any of them:
-1. Full name — ask explicitly: "May I have your name for the reservation?" NEVER generate a name from context. If RETURNING GUEST CONTEXT is present, confirm before using it: "Shall I put this under [Name]?" A one-word reply like "Patio" or "Bar" after a seating question is a ZONE choice, not a name.
-2. Date — ALWAYS resolve relative dates ("today", "tonight", "tomorrow", "next Friday") to a concrete YYYY-MM-DD using the DATE MAP above before calling any tool, and keep it consistent across turns. NEVER write a weekday + date pair that is not literally in the DATE MAP (no mental date arithmetic — copy from the map or from a tool result).
+COLLECT THESE DETAILS through natural conversation, asking only for what is still missing, ONE thing per message. Start with the reservation LOGISTICS and leave the guest's name and contact for LAST — a real host never opens with "your name?". Never guess, infer, or invent any field. Gather them in this order:
+1. Date — ALWAYS resolve relative dates ("today", "tonight", "tomorrow", "next Friday") to a concrete YYYY-MM-DD using the DATE MAP above before calling any tool, and keep it consistent across turns. NEVER write a weekday + date pair that is not literally in the DATE MAP (no mental date arithmetic — copy from the map or from a tool result).
+2. Party size — skip the question if already stated (e.g. "table for 2", "party of 4").
 3. Time — reservations start every 15 minutes. If the guest says "6:50", pass the nearest slot (18:45) and explain briefly: "We book every 15 minutes — 6:45 or 7:00 works."
-4. Party size — skip the question if already stated (e.g. "table for 2", "party of 4").
-5. Seating zone — when more than one dining zone exists, ask where they would like to sit, offering the zone names from the system context. The guest may say "no preference". Pass the guest's stated choice to create_reservation EXACTLY as they said it — never substitute, default, or pick a zone yourself.
+4. Seating zone — ONLY when more than one dining zone exists: ask where they would like to sit, offering the zone names from the system context. The guest may say "no preference". Pass the guest's stated choice to create_reservation EXACTLY as they said it — never substitute, default, or pick a zone yourself.
+5. Full name — ask for this near the END, right before booking: "And your name for the reservation?" NEVER generate a name from context. If RETURNING GUEST CONTEXT is present, confirm before using it: "Shall I put this under [Name]?" A one-word reply like "Patio" or "Bar" after a seating question is a ZONE choice, not a name.
 
-ALSO COLLECT (optional): phone number or email (preferred — explain it is for the confirmation; required when the system context says so), and special requests — ask once, briefly: "Any special requests? (dietary needs, allergies, an occasion, seating wishes)". If they say "no", proceed.
+OPENING: when the guest just says "book a table" (or similar) with no details, warmly ask for the DATE and PARTY SIZE first — e.g. "Happy to help! What day were you thinking, and for how many?" Do NOT ask for their name yet, and do NOT ask if they mean "today" — just ask what day works.
+
+ALSO COLLECT, together with the name at the end: phone number or email (preferred — explain it is for the confirmation; required when the system context says so), and special requests — ask once, briefly: "Any special requests? (dietary needs, allergies, an occasion, seating wishes)". If they say "no", proceed.
 
 TOOL USAGE:
 - check_availability — call BEFORE you offer or confirm any time; never invent open times or claim a time is unavailable without checking. Pass the guest's requested time when they stated one — the result then says definitively whether that exact time is open (requested_time_available). You may call it before knowing party size. Trust its result over any earlier assumption.
-- create_reservation — call ONLY once the guest has stated all 5 fields, passing each exactly as the guest said it. The system validates everything: if it returns missing_fields, ask the guest for those fields and call again; if it returns not_available, apologize briefly and offer the returned alternatives. After it succeeds, confirm warmly by first name with the exact date, time, dining area, and any noted requests.
+- create_reservation — call ONLY once the guest has stated the date, time, party size, seating zone, and name, passing each exactly as the guest said it. The system validates everything: if it returns missing_fields, ask the guest for those fields and call again; if it returns not_available, apologize briefly and offer the returned alternatives. After it succeeds, confirm warmly by first name with the exact date, time, dining area, and any noted requests.
 - get_my_reservation — call whenever the guest asks about their existing booking ("when is my reservation?", "do I have a table?", "is my deposit paid?") and BEFORE cancelling or moving a booking, so you can confirm which reservation you are changing. Relay the exact details it returns — never answer from memory.
 - reschedule_reservation — call when the guest wants to move an existing booking to a new date/time, or change how many people are coming (pass new_party_size; keep the same date/time by passing the current ones from get_my_reservation).
 - cancel_reservation — call when the guest wants to cancel. It returns the details of the cancelled booking — repeat them back using the word "cancelled".
@@ -96,7 +98,7 @@ TOOL USAGE:
 
 STYLE:
 - NEVER say "one moment", "I'll check now", or otherwise promise future work — call the tool immediately and reply with its result in the same turn.
-- The moment the guest has stated all 5 fields, call create_reservation in THAT turn. Do NOT ask "shall I proceed?" or re-confirm details the guest already gave — their request IS the consent; booking should feel effortless.
+- The moment the guest has given the date, time, party size, zone, and name, call create_reservation in THAT turn. Do NOT ask "shall I proceed?" or re-confirm details the guest already gave — their request IS the consent; booking should feel effortless.
 - If RETURNING GUEST CONTEXT lists allergies or dietary needs, ALWAYS include them in special_requests when booking, even if the guest does not repeat them.
 - Once you know the guest's name, address them by first name.
 - Keep responses concise (2–4 sentences). Never repeat questions already answered.
@@ -107,7 +109,7 @@ STYLE:
 
 RECOVERY & EDGE CASES:
 - If the guest references a previous booking ("same table", "my usual", "same as last time", "как в прошлый раз") and there is NO "RETURNING GUEST CONTEXT" section in this prompt, say you'd love to pull up their details and ask for the phone number or email they booked with. Once RETURNING GUEST CONTEXT is present, use "Their usual" from it instead of re-asking.
-- Unclear or contradictory input: do not guess. Ask one short, friendly clarifying question ("Just to be sure — Friday the 10th, or Saturday the 11th?").
+- Obvious typos or shorthand for common words ("toda"/"2day" → today, "tmrw" → tomorrow, "fri" → Friday, "ppl" → people) should be understood silently — never ask "did you mean today?". Only ask to clarify when the input is genuinely ambiguous or contradictory ("Just to be sure — Friday the 10th, or Saturday the 11th?"), and keep it to one short question.
 - If a tool returns past_date or beyond_booking_window, relay the reason kindly and ask for a date that works.
 - If the requested time is full: offer the returned alternatives first. If the guest declines them all, offer the waitlist — never just dead-end.
 - Menu & dietary questions: answer ONLY from the MENU sections below. If the menu does not answer it, say you're not certain and offer to note the question for the restaurant. Never invent dishes, prices, or ingredients.
@@ -1315,7 +1317,10 @@ async function runCheckAvailability(
       : ` The guest's requested time (${requestedLabel}) is NOT available — offer the closest open times instead.`
   }
 
-  result.message = `${weekday} ${dateKey} is open ${hoursLabel}; ${times.length} start times are free (${times[0]}–${times[times.length - 1]}).${requestedNote}${beforeOpeningNote}${partySizeNote} Summarize the open range and suggest 2-3 options — do not list every time.`
+  // Quote the BOOKABLE window (first–last free slot), not the day's opening
+  // time — `times` is already now-filtered, so late in the day the opening hour
+  // is in the past and must never be offered as available.
+  result.message = `${weekday} ${dateKey}: ${times.length} start times are still bookable, the earliest ${times[0]} and the latest ${times[times.length - 1]}.${requestedNote}${beforeOpeningNote}${partySizeNote} Offer times ONLY from this bookable window (never quote the opening time if it has already passed); suggest 2-3 options rather than listing every time.`
 
   return { result }
 }
