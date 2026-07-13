@@ -22,10 +22,10 @@ const inputStyle: React.CSSProperties = {
   width: '100%',
   padding: '12px 14px',
   borderRadius: 10,
-  border: '1px solid rgba(15, 23, 42, 0.1)',
+  border: '1px solid var(--bk-border)',
   fontSize: 14,
   color: 'var(--bk-head)',
-  background: '#fff',
+  background: 'var(--bk-card)',
   boxSizing: 'border-box',
 }
 
@@ -131,7 +131,7 @@ export function BookingSettingsPanel({
           gap: 12,
           padding: '12px 14px',
           borderRadius: 10,
-          border: '1px solid rgba(15, 23, 42, 0.1)',
+          border: '1px solid var(--bk-border)',
           background: 'var(--bk-surface)',
           cursor: disabled ? 'not-allowed' : 'pointer',
         }}
@@ -165,7 +165,7 @@ export function BookingSettingsPanel({
           fontSize: 12,
           fontWeight: 600,
           borderRadius: 8,
-          border: '1px solid rgba(15, 23, 42, 0.12)',
+          border: '1px solid var(--bk-border-strong)',
           background: 'var(--bk-surface)',
           color: 'var(--bk-text)',
           cursor: disabled ? 'not-allowed' : 'pointer',

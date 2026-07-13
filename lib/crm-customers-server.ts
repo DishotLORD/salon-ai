@@ -1,7 +1,11 @@
 import { resolveBusinessAccessServer } from '@/lib/business-access-server'
 import { mapDbCustomerBase } from '@/lib/crm-customer'
 import type { CrmCustomer } from '@/lib/crm-customer'
-import { enrichCrmCustomers, type CrmAppointmentRow } from '@/lib/crm-guest-metrics'
+import {
+  enrichCrmCustomers,
+  filterVisibleCrmCustomers,
+  type CrmAppointmentRow,
+} from '@/lib/crm-guest-metrics'
 import { createClient } from '@/lib/supabase-server'
 
 export type CrmCustomersPayload = {
@@ -47,6 +51,6 @@ export async function loadCrmCustomersServer(): Promise<CrmCustomersPayload> {
 
   return {
     businessId: biz.id,
-    customers: enrichCrmCustomers(bases, appointments),
+    customers: filterVisibleCrmCustomers(enrichCrmCustomers(bases, appointments)),
   }
 }

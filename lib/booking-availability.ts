@@ -11,6 +11,7 @@ import {
   formatWallClockLabel,
   getCalgaryNowParts,
   inferDateKeyFromText,
+  isNaiveWallClock,
   parseTimeFromText,
   parseWallClock,
   scheduledAtToWallClock,
@@ -45,7 +46,15 @@ export type AvailableSlot = {
   zoneName?: string
 }
 
-const ACTIVE_STATUSES = new Set(['pending', 'confirmed', 'seated'])
+/** Statuses that no longer hold a table. Anything else (incl. unknown) is treated as active. */
+const INACTIVE_STATUSES = new Set([
+  'cancelled',
+  'canceled',
+  'no-show',
+  'noshow',
+  'no_show',
+  'completed',
+])
 
 /** Set BOOKING_AVAILABILITY_DEBUG=1 to log query date vs DB bookings (Calgary wall-clock). */
 const AVAILABILITY_DEBUG = process.env.BOOKING_AVAILABILITY_DEBUG === '1'
@@ -67,9 +76,7 @@ export function logAvailabilityDebug(
 
 function isActiveStatus(status: string | null | undefined): boolean {
   if (!status) return true
-  const s = status.toLowerCase()
-  if (s === 'cancelled' || s === 'canceled' || s === 'no-show' || s === 'noshow') return false
-  return ACTIVE_STATUSES.has(s) || s.length > 0
+  return !INACTIVE_STATUSES.has(status.trim().toLowerCase())
 }
 
 function durationForBooking(
@@ -100,7 +107,14 @@ export function bookingToInterval(
   scheduledAt: string,
   durationMinutes: number,
 ): BookingInterval | null {
-  const normalized = scheduledAtToWallClock(scheduledAt) ?? scheduledAt
+  // A naive string here is ALREADY a Calgary wall clock — every `existing`
+  // list is pre-normalized by loadBusinessBookingContext / loadFreshBookingsForDay.
+  // Re-running it through scheduledAtToWallClock would re-interpret the digits
+  // as UTC and shift every booking 6-7 hours earlier, corrupting capacity
+  // counts (phantom free tables at busy times, phantom blocks at quiet ones).
+  const normalized = isNaiveWallClock(scheduledAt)
+    ? scheduledAt.trim()
+    : scheduledAtToWallClock(scheduledAt) ?? scheduledAt
   const parts = parseWallClock(normalized)
   if (!parts) return null
   const startMin = wallClockToMinutesOfDay(parts)
@@ -314,6 +328,16 @@ export function getOpenSlotsForDate(params: {
     return []
   }
 
+  // Zones configured but none seats this party size → no availability. Never
+  // fall through to the legacy no-zone capacity model below: it would advertise
+  // slots that create_reservation can never assign a zone for.
+  if (zones && zones.length > 0) {
+    const eligible = activeZonesForParty(zones, partySize)
+    if (eligible.length === 0) {
+      logAvailabilityDebug('no_zone_for_party', { queryDateKey: dateKey, partySize })
+      return []
+    }
+  }
   const activeZones = zones?.length
     ? activeZonesForParty(zones, partySize)
     : []
@@ -499,30 +523,24 @@ export function findNearestOpenSlots(params: {
   const targetMin = wallClockToMinutesOfDay(parts)
   const limit = params.limit ?? 5
 
-  const sameDay = getOpenSlotsForDate({
-    dateKey,
-    operatingHours: params.operatingHours,
-    existing: params.existing,
-    settings: params.settings,
-    durationMinutes: duration,
-    now: params.now,
-    zones: params.zones,
-    partySize: params.partySize,
-    zoneId: params.zoneId,
-  })
+  // One slot per unique time (multi-zone days repeat each time once per zone —
+  // without deduping, a limit of 6 can collapse to just 2 distinct times),
+  // ordered by closeness to the requested time of day.
+  const nearestUniqueTimes = (slots: AvailableSlot[]): AvailableSlot[] => {
+    const byTime = new Map<string, AvailableSlot>()
+    for (const s of slots) {
+      if (!byTime.has(s.wallClock)) byTime.set(s.wallClock, s)
+    }
+    return [...byTime.values()].sort(
+      (a, b) =>
+        Math.abs(a.startMinutes - targetMin) - Math.abs(b.startMinutes - targetMin) ||
+        a.startMinutes - b.startMinutes,
+    )
+  }
 
-  const scored = sameDay
-    .map((s) => ({ slot: s, delta: Math.abs(s.startMinutes - targetMin) }))
-    .sort((a, b) => a.delta - b.delta)
-
-  const picked = scored.slice(0, limit).map((s) => s.slot)
-  if (picked.length >= limit) return picked
-
-  // Next open day (up to 7 days)
-  for (let d = 1; d <= 7 && picked.length < limit; d++) {
-    const nextKey = addDaysToDateKey(dateKey, d)
-    const daySlots = getOpenSlotsForDate({
-      dateKey: nextKey,
+  const openForDay = (key: string) =>
+    getOpenSlotsForDate({
+      dateKey: key,
       operatingHours: params.operatingHours,
       existing: params.existing,
       settings: params.settings,
@@ -532,6 +550,16 @@ export function findNearestOpenSlots(params: {
       partySize: params.partySize,
       zoneId: params.zoneId,
     })
+
+  const picked = nearestUniqueTimes(openForDay(dateKey)).slice(0, limit)
+  if (picked.length >= limit) return picked
+
+  // Following days (up to 7): still prefer times of day near the original
+  // request — a guest asking for dinner should see dinner slots on the next
+  // open day, not the first slots after opening.
+  for (let d = 1; d <= 7 && picked.length < limit; d++) {
+    const nextKey = addDaysToDateKey(dateKey, d)
+    const daySlots = nearestUniqueTimes(openForDay(nextKey))
     for (const slot of daySlots.slice(0, limit - picked.length)) {
       picked.push(slot)
     }

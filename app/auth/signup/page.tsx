@@ -2,9 +2,12 @@
 
 import { AnimatePresence, motion } from 'framer-motion'
 import Link from 'next/link'
+import { BrandTransitionLink } from '@/components/brand-transition-link'
 import { OceanCoreLogoCompact } from '@/components/oceancore-logo'
 import { useEffect, useRef, useState } from 'react'
 
+import { WELCOME_SPLASH_FLAG } from '@/components/dashboard-splash'
+import { defaultSystemPrompt } from '@/lib/default-system-prompt'
 import { supabase } from '@/lib/supabase'
 
 // ─── Validation ───────────────────────────────────────────────
@@ -53,12 +56,6 @@ const businessTypeOptions = [
 type BusinessTypeValue = (typeof businessTypeOptions)[number]['value']
 
 const TOTAL_STEPS = 4
-
-function defaultSystemPrompt(name: string, type: string): string {
-  const venueName = name.trim() || 'our venue'
-  const typeLabel = businessTypeOptions.find((o) => o.value === type)?.label ?? 'restaurant'
-  return `You are the AI Concierge for ${venueName}, a ${typeLabel.toLowerCase()}. Be warm, attentive, and concise. Help guests with reservations, menu questions, dietary requirements, and special-occasion requests. Confirm party size, date, time, and guest name before treating a reservation as final. Escalate complaints or unusual requests to a manager.`
-}
 
 // ─── Field components ─────────────────────────────────────────
 
@@ -300,9 +297,9 @@ function SignupBrandPanel() {
       />
 
       {/* Logo */}
-      <div className="relative z-10">
+      <BrandTransitionLink href="/" className="relative z-10 inline-block" ariaLabel="Back to OceanCore home">
         <OceanCoreLogoCompact theme="dark" />
-      </div>
+      </BrandTransitionLink>
 
       {/* Hero */}
       <div className="relative z-10" style={{ maxWidth: 460 }}>
@@ -444,9 +441,10 @@ export default function SignupPage() {
         email: authEmail.trim(),
         phone: phone.trim() || null,
         agent_name: agentName.trim(),
-        system_prompt: defaultSystemPrompt(businessName, businessType),
+        system_prompt: defaultSystemPrompt(businessName, businessType, agentName.trim() || null),
       })
       if (bizErr) { setError(bizErr.message); setLoading(false); return }
+      try { sessionStorage.setItem(WELCOME_SPLASH_FLAG, '1') } catch { /* storage blocked */ }
       window.location.replace('/dashboard')
     } catch {
       setError('Something went wrong. Please try again.')

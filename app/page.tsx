@@ -1,8 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { OceanCoreLogoCompact } from "@/components/oceancore-logo";
+import { OceanCoreLoader } from "@/components/oceancore-loader";
+import { getLenis } from "@/lib/lenis";
 
 function BrandMark({ navHeight = 44 }: { priority?: boolean; navHeight?: number }) {
   const scale = navHeight / 38
@@ -322,6 +325,21 @@ function ChatWidget() {
 }
 
 /* ─── particle canvas ───────────────────────────────────── */
+/** True on devices where cursor-driven effects make sense. Safe in event handlers only. */
+let _fancyPointer: boolean | null = null;
+function fancyPointer(): boolean {
+  if (_fancyPointer !== null) return _fancyPointer;
+  if (typeof window === "undefined") return false;
+  _fancyPointer =
+    window.matchMedia("(hover: hover) and (pointer: fine)").matches &&
+    !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  return _fancyPointer;
+}
+
+/**
+ * Drifting plankton that comes alive near the cursor: particles brighten,
+ * lean toward the pointer, and link up into a faint constellation.
+ */
 function ParticleCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
@@ -332,14 +350,18 @@ function ParticleCanvas() {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
 
     const N = 46;
+    const GLOW_R = 150;           // cursor influence radius (px)
     let w = 0, h = 0, dpr = 1, raf = 0;
+    const mouse = { x: -9999, y: -9999, active: false };
     const parts = Array.from({ length: N }, () => ({
       x: 0, y: 0,
       r: 0.6 + Math.random() * 1.7,
       vx: (Math.random() - 0.5) * 0.22,
       vy: (Math.random() - 0.5) * 0.16,
+      bvx: 0, bvy: 0,             // base drift to relax back to
       a: 0.1 + Math.random() * 0.5,
     }));
+    parts.forEach(p => { p.bvx = p.vx; p.bvy = p.vy; });
 
     const resize = () => {
       const p = canvas.parentElement!;
@@ -354,22 +376,84 @@ function ParticleCanvas() {
     const ro = new ResizeObserver(resize);
     ro.observe(canvas.parentElement!);
 
+    const onMove = (e: PointerEvent) => {
+      if (!fancyPointer()) return;
+      const rect = canvas.getBoundingClientRect();
+      mouse.x = e.clientX - rect.left;
+      mouse.y = e.clientY - rect.top;
+      mouse.active = mouse.y >= 0 && mouse.y <= rect.height;
+    };
+    const onLeave = () => { mouse.active = false; };
+    window.addEventListener("pointermove", onMove, { passive: true });
+    window.addEventListener("pointerleave", onLeave);
+
+    const near: number[] = [];
     const tick = () => {
       ctx.clearRect(0, 0, w, h);
-      for (const p of parts) {
+      near.length = 0;
+
+      for (let i = 0; i < N; i++) {
+        const p = parts[i];
+        let boost = 0;
+        if (mouse.active) {
+          const dx = mouse.x - p.x, dy = mouse.y - p.y;
+          const d = Math.hypot(dx, dy);
+          if (d < GLOW_R && d > 0.001) {
+            boost = 1 - d / GLOW_R;
+            // gentle pull toward the cursor, like plankton drawn to light
+            p.vx += (dx / d) * boost * 0.028;
+            p.vy += (dy / d) * boost * 0.028;
+            near.push(i);
+          }
+        }
+        // relax back to the base drift so speeds never run away
+        p.vx += (p.bvx - p.vx) * 0.015;
+        p.vy += (p.bvy - p.vy) * 0.015;
         p.x += p.vx; p.y += p.vy;
         if (p.x < 0 || p.x > w) p.vx *= -1;
         if (p.y < 0 || p.y > h) p.vy *= -1;
+
+        const alpha = Math.min(1, p.a + boost * 0.55);
+        const radius = p.r * (1 + boost * 1.4);
+        if (boost > 0.05) {
+          // soft halo — the bioluminescent flare
+          ctx.beginPath();
+          ctx.fillStyle = `rgba(125,211,252,${(alpha * 0.16).toFixed(3)})`;
+          ctx.arc(p.x, p.y, radius * 3.2, 0, Math.PI * 2);
+          ctx.fill();
+        }
         ctx.beginPath();
-        ctx.fillStyle = `rgba(56,189,248,${p.a})`;
-        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(56,189,248,${alpha.toFixed(3)})`;
+        ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
         ctx.fill();
       }
+
+      // constellation lines between lit particles near the cursor
+      for (let a = 0; a < near.length; a++) {
+        for (let b = a + 1; b < near.length; b++) {
+          const p1 = parts[near[a]], p2 = parts[near[b]];
+          const d = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+          if (d < 80) {
+            ctx.beginPath();
+            ctx.strokeStyle = `rgba(125,211,252,${(0.18 * (1 - d / 80)).toFixed(3)})`;
+            ctx.lineWidth = 0.7;
+            ctx.moveTo(p1.x, p1.y);
+            ctx.lineTo(p2.x, p2.y);
+            ctx.stroke();
+          }
+        }
+      }
+
       raf = requestAnimationFrame(tick);
     };
     tick();
 
-    return () => { cancelAnimationFrame(raf); ro.disconnect(); };
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerleave", onLeave);
+    };
   }, []);
 
   return (
@@ -381,10 +465,170 @@ function ParticleCanvas() {
   );
 }
 
+/** The accent word with a living wave rolling beneath it. */
+function WaveWord({ children }: { children: React.ReactNode }) {
+  return (
+    <span style={{ position: "relative", display: "inline-block", fontStyle: "italic", color: "#38bdf8" }}>
+      {children}
+      <span aria-hidden className="oc-wave-clip" style={{
+        position: "absolute", left: "0.04em", right: "0.08em", bottom: "-0.07em",
+        height: "0.14em", overflow: "hidden", display: "block", pointerEvents: "none",
+      }}>
+        <svg className="oc-wave" width="200%" height="100%" viewBox="0 0 200 12" preserveAspectRatio="none" style={{ display: "block" }}>
+          <path
+            d="M0 6 Q 12.5 0.5, 25 6 T 50 6 T 75 6 T 100 6 T 125 6 T 150 6 T 175 6 T 200 6"
+            fill="none" stroke="#38bdf8" strokeWidth="2.6" strokeLinecap="round" opacity="0.85"
+          />
+        </svg>
+      </span>
+    </span>
+  );
+}
+
+/** Primary CTA that leans toward the cursor and snaps back on a spring. */
+function MagneticLink({ href, className, style, children, onClick }: {
+  href: string; className?: string; style?: React.CSSProperties; children: React.ReactNode;
+  onClick?: (e: React.MouseEvent<HTMLAnchorElement>) => void;
+}) {
+  const ref = useRef<HTMLAnchorElement>(null);
+  const raf = useRef(0);
+  const onMove = (e: React.PointerEvent) => {
+    if (!fancyPointer()) return;
+    const el = ref.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const dx = (e.clientX - (r.left + r.width / 2)) / (r.width / 2);
+    const dy = (e.clientY - (r.top + r.height / 2)) / (r.height / 2);
+    cancelAnimationFrame(raf.current);
+    raf.current = requestAnimationFrame(() => {
+      el.style.transition = "box-shadow .25s, background .25s";
+      el.style.transform = `translate(${(dx * 6).toFixed(1)}px, ${(dy * 5 - 2).toFixed(1)}px)`;
+    });
+  };
+  const onLeave = () => {
+    const el = ref.current;
+    if (!el) return;
+    cancelAnimationFrame(raf.current);
+    el.style.transition = "transform .6s cubic-bezier(.22,1,.36,1), box-shadow .25s, background .25s";
+    el.style.transform = "";
+  };
+  return (
+    <Link ref={ref} href={href} className={className} style={style} onClick={onClick} onPointerMove={onMove} onPointerLeave={onLeave}>
+      {children}
+    </Link>
+  );
+}
+
+/** Perspective tilt + moving glare for the hero demo, driven by the cursor. */
+function TiltDemo({ children }: { children: React.ReactNode }) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const glareRef = useRef<HTMLDivElement>(null);
+  const raf = useRef(0);
+  const onMove = (e: React.PointerEvent) => {
+    if (!fancyPointer()) return;
+    const el = wrapRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const px = (e.clientX - r.left) / r.width - 0.5;
+    const py = (e.clientY - r.top) / r.height - 0.5;
+    cancelAnimationFrame(raf.current);
+    raf.current = requestAnimationFrame(() => {
+      el.style.transition = "none";
+      el.style.transform = `perspective(950px) rotateX(${(-py * 6).toFixed(2)}deg) rotateY(${(px * 7).toFixed(2)}deg)`;
+      const g = glareRef.current;
+      if (g) {
+        g.style.opacity = "1";
+        g.style.background = `radial-gradient(420px circle at ${((px + 0.5) * 100).toFixed(1)}% ${((py + 0.5) * 100).toFixed(1)}%, rgba(186,230,253,0.14), transparent 62%)`;
+      }
+    });
+  };
+  const onLeave = () => {
+    const el = wrapRef.current;
+    if (!el) return;
+    cancelAnimationFrame(raf.current);
+    el.style.transition = "transform .7s cubic-bezier(.22,1,.36,1)";
+    el.style.transform = "";
+    if (glareRef.current) glareRef.current.style.opacity = "0";
+  };
+  return (
+    <div ref={wrapRef} onPointerMove={onMove} onPointerLeave={onLeave} style={{ position: "relative", zIndex: 1, willChange: "transform" }}>
+      {children}
+      <div ref={glareRef} aria-hidden style={{
+        position: "absolute", inset: 2, borderRadius: 26, pointerEvents: "none",
+        opacity: 0, transition: "opacity .45s", zIndex: 4,
+      }} />
+    </div>
+  );
+}
+
+/** Animated count-up for the stats row; keeps prefixes/suffixes ("2,400+", "24/7"). */
+function CountUp({ value, go }: { value: string; go: boolean }) {
+  const [txt, setTxt] = useState(value);
+  const doneRef = useRef(false);
+  useEffect(() => {
+    if (!go || doneRef.current) return;
+    doneRef.current = true;
+    const m = value.match(/^(\D*)([\d.,]+)(.*)$/);
+    if (!m || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const [, pre, num, post] = m;
+    const target = parseFloat(num.replace(/,/g, ""));
+    const decimals = (num.split(".")[1] ?? "").length;
+    const grouped = num.includes(",");
+    const t0 = performance.now();
+    const DUR = 1500;
+    let raf = 0;
+    const frame = (t: number) => {
+      const p = Math.min(1, (t - t0) / DUR);
+      const eased = 1 - Math.pow(2, -10 * p);      // ease-out-expo
+      const n = target * (p >= 1 ? 1 : eased);
+      const fixed = n.toFixed(decimals);
+      const shown = grouped ? Number(fixed).toLocaleString("en-US") : fixed;
+      setTxt(`${pre}${shown}${post}`);
+      if (p < 1) raf = requestAnimationFrame(frame);
+    };
+    raf = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(raf);
+  }, [go, value]);
+  return <>{txt}</>;
+}
+
 /* ─── main page ─────────────────────────────────────────── */
 export default function Home() {
   const scrolled = useScrolled();
   const [menuOpen, setMenuOpen] = useState(false);
+
+  // Play the brand loader as a deliberate interstitial, THEN navigate to the
+  // auth route. Without the delay, Next navigates instantly and the landing
+  // page (and this overlay with it) unmounts before the animation is seen.
+  const router = useRouter();
+  const [navigating, setNavigating] = useState(false);
+  const navTimer = useRef(0);
+  const handleAuthNav = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    // Let modifier/middle clicks (open in new tab, etc.) behave normally — no overlay.
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    const href = e.currentTarget.getAttribute("href");
+    if (!href) return;
+    setMenuOpen(false);
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return; // let default nav
+    e.preventDefault();
+    router.prefetch(href);
+    setNavigating(true);
+    // Match the loader's full draw-in choreography (~3.6s) so the animation
+    // completes before the auth route takes over.
+    navTimer.current = window.setTimeout(() => router.push(href), 3600);
+  };
+  useEffect(() => {
+    // If the page comes back from bfcache (browser Back after a full-page
+    // navigation), the overlay must not stay stuck over the top bar.
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) setNavigating(false);
+    };
+    window.addEventListener("pageshow", onPageShow);
+    return () => {
+      window.removeEventListener("pageshow", onPageShow);
+      window.clearTimeout(navTimer.current);
+    };
+  }, []);
 
   const [featRef, featVisible] = useReveal();
   const [howRef, howVisible] = useReveal();
@@ -398,7 +642,16 @@ export default function Home() {
 
   const scrollTo = (id: string) => {
     setMenuOpen(false);
-    document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
+    const el = document.getElementById(id);
+    if (!el) return;
+    // Lenis owns the scroll on marketing pages — native smooth scrollIntoView
+    // gets overwritten by its rAF loop and silently does nothing.
+    const lenis = getLenis();
+    if (lenis) {
+      lenis.scrollTo(el, { offset: -84, duration: 1.3 });
+    } else {
+      el.scrollIntoView({ behavior: "smooth" });
+    }
   };
 
   return (
@@ -423,15 +676,43 @@ export default function Home() {
           .oc-hamburger{display:none!important;}
         }
         .oc-feature:hover{transform:translateY(-6px)!important;border-color:rgba(125,211,252,0.30)!important;box-shadow:0 24px 50px -18px rgba(0,0,0,.6),0 0 40px -16px rgba(56,189,248,.3)!important;}
+        .oc-feature>*{position:relative;z-index:1;}
+        .oc-feature::after{content:"";position:absolute;inset:0;z-index:0;border-radius:inherit;opacity:0;transition:opacity .35s;pointer-events:none;
+          background:radial-gradient(240px circle at var(--mx,50%) var(--my,50%),rgba(56,189,248,0.13),transparent 65%);}
+        .oc-feature:hover::after{opacity:1;}
+        .oc-btn-primary{position:relative;overflow:hidden;}
+        .oc-btn-primary::after{content:"";position:absolute;top:0;bottom:0;left:0;width:55%;pointer-events:none;
+          background:linear-gradient(105deg,transparent,rgba(255,255,255,0.5),transparent);
+          transform:translateX(-170%) skewX(-18deg);}
+        .oc-btn-primary:hover::after{animation:oc-sheen .95s cubic-bezier(.45,0,.2,1);}
+        @keyframes oc-sheen{to{transform:translateX(320%) skewX(-18deg);}}
         .oc-btn-primary:hover{transform:translateY(-2px);box-shadow:0 12px 40px -6px rgba(56,189,248,0.35);background:#7dd3fc;}
+        .oc-wave-clip{opacity:0;animation:oc-wave-in .9s cubic-bezier(.22,1,.36,1) 1.05s forwards;}
+        .oc-wave{animation:oc-wave-drift 5.5s linear infinite;}
+        @keyframes oc-wave-in{to{opacity:1;}}
+        @keyframes oc-wave-drift{to{transform:translateX(-50%);}}
+        .oc-ray{position:absolute;top:-20%;height:145%;filter:blur(26px);mix-blend-mode:screen;pointer-events:none;
+          background:linear-gradient(180deg,rgba(125,211,252,0.15),rgba(56,189,248,0.045) 55%,transparent);}
+        .oc-ray.r1{left:16%;width:170px;animation:oc-ray-sway 15s ease-in-out infinite;}
+        .oc-ray.r2{left:40%;width:110px;opacity:.7;animation:oc-ray-sway 21s ease-in-out -7s infinite reverse;}
+        .oc-ray.r3{left:63%;width:230px;opacity:.5;animation:oc-ray-sway 26s ease-in-out -13s infinite;}
+        @keyframes oc-ray-sway{0%,100%{transform:rotate(12deg) translateX(0);opacity:.5;}50%{transform:rotate(16deg) translateX(48px);opacity:.95;}}
         .oc-btn-ghost:hover{transform:translateY(-2px);background:rgba(255,255,255,0.07);border-color:#38bdf8;}
         .oc-nav-cta:hover{transform:translateY(-1px);background:#7dd3fc;}
+        .oc-nav-link{position:relative;}
+        .oc-nav-link::after{content:"";position:absolute;left:0;bottom:-6px;height:2px;width:100%;background:#38bdf8;border-radius:2px;transform:scaleX(0);transform-origin:left;transition:transform 1.4s cubic-bezier(.22,1,.36,1);}
+        .oc-nav-link:hover::after{transform:scaleX(1);}
         .oc-feat-link{margin-top:20px;display:inline-flex;align-items:center;gap:7px;font-size:13.5px;font-weight:600;color:#38bdf8;cursor:pointer;}
         .oc-foot-link{display:block;font-size:14px;color:#94a8c4;margin-bottom:13px;text-decoration:none;transition:color .2s;}
         .oc-foot-link:hover{color:#38bdf8;}
         .oc-social-icon{width:36px;height:36px;border-radius:10px;border:1px solid rgba(125,211,252,0.14);display:grid;place-items:center;color:#94a8c4;transition:all .2s;cursor:pointer;}
         .oc-social-icon:hover{color:#38bdf8;border-color:#38bdf8;transform:translateY(-2px);}
-        @media(prefers-reduced-motion:reduce){.oc-reveal{opacity:1!important;transform:none!important;}.oc-reveal.in{animation:none!important;}}
+        @media(prefers-reduced-motion:reduce){
+          .oc-reveal{opacity:1!important;transform:none!important;}.oc-reveal.in{animation:none!important;}
+          .oc-ray,.oc-btn-primary::after{animation:none!important;}
+          .oc-wave{animation:none!important;}
+          .oc-wave-clip{animation:none!important;opacity:1!important;}
+        }
       `}</style>
 
       {/* ── NAV ── */}
@@ -451,7 +732,7 @@ export default function Home() {
 
           <nav className="oc-nav-links" style={{ alignItems: "center", gap: 38 }}>
             {[["Features","features"],["How it works","how"],["Pricing","pricing"],["FAQ","faq"],["Demo","demo"]].map(([label, id]) => (
-              <button key={id} type="button" onClick={() => scrollTo(id)} style={{
+              <button key={id} type="button" onClick={() => scrollTo(id)} className="oc-nav-link" style={{
                 background: "none", border: 0, fontSize: 14.5, color: "#94a8c4", fontWeight: 500,
                 cursor: "pointer", transition: "color .2s", fontFamily: sans, padding: 0,
               }}
@@ -462,7 +743,7 @@ export default function Home() {
           </nav>
 
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <Link href="/auth/login" className="oc-get-started" style={{
+            <Link href="/auth/login" onClick={handleAuthNav} className="oc-get-started" style={{
               fontSize: 14, fontWeight: 500, color: "#94a8c4",
               padding: "10px 16px", borderRadius: 10, textDecoration: "none",
               transition: "color .2s",
@@ -470,7 +751,7 @@ export default function Home() {
             onMouseEnter={e => (e.currentTarget.style.color = "#e8f1ff")}
             onMouseLeave={e => (e.currentTarget.style.color = "#94a8c4")}
             >Log in</Link>
-            <Link href="/auth/signup" className="oc-get-started oc-nav-cta" style={{
+            <Link href="/auth/signup" onClick={handleAuthNav} className="oc-get-started oc-nav-cta" style={{
               fontSize: 14, fontWeight: 700, background: "#38bdf8", color: "#04121f",
               padding: "10px 20px", borderRadius: 10, textDecoration: "none",
               boxShadow: "0 4px 20px -4px rgba(56,189,248,0.35)",
@@ -507,7 +788,7 @@ export default function Home() {
               cursor: "pointer", fontFamily: sans,
             }}>{label}</button>
           ))}
-          <Link href="/auth/signup" style={{
+          <Link href="/auth/signup" onClick={handleAuthNav} style={{
             marginTop: 18, display: "flex", justifyContent: "center",
             background: "#38bdf8", color: "#04121f", fontWeight: 700,
             padding: "14px 26px", borderRadius: 12, textDecoration: "none", fontSize: 15,
@@ -528,6 +809,12 @@ export default function Home() {
           WebkitMaskImage: "linear-gradient(100deg,rgba(0,0,0,1) 0%,rgba(0,0,0,0.9) 26%,rgba(0,0,0,0) 64%)",
           maskImage: "linear-gradient(100deg,rgba(0,0,0,1) 0%,rgba(0,0,0,0.9) 26%,rgba(0,0,0,0) 64%)",
         }} />
+        {/* god rays — light shafts through water */}
+        <div aria-hidden style={{ position: "absolute", inset: 0, zIndex: 1, pointerEvents: "none", overflow: "hidden" }}>
+          <div className="oc-ray r1" />
+          <div className="oc-ray r2" />
+          <div className="oc-ray r3" />
+        </div>
         {/* particle canvas */}
         <div style={{ position: "absolute", inset: 0, zIndex: 1, pointerEvents: "none" }}>
           <ParticleCanvas />
@@ -543,20 +830,11 @@ export default function Home() {
 
             {/* copy */}
             <div>
-              <span className="oc-reveal in" style={{
-                display: "inline-flex", alignItems: "center", gap: 9, fontSize: 12.5, fontWeight: 600,
-                color: "#7dd3fc", background: "rgba(56,189,248,0.08)", border: "1px solid rgba(125,211,252,0.30)",
-                padding: "7px 15px", borderRadius: 999, marginBottom: 26,
-              }}>
-                <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#4ade80", boxShadow: "0 0 0 4px rgba(74,222,128,0.22)", animation: "pulse 2.4s infinite" }} />
-                AI-Powered concierge · Now live
-              </span>
-
               <h1 className="oc-reveal in d1" style={{
                 fontFamily: serif, fontSize: "clamp(44px,5.4vw,76px)", lineHeight: 1.04,
                 fontWeight: 600, margin: 0, letterSpacing: "-0.02em",
               }}>
-                Never miss a<br /><span style={{ fontStyle: "italic", color: "#38bdf8" }}>reservation</span> again.
+                Never miss a<br /><WaveWord>reservation</WaveWord> again.
               </h1>
 
               <p className="oc-reveal in d2" style={{
@@ -567,7 +845,7 @@ export default function Home() {
               </p>
 
               <div className="oc-reveal in d3" style={{ marginTop: 38, display: "flex", flexWrap: "wrap", gap: 14 }}>
-                <Link href="/auth/signup" className="oc-btn-primary" style={{
+                <MagneticLink href="/auth/signup" onClick={handleAuthNav} className="oc-btn-primary" style={{
                   display: "inline-flex", alignItems: "center", gap: 9, fontWeight: 700, fontSize: 16,
                   borderRadius: 12, padding: "17px 34px", border: "1px solid transparent",
                   background: "#38bdf8", color: "#04121f",
@@ -577,7 +855,7 @@ export default function Home() {
                 }}>
                   Start Free Trial
                   <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-                </Link>
+                </MagneticLink>
                 <button type="button" onClick={() => scrollTo("demo")} className="oc-btn-ghost" style={{
                   display: "inline-flex", alignItems: "center", gap: 9, fontWeight: 700, fontSize: 16,
                   borderRadius: 12, padding: "17px 34px", border: "1px solid rgba(125,211,252,0.30)",
@@ -596,7 +874,7 @@ export default function Home() {
               <div style={{ position: "absolute", inset: "-10% -6%",
                 background: "radial-gradient(circle at 60% 40%,rgba(56,189,248,0.18),transparent 65%)",
                 filter: "blur(30px)", zIndex: 0 }} />
-              <div style={{ position: "relative", zIndex: 1 }}>
+              <TiltDemo>
                 <ChatWidget />
                 <div style={{
                   position: "absolute", right: -8, bottom: -22,
@@ -610,7 +888,7 @@ export default function Home() {
                     <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
                   </svg>
                 </div>
-              </div>
+              </TiltDemo>
             </div>
           </div>
         </div>
@@ -712,7 +990,14 @@ export default function Home() {
             className="feat-grid">
             <style>{`@media(max-width:860px){.feat-grid{grid-template-columns:1fr!important;max-width:460px;margin-left:auto;margin-right:auto;}}`}</style>
             {FEATURES.map((f, i) => (
-              <article key={f.title} className="oc-feature" style={{
+              <article key={f.title} className="oc-feature"
+                onPointerMove={(e) => {
+                  if (!fancyPointer()) return;
+                  const r = e.currentTarget.getBoundingClientRect();
+                  e.currentTarget.style.setProperty("--mx", `${e.clientX - r.left}px`);
+                  e.currentTarget.style.setProperty("--my", `${e.clientY - r.top}px`);
+                }}
+                style={{
                 position: "relative", borderRadius: 22, padding: "34px 30px 32px",
                 background: "linear-gradient(165deg,rgba(255,255,255,0.045),rgba(255,255,255,0.015))",
                 border: "1px solid rgba(125,211,252,0.14)", overflow: "hidden",
@@ -812,7 +1097,7 @@ export default function Home() {
                   </div>
                 ))}
               </div>
-              <Link href="/auth/signup" className="oc-btn-primary" style={{ display: "flex", justifyContent: "center", alignItems: "center", fontWeight: 700, fontSize: 15, borderRadius: 12, padding: "14px 26px", border: "1px solid transparent", background: "#38bdf8", color: "#04121f", textDecoration: "none", transition: "transform .2s, background .25s, box-shadow .25s", boxShadow: "0 6px 30px -4px rgba(56,189,248,0.35)" }}>
+              <Link href="/auth/signup" onClick={handleAuthNav} className="oc-btn-primary" style={{ display: "flex", justifyContent: "center", alignItems: "center", fontWeight: 700, fontSize: 15, borderRadius: 12, padding: "14px 26px", border: "1px solid transparent", background: "#38bdf8", color: "#04121f", textDecoration: "none", transition: "transform .2s, background .25s, box-shadow .25s", boxShadow: "0 6px 30px -4px rgba(56,189,248,0.35)" }}>
                 Start 14-day free trial
               </Link>
               <span style={{ marginTop: 14, textAlign: "center", fontSize: 13, color: "#6b7f9c" }}>No credit card required</span>
@@ -841,7 +1126,9 @@ export default function Home() {
                 transition: "opacity .8s cubic-bezier(.22,1,.36,1), transform .8s cubic-bezier(.22,1,.36,1)",
                 transitionDelay: `${i * 0.08}s`,
               }}>
-                <div style={{ fontFamily: serif, fontSize: "clamp(34px,3.4vw,48px)", fontWeight: 600, color: "#38bdf8", lineHeight: 1 }}>{s.value}</div>
+                <div style={{ fontFamily: serif, fontSize: "clamp(34px,3.4vw,48px)", fontWeight: 600, color: "#38bdf8", lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
+                  <CountUp value={s.value} go={statsVisible} />
+                </div>
                 <div style={{ marginTop: 12, fontSize: 14, color: "#94a8c4" }}>{s.label}</div>
               </div>
             ))}
@@ -916,7 +1203,7 @@ export default function Home() {
               Join restaurants running calmer, sharper service on OceanCore.
             </p>
             <div style={{ position: "relative", display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
-              <Link href="/auth/signup" className="oc-btn-primary" style={{
+              <Link href="/auth/signup" onClick={handleAuthNav} className="oc-btn-primary" style={{
                 display: "inline-flex", alignItems: "center", gap: 9, fontWeight: 700, fontSize: 16,
                 borderRadius: 12, padding: "17px 34px", border: "1px solid transparent",
                 background: "#38bdf8", color: "#04121f",
@@ -978,6 +1265,16 @@ export default function Home() {
           </div>
         </div>
       </footer>
+
+      {navigating && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 1000,
+          animation: "oc-loader-in .25s ease both",
+        }}>
+          <style>{"@keyframes oc-loader-in{from{opacity:0}to{opacity:1}}"}</style>
+          <OceanCoreLoader />
+        </div>
+      )}
     </div>
   );
 }

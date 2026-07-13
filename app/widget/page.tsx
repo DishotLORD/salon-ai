@@ -63,6 +63,38 @@ function clearSession(businessId: string) {
   try { localStorage.removeItem(storageKey(businessId)) } catch { /* noop */ }
 }
 
+// ── Device-level guest identity ───────────────────────────────────────────────
+// Outlives the 24h conversation session: the same browser is recognized as the
+// same guest for months, so returning guests get their history without retyping
+// contact info. The server validates the id — a stale/foreign id is ignored.
+
+const GUEST_TTL_MS = 180 * 24 * 60 * 60 * 1000
+
+function guestKey(businessId: string) {
+  return `oceancore-guest-${businessId}`
+}
+
+function saveGuestId(businessId: string, customerId: string) {
+  try {
+    localStorage.setItem(guestKey(businessId), JSON.stringify({ id: customerId, ts: Date.now() }))
+  } catch { /* storage full / blocked — non-critical */ }
+}
+
+function loadGuestId(businessId: string): string | null {
+  try {
+    const raw = localStorage.getItem(guestKey(businessId))
+    if (!raw) return null
+    const { id, ts } = JSON.parse(raw) as { id: string; ts: number }
+    if (Date.now() - ts > GUEST_TTL_MS) {
+      localStorage.removeItem(guestKey(businessId))
+      return null
+    }
+    return typeof id === 'string' && id ? id : null
+  } catch {
+    return null
+  }
+}
+
 let messageSeq = 0
 /** Unique client-side message id; the prefix drives the realtime de-dup logic. */
 function nextMessageId(prefix: string): string {
@@ -513,6 +545,7 @@ function WidgetPageInner() {
         messages: { role: string; content: string }[]
         business_id?: string
         conversation_id?: string
+        guest_customer_id?: string
       } = {
         messages: nextMessages.map((message) => ({
           role: message.sender === 'customer' ? 'user' : 'assistant',
@@ -523,6 +556,10 @@ function WidgetPageInner() {
         body.business_id = businessId
         if (conversationId) {
           body.conversation_id = conversationId
+        }
+        const rememberedGuestId = loadGuestId(businessId)
+        if (rememberedGuestId) {
+          body.guest_customer_id = rememberedGuestId
         }
       }
 
@@ -537,6 +574,7 @@ function WidgetPageInner() {
       const data = (await response.json()) as {
         message?: string | null
         conversation_id?: string
+        customer_id?: string | null
         skipped?: boolean
         reason?: string
         booking_created?: boolean
@@ -551,6 +589,11 @@ function WidgetPageInner() {
 
       if (response.ok && typeof data.conversation_id === 'string' && data.conversation_id) {
         setConversationId(data.conversation_id)
+      }
+      // Remember who this device belongs to — after a booking the id points to
+      // the merged/real guest profile, so future chats greet them by name.
+      if (response.ok && businessId && typeof data.customer_id === 'string' && data.customer_id) {
+        saveGuestId(businessId, data.customer_id)
       }
 
       if (data.skipped) {

@@ -14,10 +14,10 @@ const inputStyle: React.CSSProperties = {
   width: '100%',
   padding: '8px 10px',
   borderRadius: 8,
-  border: '1px solid rgba(15, 23, 42, 0.1)',
+  border: '1px solid var(--bk-border)',
   fontSize: 13,
   boxSizing: 'border-box',
-  background: '#fff',
+  background: 'var(--bk-card)',
   color: 'var(--bk-head)',
   fontFamily: 'inherit',
 }
@@ -111,7 +111,7 @@ export function ActivityResourcesPanel({
   }
 
   const rowStyle: React.CSSProperties = {
-    border: '1px solid rgba(15,23,42,0.08)',
+    border: '1px solid var(--bk-border)',
     borderRadius: 10,
     padding: '12px 14px',
     background: 'var(--bk-surface)',
@@ -123,8 +123,8 @@ export function ActivityResourcesPanel({
     width: 28,
     height: 28,
     borderRadius: 7,
-    border: '1px solid rgba(15,23,42,0.1)',
-    background: '#fff',
+    border: '1px solid var(--bk-border)',
+    background: 'var(--bk-card)',
     cursor: disabled ? 'not-allowed' : 'pointer',
     display: 'grid',
     placeItems: 'center',

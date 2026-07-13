@@ -2,9 +2,11 @@
 
 import { AnimatePresence, motion } from 'framer-motion'
 import Link from 'next/link'
+import { BrandTransitionLink } from '@/components/brand-transition-link'
 import { OceanCoreLogoCompact } from '@/components/oceancore-logo'
 import { Suspense, useEffect, useRef, useState } from 'react'
 
+import { WELCOME_SPLASH_FLAG } from '@/components/dashboard-splash'
 import { supabase } from '@/lib/supabase'
 
 function cn(...values: Array<string | false | null | undefined>) {
@@ -154,9 +156,9 @@ function BrandPanel() {
       />
 
       {/* Logo */}
-      <div className="relative z-10">
+      <BrandTransitionLink href="/" className="relative z-10 inline-block" ariaLabel="Back to OceanCore home">
         <OceanCoreLogoCompact theme="dark" />
-      </div>
+      </BrandTransitionLink>
 
       {/* Hero */}
       <div className="relative z-10" style={{ maxWidth: 460 }}>
@@ -253,6 +255,7 @@ function LoginContent() {
       setLoading(false)
       return
     }
+    try { sessionStorage.setItem(WELCOME_SPLASH_FLAG, '1') } catch { /* storage blocked */ }
     const userId = data.user?.id
     if (!userId) { window.location.replace('/dashboard'); return }
     const { data: business } = await supabase.from('businesses').select('id').eq('user_id', userId).maybeSingle()

@@ -9,7 +9,11 @@ import { resolveBusinessAccess } from '@/lib/business-access'
 import { bk, bkCard } from '@/lib/bookings-compact-ui'
 import type { CrmCustomer } from '@/lib/crm-customer'
 import { mapDbCustomerBase } from '@/lib/crm-customer'
-import { enrichCrmCustomers, type CrmAppointmentRow } from '@/lib/crm-guest-metrics'
+import {
+  enrichCrmCustomers,
+  filterVisibleCrmCustomers,
+  type CrmAppointmentRow,
+} from '@/lib/crm-guest-metrics'
 import {
   crmTagChipStyle,
   displayGuestName,
@@ -217,7 +221,7 @@ export function CrmGuestsClient({ initialCustomers, initialBusinessId }: CrmGues
         mapDbCustomerBase(r as Record<string, unknown>),
       )
       const appointments = (appointmentsRes.data ?? []) as CrmAppointmentRow[]
-      const next = enrichCrmCustomers(bases, appointments)
+      const next = filterVisibleCrmCustomers(enrichCrmCustomers(bases, appointments))
       setCustomers((prev) => {
         if (
           prev.length === next.length &&

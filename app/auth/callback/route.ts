@@ -42,5 +42,6 @@ export async function GET(request: Request) {
     }
   }
 
-  return NextResponse.redirect(new URL('/dashboard', request.url))
+  // ?welcome=1 triggers the one-time post-login splash (DashboardSplash).
+  return NextResponse.redirect(new URL('/dashboard?welcome=1', request.url))
 }

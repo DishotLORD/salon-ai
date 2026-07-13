@@ -53,6 +53,9 @@ export default function RootLayout({
   return (
     <html
       lang="en"
+      // The inline theme script below sets data-theme before hydration, so the
+      // server-rendered attribute never matches — suppress that known diff.
+      suppressHydrationWarning
       className={`${geistSans.variable} ${geistMono.variable} ${playfair.variable} ${inter.variable} ${plusJakarta.variable} ${montserrat.variable} h-full antialiased`}
     >
       <head>

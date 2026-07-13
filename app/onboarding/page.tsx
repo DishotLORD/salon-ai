@@ -4,6 +4,8 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 
+import { WELCOME_SPLASH_FLAG } from '@/components/dashboard-splash'
+import { defaultSystemPrompt } from '@/lib/default-system-prompt'
 import { supabase } from '@/lib/supabase'
 import { tabContent } from '@/lib/ocean-motion'
 
@@ -18,12 +20,6 @@ const businessTypeOptions = [
 ] as const
 
 type BusinessTypeValue = (typeof businessTypeOptions)[number]['value']
-
-function defaultSystemPrompt(name: string, type: string): string {
-  const venueName = name.trim() || 'our venue'
-  const typeLabel = businessTypeOptions.find((o) => o.value === type)?.label ?? 'restaurant'
-  return `You are the AI Concierge for ${venueName}, a ${typeLabel.toLowerCase()}. Be warm, attentive, and concise. Help guests with reservations, menu questions, dietary requirements, and special-occasion requests. Confirm party size, date, time, and guest name before treating a reservation as final. Escalate complaints or unusual requests to a manager.`
-}
 
 const labelStyle = {
   display: 'block' as const,
@@ -124,7 +120,11 @@ export default function OnboardingPage() {
         email: email.trim() || null,
         phone: phone.trim() || null,
         agent_name: agentName.trim() || `${businessName.trim()} Concierge`,
-        system_prompt: defaultSystemPrompt(businessName, businessType),
+        system_prompt: defaultSystemPrompt(
+          businessName,
+          businessType,
+          agentName.trim() || `${businessName.trim()} Concierge`,
+        ),
       })
 
       if (insertError) {
@@ -133,6 +133,7 @@ export default function OnboardingPage() {
         return
       }
 
+      try { sessionStorage.setItem(WELCOME_SPLASH_FLAG, '1') } catch { /* storage blocked */ }
       router.replace('/dashboard')
     } catch {
       setError('Something went wrong. Please try again.')

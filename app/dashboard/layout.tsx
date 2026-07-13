@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { redirect } from 'next/navigation'
 
+import { DashboardSplash } from '@/components/dashboard-splash'
 import { resolveBusinessAccessServer } from '@/lib/business-access-server'
 import { createClient } from '@/lib/supabase-server'
 
@@ -28,6 +29,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
         color: '#e8f4fc',
       }}
     >
+      <DashboardSplash />
       {children}
     </div>
   )

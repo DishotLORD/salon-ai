@@ -96,17 +96,25 @@ export function defaultMainDiningZone(
 }
 
 const ZONE_KEYWORDS: Record<string, string[]> = {
-  patio: ['patio', 'terrace', 'outdoor', 'outside', 'deck'],
+  patio: ['patio', 'terrace', 'outdoor', 'outside', 'deck', 'патио', 'терраса', 'тераса', 'веранда'],
   bar: ['bar', 'lounge', 'cocktail', 'бар'],
-  window: ['window', 'view'],
+  window: ['window', 'view', 'окно', 'у окна', 'вікно'],
   booths: ['booth', 'booths'],
-  quiet: ['quiet', 'private', 'corner'],
+  quiet: ['quiet', 'private', 'corner', 'тихое', 'тихе'],
   'large-groups': ['large group', 'big group', 'banquet', 'private event'],
-  'main-dining': ['main dining', 'dining room', 'inside'],
+  'main-dining': ['main dining', 'dining room', 'inside', 'зал', 'основной зал'],
 }
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/**
+ * Unicode-aware word-boundary regex. JS \b is ASCII-only — `\bпатио\b` can
+ * never match, which silently broke every non-Latin zone mention.
+ */
+function wordBoundaryRegex(word: string): RegExp {
+  return new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegex(word)}(?![\\p{L}\\p{N}])`, 'iu')
 }
 
 /** Short keywords need word boundaries so "bar" does not match unrelated words. */
@@ -114,9 +122,72 @@ function textMatchesZoneKeyword(text: string, keyword: string): boolean {
   const kw = keyword.trim().toLowerCase()
   if (!kw) return false
   if (kw.length <= 5 || !/\s/.test(kw)) {
-    return new RegExp(`\\b${escapeRegex(kw)}\\b`, 'i').test(text)
+    return wordBoundaryRegex(kw).test(text)
   }
   return text.toLowerCase().includes(kw)
+}
+
+/** Strip everything but letters/digits (Latin + Cyrillic) for space/punctuation-insensitive compare. */
+function compactText(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9\u0400-\u04ff]+/g, '')
+}
+
+/**
+ * Distinctive tokens that identify a zone beyond its exact name:
+ * - significant name words (≥3 chars): "Main dining" → "main", "dining"
+ * - compacted name/slug so "maindining" / "main-dining" still match "Main dining".
+ * Lets guests use shortened forms or drop spaces without breaking booking.
+ */
+function textReferencesZoneToken(text: string, zone: DiningZone): boolean {
+  const nameWords = zone.name
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((w) => w.length >= 3)
+  for (const w of nameWords) {
+    if (wordBoundaryRegex(w).test(text)) return true
+  }
+  const compact = compactText(text)
+  const compactTokens = [compactText(zone.name), compactText(zone.slug)].filter(
+    (c) => c.length >= 3,
+  )
+  return compactTokens.some((c) => compact.includes(c))
+}
+
+// (?![\p{L}\p{N}]) instead of \b — JS \b is ASCII-only, so `да\b` never matches
+// and every Russian affirmation was silently ignored.
+const AFFIRMATIVE_RE =
+  /^(y|ye|yes+|yeah|yep|yup|sure|ok|okay|okey|kk?|correct|right|exact(?:ly)?|perfect|great|fine|good|sounds? good|that works|works(?: for me)?|please do|go ahead|confirm(?:ed)?|да+|ага|угу|конечно|верно|давай(?:те)?|хорошо|ладно|ок|окей)(?![\p{L}\p{N}])/iu
+
+/** True when a short reply is a plain affirmation ("yes", "correct", "да", …). */
+export function isAffirmativeReply(text: string): boolean {
+  const t = text.trim().toLowerCase().replace(/[!.…,\s]+$/g, '')
+  if (!t || t.length > 24) return false
+  return AFFIRMATIVE_RE.test(t)
+}
+
+/**
+ * Returns a zone id only when EXACTLY ONE active zone is referenced in the text.
+ * Used to confirm the single zone the assistant proposed — a multi-zone question
+ * like "Main dining, Patio, or Bar?" references 3 zones and returns null.
+ */
+export function singleZoneMentioned(text: string, zones: DiningZone[]): string | null {
+  const active = zones.filter((z) => z.is_active)
+  const ids = new Set<string>()
+  for (const zone of active) {
+    if (textMatchesZoneKeyword(text, zone.name) || textReferencesZoneToken(text, zone)) {
+      ids.add(zone.id)
+      continue
+    }
+    const keys = ZONE_KEYWORDS[zone.slug] ?? []
+    for (const kw of keys) {
+      if (kw.toLowerCase() === zone.name.toLowerCase()) continue
+      if (textMatchesZoneKeyword(text, kw)) {
+        ids.add(zone.id)
+        break
+      }
+    }
+  }
+  return ids.size === 1 ? [...ids][0] : null
 }
 
 /**
@@ -156,6 +227,12 @@ export function inferZoneIdFromText(
     }
   }
 
+  // Pass 3: distinctive name tokens / compacted forms — tolerant of shortened
+  // words ("main"), dropped spaces ("maindining"). Only used when unambiguous,
+  // so a stray token can never silently pick the wrong zone.
+  const tokenMatches = active.filter((z) => textReferencesZoneToken(text, z))
+  if (tokenMatches.length === 1) return tokenMatches[0].id
+
   return null
 }
 
@@ -176,7 +253,9 @@ export function guestAcceptsAnyZone(text: string): boolean {
     /\b(any(?:where)?|no pref(?:erence)?|doesn'?t matter|don'?t care|whatever works|whatever is fine|surprise me|up to you|your choice|any area|any seating|first available|wherever|whichever|no specific|not picky)\b/i.test(
       lower,
     ) ||
-    /\b(без разницы|не важно|любая зона|любое место|где есть место|всё равно|как получится)\b/i.test(
+    // Unicode lookarounds, not \b — ASCII \b never fires on Cyrillic, which
+    // silently disabled this entire list.
+    /(?<![\p{L}\p{N}])(без разницы|не важно|неважно|любая зона|любое место|где есть место|вс[её] равно|как получится|будь-де|байдуже|не має значення)(?![\p{L}\p{N}])/iu.test(
       lower,
     )
   )

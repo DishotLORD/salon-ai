@@ -116,7 +116,7 @@ function CategoryRow({
               background: navTheme.activeBg,
               border: `1px solid ${navTheme.activeBorder}`,
               boxShadow:
-                '0 1px 2px rgba(15, 23, 42, 0.06), 0 4px 16px rgba(56, 189, 248, 0.18), inset 0 1px 0 rgba(255,255,255,0.9)',
+                '0 1px 2px rgba(15, 23, 42, 0.06), 0 4px 16px rgba(56, 189, 248, 0.18), inset 0 1px 0 var(--t-glass-highlight)',
               pointerEvents: 'none',
             }}
           />
@@ -220,7 +220,7 @@ export function SettingsCategoryNav({
           borderRadius: 14,
           background: navTheme.trackBg,
           border: `1px solid ${navTheme.trackBorder}`,
-          boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.7)',
+          boxShadow: 'inset 0 1px 0 var(--t-glass-highlight)',
         }}
       >
         {SETTINGS_CATEGORIES.map((category) => {

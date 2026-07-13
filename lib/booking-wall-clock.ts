@@ -1,6 +1,13 @@
-/** Wall-clock timestamps for reservations: always interpreted in Calgary (America/Edmonton). */
+/**
+ * Wall-clock timestamps for reservations, interpreted in the restaurant's
+ * timezone. Single-tenant deployments outside Alberta can set
+ * NEXT_PUBLIC_BUSINESS_TIMEZONE (an IANA name like "America/Toronto") without
+ * touching code — it must be NEXT_PUBLIC_ so the dashboard bundle and the
+ * server agree. True per-business timezones (multi-tenant) remain future work.
+ */
 
-export const CALGARY_TZ = 'America/Edmonton'
+export const CALGARY_TZ =
+  process.env.NEXT_PUBLIC_BUSINESS_TIMEZONE?.trim() || 'America/Edmonton'
 
 const WALL_CLOCK_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/
 
@@ -147,9 +154,15 @@ export function snapWallClockToSlotInterval(
   const startMin = wallClockToMinutesOfDay(parts)
   const rounded = Math.round(startMin / intervalMinutes) * intervalMinutes
   const pad2 = (n: number) => String(n).padStart(2, '0')
+  // Rounding 23:53 up gives 24:00 — that is 00:00 of the NEXT day, not a
+  // rewind to this day's midnight.
+  const dateKey =
+    rounded >= 24 * 60
+      ? addDaysToDateKey(wallClockDateKey(parts), 1)
+      : wallClockDateKey(parts)
   const hour = Math.floor((rounded % (24 * 60)) / 60)
   const minute = rounded % 60
-  return `${parts.year}-${pad2(parts.month)}-${pad2(parts.day)}T${pad2(hour)}:${pad2(minute)}:00`
+  return `${dateKey}T${pad2(hour)}:${pad2(minute)}:00`
 }
 
 /** Calendar date arithmetic on YYYY-MM-DD (timezone-safe for day boundaries). */
@@ -379,7 +392,9 @@ export function parseScheduledAtToWallClock(text: string): string | null {
     )
     const todayWd = calgaryWeekdayIndex(now)
     let daysAhead = targetWd - todayWd
-    if (modifier === 'next' || daysAhead <= 0) daysAhead += 7
+    if (daysAhead < 0) daysAhead += 7
+    // A bare weekday matching today's weekday means TODAY; only "next" jumps a week.
+    if (modifier === 'next') daysAhead += 7
     const dateKey = addDaysToDateKey(todayKey, daysAhead)
     const ap = parseAmPmTime(text)
     if (!ap) return null
@@ -472,7 +487,9 @@ export function inferDateKeyFromText(text: string, now: WallClockParts): string 
     )
     const todayWd = calgaryWeekdayIndex(now)
     let daysAhead = target - todayWd
-    if (wdMatch[1] === 'next' || daysAhead <= 0) daysAhead += 7
+    if (daysAhead < 0) daysAhead += 7
+    // A bare weekday matching today's weekday means TODAY; only "next" jumps a week.
+    if (wdMatch[1] === 'next') daysAhead += 7
     return addDaysToDateKey(todayKey, daysAhead)
   }
 

@@ -12,7 +12,6 @@ import {
   type SettingsCategoryId,
 } from '@/components/settings-category-nav'
 import { BookingSettingsPanel } from '@/components/booking-settings-panel'
-import { TeamMembersPanel } from '@/components/team-members-panel'
 import { DiningZonesPanel, type DiningZoneDraft } from '@/components/dining-zones-panel'
 import { WorkingHoursPanel } from '@/components/working-hours-panel'
 import {
@@ -30,6 +29,9 @@ import {
   parseNotificationSettings,
   type NotificationSettings,
 } from '@/lib/notification-settings'
+import {
+  DEFAULT_SYSTEM_PROMPT_PLACEHOLDER,
+} from '@/lib/default-system-prompt'
 import { defaultMainDiningZone, parseDiningZoneRow, slugifyZoneName } from '@/lib/dining-zones'
 import { oceanTransition, settingsPanelHeavy } from '@/lib/ocean-motion'
 import {
@@ -388,9 +390,7 @@ function SettingsPageInner() {
   const [activityResources, setActivityResources] = useState<ActivityResource[]>(DEFAULT_ACTIVITY_RESOURCES)
   const [reservationSubTab, setReservationSubTab] = useState<'dining' | 'activities'>('dining')
 
-  const [systemPrompt, setSystemPrompt] = useState(
-    'You are the AI Concierge for this restaurant. Be warm, attentive, and concise. Help guests with reservations, menu inquiries, dietary requirements, and special-occasion notes. Confirm party size, date, time, and guest name before treating a reservation as final. Escalate complaints or unusual requests to a manager.',
-  )
+  const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT_PLACEHOLDER)
   const [agentName, setAgentName] = useState('AI Concierge')
   const [language, setLanguage] = useState('English (US)')
 
@@ -1038,24 +1038,12 @@ function SettingsPageInner() {
     }
 
     if (activeCategory === 'team') {
-      if (!businessRowId) {
-        return (
-          <SettingsPlaceholder
-            reduceMotion={reduceMotion}
-            title="Team management"
-            description="Save your restaurant profile first (Restaurant tab), then invite staff here."
-          />
-        )
-      }
       return (
-        <div style={{ display: 'grid', gap: 16, maxWidth: 760 }}>
-          <div style={{ borderRadius: 12, border: `1px solid ${s.border}`, background: s.panel, padding: 18, boxShadow: s.shadow }}>
-            <div style={{ color: s.textMuted, fontSize: 11, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', marginBottom: 12 }}>
-              Team members
-            </div>
-            <TeamMembersPanel businessId={businessRowId} ownerEmail={businessEmail || null} s={s} />
-          </div>
-        </div>
+        <SettingsPlaceholder
+          reduceMotion={reduceMotion}
+          title="Team management"
+          description="Invite staff and assign manager or host roles. Coming soon."
+        />
       )
     }
 
@@ -1194,13 +1182,20 @@ function SettingsPageInner() {
     if (activeCategory === 'ai') {
       return (
         <div style={{ display: 'grid', gap: 16 }}>
-          <FloatingField
-            label="System Prompt"
-            value={systemPrompt}
-            onChange={setSystemPrompt}
-            multiline
-            rows={8}
-          />
+          <div style={{ display: 'grid', gap: 8 }}>
+            <FloatingField
+              label="System Prompt"
+              value={systemPrompt}
+              onChange={setSystemPrompt}
+              multiline
+              rows={8}
+            />
+            <p style={{ margin: 0, fontSize: 12, color: t.textMuted, lineHeight: 1.55 }}>
+              Sets tone and style only. Booking rules, menu, hours, and escalation are added
+              automatically. Concierge name ({agentName.trim() || 'AI Concierge'}) is injected
+              on every reply so the bot matches the widget.
+            </p>
+          </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 14 }}>
             <FloatingField label="Concierge Name" value={agentName} onChange={setAgentName} />
             <FloatingSelect
@@ -1497,8 +1492,8 @@ function SettingsPageInner() {
                     style={{
                       position: 'relative',
                       borderRadius: 12,
-                      border: `1px solid ${isHovered ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.1)'}`,
-                      background: isHovered ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.05)',
+                      border: `1px solid ${isHovered ? 'var(--bk-border-strong)' : 'var(--bk-border)'}`,
+                      background: isHovered ? 'var(--bk-surface)' : 'var(--bk-card)',
                       padding: 16,
                       display: 'grid',
                       gap: 10,
@@ -1620,10 +1615,10 @@ function SettingsPageInner() {
           )}
           {!menuPdfUploading && !menuPdfText && (
             <div
-              style={{ borderRadius: 12, border: '1.5px dashed rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.02)', padding: 24, display: 'flex', alignItems: 'center', gap: 16, cursor: 'pointer' }}
+              style={{ borderRadius: 12, border: '1.5px dashed var(--bk-border-strong)', background: 'var(--bk-surface)', padding: 24, display: 'flex', alignItems: 'center', gap: 16, cursor: 'pointer' }}
               onClick={() => menuPdfInputRef.current?.click()}
             >
-              <div style={{ width: 44, height: 44, borderRadius: 10, background: 'rgba(255,255,255,0.06)', display: 'grid', placeItems: 'center', fontSize: 22, flexShrink: 0 }}>📄</div>
+              <div style={{ width: 44, height: 44, borderRadius: 10, background: 'var(--bk-surface-2)', display: 'grid', placeItems: 'center', fontSize: 22, flexShrink: 0 }}>📄</div>
               <div style={{ flex: 1 }}>
                 <div style={{ color: t.text, fontSize: 15, fontWeight: 600 }}>Upload PDF Menu</div>
                 <div style={{ color: t.textMuted, fontSize: 13, marginTop: 3 }}>
@@ -1700,21 +1695,28 @@ function SettingsPageInner() {
                   />
                 </label>
               ))}
-            <FloatingSelect
-              label="Digest Frequency"
-              value={notificationSettings.digest_frequency}
-              onChange={(v) =>
-                setNotificationSettings((p) => ({
-                  ...p,
-                  digest_frequency: v as 'daily' | 'weekly' | 'off',
-                }))
-              }
-              options={[
-                { value: 'daily', label: 'Daily summary' },
-                { value: 'weekly', label: 'Weekly summary' },
-                { value: 'off', label: 'Off' },
-              ]}
-            />
+            <div style={{ display: 'grid', gap: 6 }}>
+              <div style={{ opacity: 0.55, pointerEvents: 'none' }}>
+                <FloatingSelect
+                  label="Digest Frequency"
+                  value={notificationSettings.digest_frequency}
+                  onChange={(v) =>
+                    setNotificationSettings((p) => ({
+                      ...p,
+                      digest_frequency: v as 'daily' | 'weekly' | 'off',
+                    }))
+                  }
+                  options={[
+                    { value: 'daily', label: 'Daily summary' },
+                    { value: 'weekly', label: 'Weekly summary' },
+                    { value: 'off', label: 'Off' },
+                  ]}
+                />
+              </div>
+              <p style={{ margin: 0, fontSize: 12, color: s.textMuted }}>
+                Digest summary emails are coming soon — this preference will apply once they launch.
+              </p>
+            </div>
           </section>
 
           <section style={{ display: 'grid', gap: 18, paddingTop: 8, borderTop: `1px solid ${s.border}` }}>
@@ -1929,7 +1931,6 @@ function SettingsPageInner() {
       <DashboardOceanNav activeNav="Settings">
         {({ isMobile, openNav }) => (
           <div
-            data-theme="light"
             style={{
               fontFamily: settingsFont,
               margin: isMobile ? '-20px -16px' : '-36px',

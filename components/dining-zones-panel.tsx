@@ -22,9 +22,11 @@ const inputStyle: React.CSSProperties = {
   width: '100%',
   padding: '8px 10px',
   borderRadius: 8,
-  border: '1px solid rgba(15, 23, 42, 0.1)',
+  border: '1px solid var(--bk-border)',
   fontSize: 13,
   boxSizing: 'border-box',
+  background: 'var(--bk-card)',
+  color: 'var(--bk-head)',
 }
 
 export type DiningZoneDraft = Omit<DiningZone, 'id' | 'business_id'> & {
@@ -115,7 +117,7 @@ export function DiningZonesPanel({
           style={{
             padding: 14,
             borderRadius: 12,
-            border: '1px solid rgba(15, 23, 42, 0.08)',
+            border: '1px solid var(--bk-border)',
             background: zone.is_active ? 'var(--bk-card)' : 'var(--bk-surface)',
             display: 'grid',
             gap: 10,
@@ -259,8 +261,9 @@ const iconBtn: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 600,
   borderRadius: 6,
-  border: '1px solid rgba(15, 23, 42, 0.1)',
+  border: '1px solid var(--bk-border)',
   background: 'var(--bk-card)',
+  color: 'var(--bk-text)',
   cursor: 'pointer',
 }
 
@@ -280,7 +283,7 @@ const secondaryBtn: React.CSSProperties = {
   fontSize: 13,
   fontWeight: 600,
   borderRadius: 8,
-  border: '1px solid rgba(15, 23, 42, 0.12)',
+  border: '1px solid var(--bk-border-strong)',
   background: 'var(--bk-card)',
   color: 'var(--bk-text)',
   cursor: 'pointer',

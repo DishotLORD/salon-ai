@@ -97,3 +97,20 @@ export function enrichCrmCustomers(
   const metricsMap = buildCustomerMetricsMap(appointments)
   return bases.map((base) => enrichCrmCustomer(base, metricsMap.get(base.id)))
 }
+
+/**
+ * Anonymous chat placeholders ("Website visitor" rows created for every widget
+ * conversation) are noise in the guest list: no real name, no contact, no
+ * bookings, no notes. They stay in the DB (conversations link to them and they
+ * merge into a real profile once the guest shares contact) but are hidden here.
+ */
+export function isVisibleCrmCustomer(c: CrmCustomer): boolean {
+  if (!c.isUnknownGuest) return true
+  const hasPhone = c.phone.trim() !== '' && c.phone !== '—'
+  const hasEmail = c.email.trim() !== ''
+  return hasPhone || hasEmail || c.bookingCount > 0 || c.notes.trim() !== ''
+}
+
+export function filterVisibleCrmCustomers(list: CrmCustomer[]): CrmCustomer[] {
+  return list.filter(isVisibleCrmCustomer)
+}
