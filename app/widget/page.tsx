@@ -19,6 +19,10 @@ type BookingCard = {
   date: string
   time: string
   zone: string | null
+  /** Raw values for the calendar link. */
+  rawDate?: string
+  rawTime?: string
+  durationMinutes?: number
 }
 
 type WidgetMessage = {
@@ -26,6 +30,41 @@ type WidgetMessage = {
   sender: 'customer' | 'ai'
   text: string
   bookingCard?: BookingCard
+  /** Tappable time suggestions from the concierge (shown under the latest AI reply). */
+  suggestions?: string[]
+}
+
+/** Google Calendar link for a confirmed booking (restaurant-local times). */
+function googleCalendarUrl(card: BookingCard, businessName: string | null): string | null {
+  if (!card.rawDate || !card.rawTime) return null
+  const dateDigits = card.rawDate.replace(/-/g, '')
+  const [h, m] = card.rawTime.split(':').map(Number)
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return null
+  const startMin = h * 60 + m
+  const endMin = startMin + (card.durationMinutes && card.durationMinutes > 0 ? card.durationMinutes : 120)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const start = `${dateDigits}T${pad(h)}${pad(m)}00`
+  // Roll the end time into the next day when the meal crosses midnight.
+  let endDateDigits = dateDigits
+  if (endMin >= 24 * 60) {
+    const [y, mo, d] = card.rawDate.split('-').map(Number)
+    const next = new Date(Date.UTC(y, mo - 1, d + 1))
+    endDateDigits = `${next.getUTCFullYear()}${pad(next.getUTCMonth() + 1)}${pad(next.getUTCDate())}`
+  }
+  const end = `${endDateDigits}T${pad(Math.floor((endMin % 1440) / 60))}${pad(endMin % 60)}00`
+  const title = businessName
+    ? `Table for ${card.partySize} — ${businessName}`
+    : `Restaurant reservation — table for ${card.partySize}`
+  const details = card.zone ? `Seating: ${card.zone}` : ''
+  const params = new URLSearchParams({
+    action: 'TEMPLATE',
+    text: title,
+    dates: `${start}/${end}`,
+    ctz: 'America/Edmonton',
+    ...(details ? { details } : {}),
+    ...(businessName ? { location: businessName } : {}),
+  })
+  return `https://calendar.google.com/calendar/render?${params.toString()}`
 }
 
 const DEFAULT_CONCIERGE_NAME = 'AI Concierge'
@@ -719,7 +758,9 @@ function WidgetPageInner() {
           date: string
           time: string
           dining_area: string | null
+          duration_minutes?: number
         } | null
+        suggested_times?: string[]
       }
 
       if (response.ok && typeof data.conversation_id === 'string' && data.conversation_id) {
@@ -743,9 +784,13 @@ function WidgetPageInner() {
       setMessages((prev) => {
         const lastAi = [...prev].reverse().find((m) => m.sender === 'ai')
         if (lastAi && lastAi.text === aiText && !lastAi.id.startsWith('ai-')) return prev
+        const suggestions =
+          response.ok && Array.isArray(data.suggested_times) && data.suggested_times.length > 0
+            ? data.suggested_times.filter((t): t is string => typeof t === 'string').slice(0, 6)
+            : undefined
         const next: WidgetMessage[] = [
           ...prev,
-          { id: nextMessageId('ai'), sender: 'ai', text: aiText },
+          { id: nextMessageId('ai'), sender: 'ai', text: aiText, suggestions },
         ]
         if (data.booking_created && data.booking_details) {
           const d = data.booking_details
@@ -767,6 +812,9 @@ function WidgetPageInner() {
               date: formattedDate,
               time: formattedTime,
               zone: d.dining_area ?? null,
+              rawDate: d.date,
+              rawTime: d.time,
+              durationMinutes: d.duration_minutes,
             },
           })
         }
@@ -969,8 +1017,9 @@ function WidgetPageInner() {
 
               {historyLoading && <HistorySkeleton />}
 
-              {!historyLoading && messages.map((message) => {
+              {!historyLoading && messages.map((message, messageIndex) => {
                 const isCustomer = message.sender === 'customer'
+                const isLastMessage = messageIndex === messages.length - 1
 
                 // Booking confirmation card
                 if (message.bookingCard) {
@@ -1032,6 +1081,37 @@ function WidgetPageInner() {
                               <span style={{ fontSize: 13, fontWeight: 600, color: CHAT_TEXT, textAlign: 'right' }}>{row.value}</span>
                             </div>
                           ))}
+                          {(() => {
+                            const calUrl = googleCalendarUrl(c, businessName)
+                            return calUrl ? (
+                              <a
+                                href={calUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: 6,
+                                  marginTop: 10,
+                                  padding: '8px 12px',
+                                  borderRadius: 10,
+                                  border: '1px solid rgba(52,211,153,0.3)',
+                                  background: 'rgba(52,211,153,0.09)',
+                                  color: '#34d399',
+                                  fontSize: 12.5,
+                                  fontWeight: 700,
+                                  textDecoration: 'none',
+                                }}
+                              >
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                                  <rect x="3" y="4" width="18" height="18" rx="2" />
+                                  <path d="M16 2v4M8 2v4M3 10h18M12 14v4M10 16h4" />
+                                </svg>
+                                Add to Google Calendar
+                              </a>
+                            ) : null
+                          })()}
                         </div>
                       </div>
                     </motion.div>
@@ -1046,32 +1126,73 @@ function WidgetPageInner() {
                     transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
                     style={{
                       display: 'flex',
-                      justifyContent: isCustomer ? 'flex-end' : 'flex-start',
-                      alignItems: 'flex-start',
-                      gap: 8,
+                      flexDirection: 'column',
+                      alignItems: isCustomer ? 'flex-end' : 'flex-start',
                       marginBottom: 12,
                     }}
                   >
-                    {!isCustomer && <ConciergeAvatar name={conciergeName} size={28} />}
                     <div
                       style={{
-                        maxWidth: isCustomer ? '76%' : '82%',
-                        borderRadius: isCustomer ? '21px 21px 7px 21px' : '21px 21px 21px 7px',
-                        padding: '13px 16px',
-                        fontSize: 14.5,
-                        lineHeight: 1.48,
-                        background: isCustomer ? MESSAGE_CUSTOMER_BACKGROUND : MESSAGE_AI_BACKGROUND,
-                        color: isCustomer ? CUSTOMER_TEXT : CHAT_TEXT,
-                        border: isCustomer ? `1px solid ${MESSAGE_CUSTOMER_BORDER}` : `1px solid ${MESSAGE_AI_BORDER}`,
-                        boxShadow: 'none',
-                        fontWeight: 400,
-                        wordBreak: 'break-word',
-                        overflowWrap: 'anywhere',
-                        whiteSpace: 'pre-wrap',
+                        display: 'flex',
+                        justifyContent: isCustomer ? 'flex-end' : 'flex-start',
+                        alignItems: 'flex-start',
+                        gap: 8,
+                        width: '100%',
                       }}
                     >
-                      {message.text}
+                      {!isCustomer && <ConciergeAvatar name={conciergeName} size={28} />}
+                      <div
+                        style={{
+                          maxWidth: isCustomer ? '76%' : '82%',
+                          borderRadius: isCustomer ? '21px 21px 7px 21px' : '21px 21px 21px 7px',
+                          padding: '13px 16px',
+                          fontSize: 14.5,
+                          lineHeight: 1.48,
+                          background: isCustomer ? MESSAGE_CUSTOMER_BACKGROUND : MESSAGE_AI_BACKGROUND,
+                          color: isCustomer ? CUSTOMER_TEXT : CHAT_TEXT,
+                          border: isCustomer ? `1px solid ${MESSAGE_CUSTOMER_BORDER}` : `1px solid ${MESSAGE_AI_BORDER}`,
+                          boxShadow: 'none',
+                          fontWeight: 400,
+                          wordBreak: 'break-word',
+                          overflowWrap: 'anywhere',
+                          whiteSpace: 'pre-wrap',
+                        }}
+                      >
+                        {message.text}
+                      </div>
                     </div>
+
+                    {/* Tappable time suggestions — only under the latest reply, gone once used. */}
+                    {!isCustomer && isLastMessage && !isLoading && (message.suggestions?.length ?? 0) > 0 && (
+                      <motion.div
+                        initial={reduceMotion ? false : { opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.15, duration: 0.2 }}
+                        style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '7px 0 0 36px' }}
+                      >
+                        {message.suggestions!.map((suggestion) => (
+                          <motion.button
+                            key={suggestion}
+                            type="button"
+                            whileHover={reduceMotion ? undefined : { y: -1, scale: 1.02 }}
+                            whileTap={reduceMotion ? undefined : { scale: 0.97 }}
+                            onClick={() => void handleSend(suggestion)}
+                            style={{
+                              border: `1px solid rgba(${WIDGET_ACCENT_RGB}, 0.3)`,
+                              borderRadius: 999,
+                              padding: '6px 12px',
+                              background: WIDGET_ACCENT_SOFT,
+                              color: WIDGET_ACCENT_TEXT,
+                              fontSize: 12.5,
+                              fontWeight: 650,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {suggestion}
+                          </motion.button>
+                        ))}
+                      </motion.div>
+                    )}
                   </motion.div>
                 )
               })}

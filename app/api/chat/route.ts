@@ -91,6 +91,7 @@ ALSO COLLECT, together with the name at the end: phone number or email (preferre
 
 TOOL USAGE:
 - check_availability — call BEFORE you offer or confirm any time; never invent open times or claim a time is unavailable without checking. Pass the guest's requested time when they stated one — the result then says definitively whether that exact time is open (requested_time_available). You may call it before knowing party size. Trust its result over any earlier assumption.
+- find_next_available — call when the guest is FLEXIBLE about the date: "when's your next free Friday evening?", "any weekend table for 6?", "first available slot". Translate their words into filters (weekend → weekdays ["Saturday","Sunday"]; evening → time_from "17:00"). Offer the returned dates and times verbatim. For one specific date, use check_availability instead.
 - create_reservation — call ONLY once the guest has stated the date, time, party size, seating zone, and name, passing each exactly as the guest said it. The system validates everything: if it returns missing_fields, ask the guest for those fields and call again; if it returns not_available, apologize briefly and offer the returned alternatives. After it succeeds, confirm warmly by first name with the exact date, time, dining area, and any noted requests.
 - get_my_reservation — call whenever the guest asks about their existing booking ("when is my reservation?", "do I have a table?", "is my deposit paid?") and BEFORE cancelling or moving a booking, so you can confirm which reservation you are changing. Relay the exact details it returns — never answer from memory.
 - reschedule_reservation — call when the guest wants to move an existing booking to a new date/time, or change how many people are coming (pass new_party_size; keep the same date/time by passing the current ones from get_my_reservation).
@@ -121,6 +122,7 @@ RECOVERY & EDGE CASES:
 
 type ToolName =
   | 'check_availability'
+  | 'find_next_available'
   | 'create_reservation'
   | 'get_my_reservation'
   | 'reschedule_reservation'
@@ -155,6 +157,46 @@ const BOOKING_TOOLS = [
           },
         },
         required: ['date'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'find_next_available',
+      description:
+        'Search open reservation times across the coming days when the guest is flexible about the date — "next free Friday evening", "any weekend slot", "first table for 6". Returns the nearest matching days with sample times. For a single specific date use check_availability instead.',
+      parameters: {
+        type: 'object',
+        properties: {
+          party_size: {
+            type: 'integer',
+            description: 'Number of guests, if stated. Omit if unknown — 2 is assumed.',
+          },
+          earliest_date: {
+            type: 'string',
+            description: 'Start searching from this date (YYYY-MM-DD). Omit to search from today.',
+          },
+          weekdays: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'Only these weekdays, when the guest named them (e.g. ["Friday","Saturday"] for "a weekend evening"). Omit to search every day.',
+          },
+          time_from: {
+            type: 'string',
+            description:
+              'Earliest acceptable start time, 24-hour HH:MM (e.g. "17:00" when the guest says "evening"). Omit for any time.',
+          },
+          time_until: {
+            type: 'string',
+            description: 'Latest acceptable start time, 24-hour HH:MM. Omit for any time.',
+          },
+          seating_area: {
+            type: 'string',
+            description: 'Preferred dining area, verbatim, if the guest stated one.',
+          },
+        },
       },
     },
   },
@@ -1345,6 +1387,139 @@ async function runCheckAvailability(
   return { result }
 }
 
+/** "Friday"/"fri"/"пятница" → 5 (getUTCDay index); null when unrecognized. */
+function weekdayIndexFromName(raw: string): number | null {
+  const text = raw.trim().toLowerCase()
+  const names: [number, RegExp][] = [
+    [0, /^sun|^вос|^нед/], [1, /^mon|^пон/], [2, /^tue|^вто|^вів/],
+    [3, /^wed|^сре|^сер/], [4, /^thu|^чет/], [5, /^fri|^пят|^п'?ят/],
+    [6, /^sat|^суб/],
+  ]
+  for (const [idx, re] of names) {
+    if (re.test(text)) return idx
+  }
+  return null
+}
+
+function timeToMinutesArg(raw: unknown): number | null {
+  if (typeof raw !== 'string') return null
+  const m = raw.trim().match(/^(\d{1,2}):(\d{2})$/)
+  if (!m) return null
+  const h = parseInt(m[1], 10)
+  const min = parseInt(m[2], 10)
+  return h <= 23 && min <= 59 ? h * 60 + min : null
+}
+
+/**
+ * Multi-day availability search for flexible-date requests ("next free Friday
+ * evening"). Scans the booking horizon day by day with the same slot engine as
+ * check_availability, so every offered time is genuinely bookable.
+ */
+async function runFindNextAvailable(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): Promise<ToolOutcome> {
+  const partySizeKnown = typeof args.party_size === 'number' && args.party_size >= 1
+  const partySize = partySizeKnown ? Math.round(args.party_size as number) : 2
+  if (partySizeKnown) {
+    const partyError = partySizeZoneError(partySize, ctx.bookingCtx.zones)
+    if (partyError) return { result: partyError }
+  }
+
+  const seating = resolveSeatingArea(args.seating_area, ctx.bookingCtx.zones)
+  const zoneId = seating.kind === 'zone' ? seating.zone.id : null
+
+  const todayKey = wallClockDateKey(ctx.nowParts)
+  let startKey = todayKey
+  if (typeof args.earliest_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(args.earliest_date.trim())) {
+    const requested = args.earliest_date.trim()
+    if (requested > todayKey) startKey = requested
+  }
+
+  const weekdayFilter = new Set<number>()
+  if (Array.isArray(args.weekdays)) {
+    for (const w of args.weekdays) {
+      if (typeof w === 'string') {
+        const idx = weekdayIndexFromName(w)
+        if (idx != null) weekdayFilter.add(idx)
+      }
+    }
+  }
+
+  const fromMin = timeToMinutesArg(args.time_from)
+  const untilMin = timeToMinutesArg(args.time_until)
+
+  const horizonDays = ctx.bookingCtx.bookingSettings.max_advance_days
+  const maxScanDays = Math.min(horizonDays + 1, 30)
+  const matches: { date: string; day_of_week: string; hours: string; times: string[] }[] = []
+
+  for (let i = 0; i < maxScanDays && matches.length < 3; i++) {
+    const dateKey = addDaysToDateKey(startKey, i)
+    if (checkDateInBookableWindow(dateKey, ctx)) break // past horizon — stop scanning
+
+    if (weekdayFilter.size > 0) {
+      const [y, m, d] = dateKey.split('-').map(Number)
+      if (!weekdayFilter.has(new Date(Date.UTC(y, m - 1, d)).getUTCDay())) continue
+    }
+
+    const slots = getOpenSlotsForDate({
+      dateKey,
+      operatingHours: ctx.bookingCtx.operatingHours,
+      existing: ctx.bookingCtx.existingBookings,
+      settings: ctx.bookingCtx.bookingSettings,
+      now: ctx.nowParts,
+      zones: ctx.bookingCtx.zones,
+      partySize,
+      zoneId,
+    })
+
+    const windowed = slots.filter((s) => {
+      const startOfDay = s.startMinutes >= 24 * 60 ? s.startMinutes - 24 * 60 : s.startMinutes
+      if (fromMin != null && startOfDay < fromMin) return false
+      if (untilMin != null && startOfDay > untilMin) return false
+      return true
+    })
+    if (windowed.length === 0) continue
+
+    // A few well-spread sample times: first, mid-window, last.
+    const unique = formatSlotsForTool(windowed, true)
+    const sample =
+      unique.length <= 4
+        ? unique
+        : [unique[0], unique[Math.floor(unique.length / 3)], unique[Math.floor((2 * unique.length) / 3)], unique[unique.length - 1]]
+
+    const dayHours = getDayHoursForDate(ctx.bookingCtx.operatingHours, dateKey)
+    matches.push({
+      date: dateKey,
+      day_of_week: weekdayNameFromDateKey(dateKey),
+      hours: dayHours.closed ? 'Closed' : formatHoursRangeLabel(dayHours),
+      times: sample,
+    })
+  }
+
+  if (matches.length === 0) {
+    return {
+      result: {
+        ok: true,
+        matches: [],
+        message:
+          'No open tables matched that search within the booking window. Say so kindly, suggest loosening the day or time constraints, and offer the waitlist for a specific date if the guest wants one.',
+      },
+    }
+  }
+
+  const partySizeNote = partySizeKnown
+    ? ''
+    : ' (Party size not stated yet — times assume 2; ask how many guests before booking.)'
+  return {
+    result: {
+      ok: true,
+      matches,
+      message: `Nearest matching days with open tables, earliest first. Offer these dates with 2-3 of their times, copied verbatim.${partySizeNote} Confirm the guest's pick with check_availability semantics already satisfied — you may book directly once all booking fields are collected.`,
+    },
+  }
+}
+
 /**
  * Guard against fabricated names: the guest_name (or at least its first word)
  * must appear somewhere in the conversation. This allows the returning-guest
@@ -1793,6 +1968,7 @@ async function runCreateReservation(
       time: wallClock.slice(11, 16),
       dining_area: zoneLabel,
       special_requests: notes,
+      duration_minutes: durationMinutes,
       ...(paymentLink
         ? {
             deposit_required: true,
@@ -2570,6 +2746,8 @@ async function executeTool(
   switch (name as ToolName) {
     case 'check_availability':
       return runCheckAvailability(args, ctx)
+    case 'find_next_available':
+      return runFindNextAvailable(args, ctx)
     case 'create_reservation':
       return runCreateReservation(args, ctx)
     case 'get_my_reservation':
@@ -3173,6 +3351,51 @@ function queueReservationBookedEmail(
 
 // ─── Route handler ────────────────────────────────────────────────────────────
 
+/** "2026-07-24" → "Fri, Jul 24" for widget chips. */
+function shortDateLabel(dateKey: string): string {
+  const [y, m, d] = dateKey.split('-').map(Number)
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-US', {
+    weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC',
+  })
+}
+
+/**
+ * Turn a tool result into tappable time chips for the widget. The latest
+ * suggestion-bearing result wins; results without suggestions keep the
+ * previous set so a trailing save_guest_details call doesn't wipe chips.
+ */
+function extractSuggestedTimes(result: Record<string, unknown>, previous: string[]): string[] {
+  // find_next_available: matches[] → "Fri, Jul 24 · 7:00 PM" chips.
+  if (Array.isArray(result.matches) && result.matches.length > 0) {
+    const chips: string[] = []
+    for (const match of result.matches.slice(0, 3)) {
+      const m = match as { date?: string; times?: unknown }
+      if (typeof m.date !== 'string' || !Array.isArray(m.times)) continue
+      const day = shortDateLabel(m.date)
+      for (const t of m.times.slice(0, 3)) {
+        if (typeof t === 'string') chips.push(`${day} · ${t}`)
+        if (chips.length >= 6) break
+      }
+      if (chips.length >= 6) break
+    }
+    return chips.length > 0 ? chips : previous
+  }
+
+  // Full slots for the requested time: one confirm chip.
+  if (result.requested_time_available === true && typeof result.requested_time === 'string') {
+    return [result.requested_time]
+  }
+
+  // Alternatives after a full/unavailable slot.
+  if (Array.isArray(result.nearby_alternatives) && result.nearby_alternatives.length > 0) {
+    return result.nearby_alternatives
+      .filter((t): t is string => typeof t === 'string')
+      .slice(0, 6)
+  }
+
+  return previous
+}
+
 const CHAT_RATE_LIMIT = 40
 const CHAT_RATE_WINDOW_MS = 60_000
 
@@ -3534,8 +3757,10 @@ export async function POST(request: Request) {
     let bookingCreated = false
     let bookingCancelled = false
     let bookingRescheduled = false
-    let bookingDetails: { guest_name: string; party_size: number; date: string; time: string; dining_area: string | null } | null = null
+    let bookingDetails: { guest_name: string; party_size: number; date: string; time: string; dining_area: string | null; duration_minutes?: number } | null = null
     let assistantText = ''
+    /** Tappable time suggestions for the widget, from the latest tool result. */
+    let suggestedTimes: string[] = []
 
     // 5 rounds fits the longest legitimate chain (get_my_reservation →
     // check_availability → reschedule → save_guest_details → final answer).
@@ -3599,11 +3824,16 @@ export async function POST(request: Request) {
             date: string
             time: string
             dining_area: string | null
+            duration_minutes?: number
           }
         }
         if (outcome.cancelled) bookingCancelled = true
         if (outcome.rescheduled) bookingRescheduled = true
         if (outcome.customerId) resolvedCustomerId = outcome.customerId
+
+        // Collect tappable time chips for the widget from this tool result.
+        suggestedTimes = extractSuggestedTimes(outcome.result, suggestedTimes)
+        if (outcome.created || outcome.cancelled) suggestedTimes = []
 
         convoMessages.push({
           role: 'tool',
@@ -3641,6 +3871,7 @@ export async function POST(request: Request) {
       booking_cancelled: bookingCancelled,
       booking_rescheduled: bookingRescheduled,
       booking_details: bookingDetails,
+      suggested_times: suggestedTimes.length > 0 ? suggestedTimes.slice(0, 6) : undefined,
     })
   } catch (e) {
     const message = e instanceof Error ? e.message : 'Unexpected error'
