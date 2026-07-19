@@ -8,18 +8,12 @@ import { WELCOME_SPLASH_FLAG } from '@/components/dashboard-splash'
 import { defaultSystemPrompt } from '@/lib/default-system-prompt'
 import { supabase } from '@/lib/supabase'
 import { tabContent } from '@/lib/ocean-motion'
+import { VENUE_TYPE_OPTIONS, type VenueType } from '@/lib/venue-types'
 
 const TOTAL_STEPS = 3
 
-const businessTypeOptions = [
-  { value: 'restaurant', label: 'Restaurant' },
-  { value: 'cafe', label: 'Café' },
-  { value: 'bar', label: 'Bar / Lounge' },
-  { value: 'bakery', label: 'Bakery' },
-  { value: 'other', label: 'Other hospitality' },
-] as const
-
-type BusinessTypeValue = (typeof businessTypeOptions)[number]['value']
+const businessTypeOptions = VENUE_TYPE_OPTIONS
+type BusinessTypeValue = VenueType
 
 const labelStyle = {
   display: 'block' as const,
@@ -247,7 +241,7 @@ export default function OnboardingPage() {
             {step === 1 && (
               <div style={{ display: 'grid', gap: 16 }}>
                 <div>
-                  <label style={labelStyle}>Restaurant name <span style={{ color: 'var(--ocean-sky)' }}>*</span></label>
+                  <label style={labelStyle}>Venue name <span style={{ color: 'var(--ocean-sky)' }}>*</span></label>
                   <input
                     type="text"
                     value={businessName}
@@ -294,7 +288,7 @@ export default function OnboardingPage() {
                     type="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder="you@restaurant.com"
+                    placeholder="you@yourvenue.com"
                     style={inputStyle}
                     onFocus={e => (e.target.style.borderColor = 'rgba(56,189,248,0.5)')}
                     onBlur={e => (e.target.style.borderColor = 'var(--ocean-border)')}
@@ -343,7 +337,7 @@ export default function OnboardingPage() {
                   overflow: 'hidden',
                 }}>
                   {[
-                    { label: 'Restaurant', value: businessName.trim() },
+                    { label: 'Venue', value: businessName.trim() },
                     { label: 'Type', value: businessTypeOptions.find((o) => o.value === businessType)?.label ?? businessType },
                     ...(address.trim() ? [{ label: 'Address', value: address.trim() }] : []),
                     { label: 'Email', value: email.trim() },

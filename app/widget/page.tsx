@@ -1,10 +1,17 @@
 'use client'
 
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
+import Image from 'next/image'
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 
 import { supabase } from '@/lib/supabase'
+import {
+  DEFAULT_WIDGET_THEME,
+  parseWidgetTheme,
+  WIDGET_THEME_PALETTES,
+  type WidgetTheme,
+} from '@/lib/widget-theme'
 
 type BookingCard = {
   guestName: string
@@ -25,6 +32,42 @@ const DEFAULT_CONCIERGE_NAME = 'AI Concierge'
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000
 
 const QUICK_CHIPS = ['Book a table', 'What’s on the menu?', 'What are your hours?']
+
+const CHAT_CANVAS = 'var(--widget-canvas)'
+const CHAT_SURFACE = 'var(--widget-surface)'
+const CHAT_TEXT = 'var(--widget-text)'
+const CHAT_MUTED = 'var(--widget-muted)'
+const CHAT_SUBTLE = 'var(--widget-subtle)'
+const CHAT_BORDER = 'var(--widget-border)'
+const WIDGET_ACCENT = 'var(--widget-accent)'
+const WIDGET_ACCENT_STRONG = 'var(--widget-accent-strong)'
+const WIDGET_ACCENT_TEXT = 'var(--widget-accent-text)'
+const WIDGET_ACCENT_SOFT = 'var(--widget-accent-soft)'
+const WIDGET_ACCENT_RGB = 'var(--widget-accent-rgb)'
+const HEADER_BACKGROUND = 'var(--widget-header-background)'
+const HEADER_BORDER = 'var(--widget-header-border)'
+const HEADER_SHADOW = 'var(--widget-header-shadow)'
+const HEADER_BUTTON_BACKGROUND = 'var(--widget-header-button-background)'
+const HEADER_BUTTON_TEXT = 'var(--widget-header-button-text)'
+const HEADER_ONLINE_BORDER = 'var(--widget-header-online-border)'
+const MESSAGE_AI_BACKGROUND = 'var(--widget-message-ai)'
+const MESSAGE_CUSTOMER_BACKGROUND = 'var(--widget-message-customer)'
+const CUSTOMER_TEXT = 'var(--widget-customer-text)'
+const MESSAGE_AI_BORDER = 'var(--widget-message-ai-border)'
+const MESSAGE_CUSTOMER_BORDER = 'var(--widget-message-customer-border)'
+const BOOKING_BACKGROUND = 'var(--widget-booking-background)'
+const CONTACT_BACKGROUND = 'var(--widget-contact-background)'
+const CONTACT_TABS_BACKGROUND = 'var(--widget-contact-tabs-background)'
+const CONTACT_ACTIVE_BACKGROUND = 'var(--widget-contact-active-background)'
+const CONTACT_INPUT_BACKGROUND = 'var(--widget-contact-input-background)'
+const DISABLED_BACKGROUND = 'var(--widget-disabled-background)'
+const COMPOSER_BACKGROUND = 'var(--widget-composer-background)'
+const COMPOSER_INPUT_BACKGROUND = 'var(--widget-composer-input-background)'
+const COMPOSER_INPUT_BORDER = 'var(--widget-composer-input-border)'
+const LAUNCHER_BACKGROUND = 'var(--widget-launcher-background)'
+const LAUNCHER_COLOR = 'var(--widget-launcher-color)'
+const SOFT_SHADOW = 'var(--widget-soft-shadow)'
+const CONTACT_SHADOW = 'var(--widget-contact-shadow)'
 
 const buildWelcome = (businessName: string | null, conciergeName: string): WidgetMessage => ({
   id: 'welcome',
@@ -130,9 +173,9 @@ function aiAsksForContact(text: string): boolean {
   return (
     /\b(phone number or email|phone or email|number or email)\b/i.test(t) ||
     /\b(so we can send (?:a )?confirmation|send (?:you )?a confirmation)\b/i.test(t) ||
-    /\b(may i have|could i have|could i get|can i get|would you share).{0,60}(phone|email)/i.test(
-      t,
-    )
+    /\b(may i have|could i have|could i get|can i get|would you share).{0,60}(phone|email)/i.test(t) ||
+    /\b(?:please\s+)?(?:provide|share|give|send|enter|tell me).{0,60}\b(phone|email|contact|number)\b/i.test(t) ||
+    /\b(?:what(?:'s| is) the best|best)\s+(?:phone\s+)?number\b/i.test(t)
   )
 }
 
@@ -158,26 +201,34 @@ function useIsNarrow(maxWidth = 520): boolean {
 
 // ─── Presentational bits ────────────────────────────────────────────────────
 
-function ConciergeAvatar({ name, size = 32 }: { name: string; size?: number }) {
-  const initial = (name.trim().charAt(0) || 'A').toUpperCase()
+function ConciergeAvatar({ size = 32 }: { name: string; size?: number }) {
   return (
     <div
       aria-hidden
       style={{
+        position: 'relative',
         width: size,
         height: size,
         borderRadius: '50%',
         flexShrink: 0,
-        display: 'grid',
-        placeItems: 'center',
-        background: 'linear-gradient(140deg, var(--ocean-sky) 0%, #0284c7 100%)',
-        color: '#04121f',
-        fontSize: size * 0.44,
-        fontWeight: 800,
-        boxShadow: '0 2px 8px rgba(56,189,248,0.35)',
+        overflow: 'hidden',
+        background: 'radial-gradient(circle at 45% 30%, #153653 0%, #061018 72%)',
+        border: `${Math.max(1, size * 0.035)}px solid rgba(125, 211, 252, 0.42)`,
+        boxShadow: `0 3px 12px rgba(${WIDGET_ACCENT_RGB}, 0.26), inset 0 1px 0 rgba(255,255,255,0.12)`,
       }}
     >
-      {initial}
+      <Image
+        src="/avatars/oceancore-concierge.png"
+        alt=""
+        fill
+        sizes={`${size}px`}
+        preload={size >= 40}
+        style={{
+          objectFit: 'contain',
+          transform: 'scale(1.16) translateY(2%)',
+          filter: 'saturate(0.96) contrast(1.04)',
+        }}
+      />
     </div>
   )
 }
@@ -196,8 +247,9 @@ function TypingDots({ conciergeName }: { conciergeName: string }) {
         style={{
           borderRadius: '16px 16px 16px 5px',
           padding: '12px 14px',
-          background: 'var(--ocean-surface)',
-          border: '1px solid var(--ocean-border)',
+          background: CHAT_SURFACE,
+          border: `1px solid ${CHAT_BORDER}`,
+          boxShadow: SOFT_SHADOW,
           display: 'flex',
           gap: 5,
           alignItems: 'center',
@@ -212,7 +264,7 @@ function TypingDots({ conciergeName }: { conciergeName: string }) {
               width: 6,
               height: 6,
               borderRadius: '50%',
-              background: 'var(--ocean-sky-bright)',
+              background: WIDGET_ACCENT,
               display: 'inline-block',
             }}
           />
@@ -235,7 +287,7 @@ function HistorySkeleton() {
             width: w,
             height: 38,
             borderRadius: 14,
-            background: 'var(--ocean-surface)',
+            background: `rgba(${WIDGET_ACCENT_RGB}, 0.12)`,
             justifySelf: i % 2 === 0 ? 'start' : 'end',
           }}
         />
@@ -249,11 +301,50 @@ function SendIcon({ muted }: { muted: boolean }) {
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
       <path
         d="M4.5 12h14m0 0-5.5-5.5M18.5 12 13 17.5"
-        stroke={muted ? 'var(--ocean-text-subtle)' : '#04121f'}
+        stroke={muted ? CHAT_SUBTLE : '#04121f'}
         strokeWidth="2.4"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
+    </svg>
+  )
+}
+
+function ContactMethodIcon({ mode, size = 17 }: { mode: 'phone' | 'email'; size?: number }) {
+  if (mode === 'phone') {
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+        <path
+          d="M7.3 3.8 9.5 8l-2.1 1.9c1.1 2.5 3.2 4.6 5.7 5.7l1.9-2.1 4.2 2.2-.7 3.2c-.2.8-.9 1.3-1.7 1.3C9.6 20.2 3.8 14.4 3.8 7.2c0-.8.5-1.5 1.3-1.7l2.2-.7Z"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    )
+  }
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <rect x="3.5" y="5.5" width="17" height="13" rx="3" stroke="currentColor" strokeWidth="1.8" />
+      <path d="m5.3 7.4 6.7 5.1 6.7-5.1" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function ContactSendIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path d="M5 12h13m0 0-5-5m5 5-5 5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function PrivacyLockIcon() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <rect x="5" y="10" width="14" height="10" rx="3" stroke="currentColor" strokeWidth="2" />
+      <path d="M8.5 10V7.5a3.5 3.5 0 0 1 7 0V10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
     </svg>
   )
 }
@@ -265,9 +356,9 @@ function ChatBubbleIcon() {
         d="M21 11.5c0 4.14-4.03 7.5-9 7.5-1.06 0-2.08-.15-3.02-.43L4 20l1.18-3.55C4.05 15.13 3 13.42 3 11.5 3 7.36 7.03 4 12 4s9 3.36 9 7.5Z"
         fill="#04121f"
       />
-      <circle cx="8.6" cy="11.5" r="1.15" fill="var(--ocean-sky-bright)" />
-      <circle cx="12" cy="11.5" r="1.15" fill="var(--ocean-sky-bright)" />
-      <circle cx="15.4" cy="11.5" r="1.15" fill="var(--ocean-sky-bright)" />
+      <circle cx="8.6" cy="11.5" r="1.15" fill={WIDGET_ACCENT} />
+      <circle cx="12" cy="11.5" r="1.15" fill={WIDGET_ACCENT} />
+      <circle cx="15.4" cy="11.5" r="1.15" fill={WIDGET_ACCENT} />
     </svg>
   )
 }
@@ -279,6 +370,7 @@ function WidgetPageInner() {
   const businessId = searchParams.get('business_id')
   const [businessName, setBusinessName] = useState<string | null>(null)
   const [conciergeName, setConciergeName] = useState<string>(DEFAULT_CONCIERGE_NAME)
+  const [widgetTheme, setWidgetTheme] = useState<WidgetTheme>(DEFAULT_WIDGET_THEME)
 
   const [isOpen, setIsOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
@@ -293,9 +385,11 @@ function WidgetPageInner() {
   const [conversationId, setConversationId] = useState<string | null>(null)
   const messagesContainerRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
+  const contactInputRef = useRef<HTMLInputElement | null>(null)
   const restoredRef = useRef(false)
   const isMobile = useIsNarrow()
   const reduceMotion = useReducedMotion()
+  const widgetPaletteVars = WIDGET_THEME_PALETTES[widgetTheme] as React.CSSProperties
 
   // Restore session from localStorage on mount / businessId change
   useEffect(() => {
@@ -446,16 +540,33 @@ function WidgetPageInner() {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- reset branding when the widget loses its business id
       setBusinessName(null)
       setConciergeName(DEFAULT_CONCIERGE_NAME)
+      setWidgetTheme(DEFAULT_WIDGET_THEME)
       return
     }
     let cancelled = false
     void (async () => {
-      const { data } = await supabase
+      const themedResult = await supabase
         .from('businesses')
-        .select('name, agent_name')
+        .select('name, agent_name, widget_theme')
         .eq('id', businessId)
         .maybeSingle()
+      let data = themedResult.data as {
+        name?: unknown
+        agent_name?: unknown
+        widget_theme?: unknown
+      } | null
+      let error = themedResult.error
+      if (error?.message.toLowerCase().includes('widget_theme')) {
+        const fallback = await supabase
+          .from('businesses')
+          .select('name, agent_name')
+          .eq('id', businessId)
+          .maybeSingle()
+        data = fallback.data as { name?: unknown; agent_name?: unknown } | null
+        error = fallback.error
+      }
       if (cancelled) return
+      if (error) return
       const nextName = typeof data?.name === 'string' && data.name.trim() ? data.name.trim() : null
       const nextConcierge =
         typeof data?.agent_name === 'string' && data.agent_name.trim()
@@ -463,6 +574,7 @@ function WidgetPageInner() {
           : DEFAULT_CONCIERGE_NAME
       setBusinessName(nextName)
       setConciergeName(nextConcierge)
+      setWidgetTheme(parseWidgetTheme(data?.widget_theme))
       setMessages((prev) =>
         prev.length === 1 && prev[0].id === 'welcome'
           ? [buildWelcome(nextName, nextConcierge)]
@@ -515,6 +627,12 @@ function WidgetPageInner() {
   const emailReady = !!contactEmail.trim()
   const canSubmit = effectiveContactMode === 'phone' ? phoneReady : emailReady
 
+  useEffect(() => {
+    if (!showContactStep || isMobile) return
+    const frame = requestAnimationFrame(() => contactInputRef.current?.focus())
+    return () => cancelAnimationFrame(frame)
+  }, [showContactStep, effectiveContactMode, isMobile])
+
   // Fresh conversation → offer quick-start chips instead of a blank input.
   const showQuickChips =
     !historyLoading &&
@@ -529,8 +647,16 @@ function WidgetPageInner() {
     if (!isOpen) return
     const el = messagesContainerRef.current
     if (!el) return
-    el.scrollTop = el.scrollHeight
-  }, [showContactStep, contactMode, isOpen])
+    const frame = requestAnimationFrame(() => {
+      el.scrollTo({ top: el.scrollHeight, behavior: reduceMotion ? 'auto' : 'smooth' })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [showContactStep, contactMode, isOpen, reduceMotion])
+
+  const selectContactMode = (mode: 'phone' | 'email') => {
+    setContactMode(mode)
+    requestAnimationFrame(() => contactInputRef.current?.focus())
+  }
 
   const handleSend = async (textOverride?: string) => {
     const text = (textOverride ?? draft).trim()
@@ -665,7 +791,7 @@ function WidgetPageInner() {
         position: 'fixed',
         inset: 0,
         zIndex: 40,
-        background: 'var(--ocean-deep)',
+        background: CHAT_CANVAS,
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
@@ -673,10 +799,10 @@ function WidgetPageInner() {
     : {
         width: 372,
         height: 'min(600px, calc(100vh - 120px))',
-        background: 'var(--ocean-mid)',
-        borderRadius: 'var(--ocean-radius-xl)',
-        border: '1px solid var(--ocean-border-strong)',
-        boxShadow: 'var(--ocean-shadow-lg), 0 0 60px rgba(56,189,248,0.08)',
+        background: CHAT_CANVAS,
+        borderRadius: 24,
+        border: `1px solid rgba(${WIDGET_ACCENT_RGB}, 0.35)`,
+        boxShadow: `0 24px 56px rgba(27, 77, 124, 0.22), 0 0 64px rgba(${WIDGET_ACCENT_RGB}, 0.12)`,
         marginBottom: 14,
         display: 'flex',
         flexDirection: 'column',
@@ -699,7 +825,15 @@ function WidgetPageInner() {
         </p>
       </div>
 
-      <div style={{ position: 'fixed', right: isMobile ? 16 : 24, bottom: isMobile ? 16 : 24, zIndex: 30 }}>
+      <div
+        style={{
+          ...widgetPaletteVars,
+          position: 'fixed',
+          right: isMobile ? 16 : 24,
+          bottom: isMobile ? 16 : 24,
+          zIndex: 30,
+        }}
+      >
         <AnimatePresence>
         {isOpen ? (
           <motion.div
@@ -714,11 +848,12 @@ function WidgetPageInner() {
             <header
               style={{
                 padding: '14px 16px',
-                background: 'linear-gradient(150deg, var(--ocean-ink) 0%, var(--ocean-mid) 60%, #0d2a45 100%)',
-                borderBottom: '1px solid var(--ocean-border)',
+                background: HEADER_BACKGROUND,
+                borderBottom: `1px solid ${HEADER_BORDER}`,
                 display: 'flex',
                 alignItems: 'center',
                 gap: 12,
+                boxShadow: HEADER_SHADOW,
               }}
             >
               <div style={{ position: 'relative', flexShrink: 0 }}>
@@ -737,7 +872,7 @@ function WidgetPageInner() {
                     height: 11,
                     borderRadius: '50%',
                     background: 'var(--ocean-success)',
-                    border: '2px solid var(--ocean-ink)',
+                    border: `2px solid ${HEADER_ONLINE_BORDER}`,
                   }}
                 />
               </div>
@@ -747,7 +882,7 @@ function WidgetPageInner() {
                     margin: 0,
                     fontSize: 15,
                     fontWeight: 700,
-                    color: 'var(--ocean-text)',
+                    color: CHAT_TEXT,
                     letterSpacing: '-0.01em',
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
@@ -756,7 +891,7 @@ function WidgetPageInner() {
                 >
                   {headerTitle}
                 </p>
-                <p style={{ margin: '2px 0 0', fontSize: 11.5, color: 'var(--ocean-text-muted)' }}>
+                <p style={{ margin: '2px 0 0', fontSize: 11.5, color: CHAT_MUTED }}>
                   {conciergeName} · Replies instantly
                 </p>
               </div>
@@ -767,13 +902,13 @@ function WidgetPageInner() {
                     onClick={handleNewChat}
                     title="Start a new chat"
                     style={{
-                      border: '1px solid var(--ocean-border)',
-                      borderRadius: 9,
+                      border: `1px solid rgba(${WIDGET_ACCENT_RGB}, 0.28)`,
+                      borderRadius: 10,
                       height: 30,
                       padding: '0 10px',
                       cursor: 'pointer',
-                      background: 'rgba(125,211,252,0.06)',
-                      color: 'var(--ocean-text-muted)',
+                      background: HEADER_BUTTON_BACKGROUND,
+                      color: HEADER_BUTTON_TEXT,
                       fontSize: 11,
                       fontWeight: 600,
                       letterSpacing: '0.02em',
@@ -787,13 +922,13 @@ function WidgetPageInner() {
                   onClick={() => setIsOpen(false)}
                   aria-label="Close chat"
                   style={{
-                    border: '1px solid var(--ocean-border)',
-                    borderRadius: 9,
+                    border: `1px solid rgba(${WIDGET_ACCENT_RGB}, 0.28)`,
+                    borderRadius: 10,
                     width: 30,
                     height: 30,
                     cursor: 'pointer',
-                    background: 'rgba(125,211,252,0.06)',
-                    color: 'var(--ocean-text-muted)',
+                    background: HEADER_BUTTON_BACKGROUND,
+                    color: HEADER_BUTTON_TEXT,
                     fontSize: 16,
                     lineHeight: 1,
                   }}
@@ -811,7 +946,7 @@ function WidgetPageInner() {
                 padding: '16px 14px 10px',
                 overflowY: 'auto',
                 WebkitOverflowScrolling: 'touch',
-                background: 'var(--ocean-deep)',
+                background: CHAT_CANVAS,
               }}
             >
               {!businessId && (
@@ -820,9 +955,9 @@ function WidgetPageInner() {
                     marginBottom: 12,
                     padding: '9px 12px',
                     borderRadius: 10,
-                    border: '1px dashed var(--ocean-border-strong)',
-                    background: 'var(--ocean-sky-muted)',
-                    color: 'var(--ocean-text-muted)',
+                    border: `1px dashed rgba(${WIDGET_ACCENT_RGB}, 0.48)`,
+                    background: WIDGET_ACCENT_SOFT,
+                    color: CHAT_MUTED,
                     fontSize: 12,
                     lineHeight: 1.5,
                   }}
@@ -854,9 +989,9 @@ function WidgetPageInner() {
                           maxWidth: '92%',
                           borderRadius: 16,
                           border: '1.5px solid rgba(52, 211, 153, 0.35)',
-                          background: 'linear-gradient(150deg, rgba(6,28,46,0.96) 0%, rgba(8,38,45,0.96) 100%)',
+                          background: BOOKING_BACKGROUND,
                           overflow: 'hidden',
-                          boxShadow: '0 8px 28px rgba(16,185,129,0.12)',
+                          boxShadow: '0 8px 28px rgba(16,185,129,0.11)',
                         }}
                       >
                         <div style={{ padding: '11px 14px 9px', borderBottom: '1px solid rgba(52,211,153,0.15)', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -893,8 +1028,8 @@ function WidgetPageInner() {
                               key={row.label}
                               style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 5, gap: 12 }}
                             >
-                              <span style={{ fontSize: 12, color: 'rgba(148,163,184,0.8)', minWidth: 44 }}>{row.label}</span>
-                              <span style={{ fontSize: 13, fontWeight: 600, color: '#f1f5f9', textAlign: 'right' }}>{row.value}</span>
+                              <span style={{ fontSize: 12, color: CHAT_MUTED, minWidth: 44 }}>{row.label}</span>
+                              <span style={{ fontSize: 13, fontWeight: 600, color: CHAT_TEXT, textAlign: 'right' }}>{row.value}</span>
                             </div>
                           ))}
                         </div>
@@ -912,26 +1047,24 @@ function WidgetPageInner() {
                     style={{
                       display: 'flex',
                       justifyContent: isCustomer ? 'flex-end' : 'flex-start',
-                      alignItems: 'flex-end',
+                      alignItems: 'flex-start',
                       gap: 8,
-                      marginBottom: 10,
+                      marginBottom: 12,
                     }}
                   >
-                    {!isCustomer && <ConciergeAvatar name={conciergeName} size={24} />}
+                    {!isCustomer && <ConciergeAvatar name={conciergeName} size={28} />}
                     <div
                       style={{
-                        maxWidth: '80%',
-                        borderRadius: isCustomer ? '16px 16px 5px 16px' : '16px 16px 16px 5px',
-                        padding: '10px 13px',
-                        fontSize: 14,
-                        lineHeight: 1.5,
-                        background: isCustomer
-                          ? 'linear-gradient(135deg, var(--ocean-sky) 0%, #0ea5e9 100%)'
-                          : 'var(--ocean-surface)',
-                        color: isCustomer ? '#04121f' : 'var(--ocean-text)',
-                        border: isCustomer ? 'none' : '1px solid var(--ocean-border)',
-                        boxShadow: isCustomer ? '0 3px 12px rgba(56,189,248,0.25)' : 'none',
-                        fontWeight: isCustomer ? 500 : 400,
+                        maxWidth: isCustomer ? '76%' : '82%',
+                        borderRadius: isCustomer ? '21px 21px 7px 21px' : '21px 21px 21px 7px',
+                        padding: '13px 16px',
+                        fontSize: 14.5,
+                        lineHeight: 1.48,
+                        background: isCustomer ? MESSAGE_CUSTOMER_BACKGROUND : MESSAGE_AI_BACKGROUND,
+                        color: isCustomer ? CUSTOMER_TEXT : CHAT_TEXT,
+                        border: isCustomer ? `1px solid ${MESSAGE_CUSTOMER_BORDER}` : `1px solid ${MESSAGE_AI_BORDER}`,
+                        boxShadow: 'none',
+                        fontWeight: 400,
                         wordBreak: 'break-word',
                         overflowWrap: 'anywhere',
                         whiteSpace: 'pre-wrap',
@@ -963,11 +1096,11 @@ function WidgetPageInner() {
                       whileTap={reduceMotion ? undefined : { scale: 0.97 }}
                       onClick={() => void handleSend(chip)}
                       style={{
-                        border: '1px solid var(--ocean-border-strong)',
+                        border: `1px solid rgba(${WIDGET_ACCENT_RGB}, 0.28)`,
                         borderRadius: 999,
                         padding: '7px 13px',
-                        background: 'var(--ocean-sky-muted)',
-                        color: 'var(--ocean-sky-bright)',
+                        background: WIDGET_ACCENT_SOFT,
+                        color: WIDGET_ACCENT_TEXT,
                         fontSize: 12.5,
                         fontWeight: 600,
                         cursor: 'pointer',
@@ -979,109 +1112,246 @@ function WidgetPageInner() {
                 </motion.div>
               )}
 
-              {showContactStep && !isLoading && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ type: 'spring', stiffness: 340, damping: 28 }}
+              <AnimatePresence initial={false}>
+                {showContactStep && !isLoading && (
+                  <motion.section
+                    key="contact-step"
+                    data-testid="contact-step"
+                    aria-label="Share contact details"
+                    initial={reduceMotion ? { opacity: 0 } : { opacity: 0, x: -10, y: 14, scale: 0.97, filter: 'blur(5px)' }}
+                    animate={{ opacity: 1, x: 0, y: 0, scale: 1, filter: 'blur(0px)' }}
+                    exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 7, scale: 0.985, filter: 'blur(3px)' }}
+                    transition={{ type: 'spring', stiffness: 360, damping: 30, mass: 0.8 }}
                     style={{
-                      margin: '4px 0 8px 32px',
-                      background: 'var(--ocean-surface)',
-                      border: '1px solid var(--ocean-border)',
-                      borderRadius: 14,
-                      padding: '12px 12px 10px',
+                      position: 'relative',
+                      overflow: 'hidden',
+                      margin: '3px 0 10px 32px',
+                      padding: '13px',
+                      borderRadius: 17,
+                      border: `1px solid rgba(${WIDGET_ACCENT_RGB}, 0.26)`,
+                      background: CONTACT_BACKGROUND,
+                      boxShadow: CONTACT_SHADOW,
                     }}
                   >
-                    <p style={{ margin: '0 0 10px', fontSize: 12.5, color: 'var(--ocean-text-muted)', fontWeight: 500, lineHeight: 1.4 }}>
-                      How would you like us to reach you?
-                    </p>
-
-                    <div style={{ display: 'flex', gap: 7 }}>
-                      {(['phone', 'email'] as const).map((mode) => {
-                        const active = effectiveContactMode === mode
-                        return (
-                          <button
-                            key={mode}
-                            type="button"
-                            onClick={() => setContactMode(mode)}
-                            style={{
-                              flex: 1,
-                              padding: '9px 0',
-                              borderRadius: 11,
-                              border: `1.5px solid ${active ? 'var(--ocean-sky)' : 'var(--ocean-border)'}`,
-                              background: active ? 'rgba(56, 189, 248, 0.12)' : 'transparent',
-                              color: active ? 'var(--ocean-sky)' : 'var(--ocean-text-muted)',
-                              fontWeight: 600,
-                              fontSize: 13,
-                              cursor: 'pointer',
-                              transition: 'border-color 0.18s, background 0.18s, color 0.18s',
-                            }}
-                          >
-                            {mode === 'phone' ? '📞  Phone' : '✉️  Email'}
-                          </button>
-                        )
-                      })}
-                    </div>
-
-                    <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
-                      <input
-                        type={effectiveContactMode === 'phone' ? 'tel' : 'email'}
-                        inputMode={effectiveContactMode === 'phone' ? 'tel' : 'email'}
-                        value={effectiveContactMode === 'phone' ? contactPhone : contactEmail}
-                        onChange={(e) =>
-                          effectiveContactMode === 'phone'
-                            ? setContactPhone(formatPhone(e.target.value))
-                            : setContactEmail(e.target.value)
-                        }
-                        onKeyDown={(e) => { if (e.key === 'Enter' && canSubmit) void handleContactSubmit() }}
-                        placeholder={effectiveContactMode === 'phone' ? '(403) ___-____' : 'name@email.com'}
+                    <div
+                      aria-hidden
+                      style={{
+                        position: 'absolute',
+                        top: -56,
+                        right: -48,
+                        width: 130,
+                        height: 130,
+                        borderRadius: '50%',
+                        background: `radial-gradient(circle, rgba(${WIDGET_ACCENT_RGB}, 0.12) 0%, rgba(${WIDGET_ACCENT_RGB}, 0) 70%)`,
+                        pointerEvents: 'none',
+                      }}
+                    />
+                    <motion.div
+                      initial={reduceMotion ? false : { opacity: 0, y: 5 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: reduceMotion ? 0 : 0.08, duration: 0.2 }}
+                      style={{ position: 'relative', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 11 }}
+                    >
+                      <div>
+                        <p style={{ margin: 0, color: CHAT_TEXT, fontSize: 13, fontWeight: 700, letterSpacing: '-0.01em' }}>
+                          Choose a contact method
+                        </p>
+                        <p style={{ margin: '2px 0 0', color: CHAT_MUTED, fontSize: 10.5 }}>
+                          One is all we need
+                        </p>
+                      </div>
+                      <span
                         style={{
-                          flex: 1,
-                          border: '1px solid var(--ocean-border)',
-                          borderRadius: 10,
-                          padding: '9px 11px',
-                          fontSize: 14,
-                          outline: 'none',
-                          background: 'var(--ocean-deep)',
-                          color: 'var(--ocean-text)',
-                          boxSizing: 'border-box',
-                        }}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => void handleContactSubmit()}
-                        disabled={isLoading || !canSubmit}
-                        aria-label="Submit contact"
-                        style={{
-                          border: 'none',
-                          borderRadius: 10,
-                          padding: '9px 14px',
-                          cursor: isLoading || !canSubmit ? 'not-allowed' : 'pointer',
-                          background: isLoading || !canSubmit
-                            ? 'var(--ocean-border)'
-                            : 'linear-gradient(135deg, var(--ocean-sky) 0%, #0ea5e9 100%)',
-                          color: isLoading || !canSubmit ? 'var(--ocean-text-subtle)' : '#04121f',
-                          fontWeight: 700,
-                          fontSize: 16,
-                          lineHeight: 1,
-                          transition: 'background 0.15s',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 4,
+                          flexShrink: 0,
+                          color: CHAT_SUBTLE,
+                          fontSize: 9.5,
+                          fontWeight: 600,
                         }}
                       >
-                        →
-                      </button>
-                    </div>
-                  </motion.div>
-              )}
+                        <PrivacyLockIcon /> Private
+                      </span>
+                    </motion.div>
+
+                    <motion.div
+                      initial={reduceMotion ? false : { opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: reduceMotion ? 0 : 0.12, duration: 0.22 }}
+                      role="tablist"
+                      aria-label="Contact method"
+                      style={{
+                        position: 'relative',
+                        display: 'grid',
+                        gridTemplateColumns: '1fr 1fr',
+                        gap: 4,
+                        padding: 4,
+                        borderRadius: 13,
+                        border: `1px solid rgba(${WIDGET_ACCENT_RGB}, 0.16)`,
+                        background: CONTACT_TABS_BACKGROUND,
+                      }}
+                    >
+                      {(['phone', 'email'] as const).map((mode) => {
+                        const active = effectiveContactMode === mode
+                        const label = mode === 'phone' ? 'Phone' : 'Email'
+                        return (
+                          <motion.button
+                            key={mode}
+                            type="button"
+                            role="tab"
+                            aria-selected={active}
+                            onClick={() => selectContactMode(mode)}
+                            whileTap={reduceMotion ? undefined : { scale: 0.98 }}
+                            style={{
+                              position: 'relative',
+                              zIndex: 1,
+                              minHeight: 37,
+                              padding: '0 12px',
+                              border: 0,
+                              borderRadius: 10,
+                              background: 'transparent',
+                              color: active ? WIDGET_ACCENT_TEXT : CHAT_MUTED,
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: 7,
+                              fontWeight: active ? 700 : 600,
+                              fontSize: 12.5,
+                              cursor: 'pointer',
+                              transition: 'color 0.18s ease',
+                            }}
+                          >
+                            {active && (
+                              <motion.span
+                                layoutId="contact-method-active"
+                                transition={{ type: 'spring', stiffness: 460, damping: 34 }}
+                                style={{
+                                  position: 'absolute',
+                                  inset: 0,
+                                  zIndex: -1,
+                                  borderRadius: 10,
+                                  border: `1px solid rgba(${WIDGET_ACCENT_RGB}, 0.45)`,
+                                  background: CONTACT_ACTIVE_BACKGROUND,
+                                  boxShadow: `0 5px 16px rgba(${WIDGET_ACCENT_RGB}, 0.12), inset 0 1px 0 rgba(255,255,255,0.9)`,
+                                }}
+                              />
+                            )}
+                            <ContactMethodIcon mode={mode} />
+                            {label}
+                          </motion.button>
+                        )
+                      })}
+                    </motion.div>
+
+                    <AnimatePresence mode="wait" initial={false}>
+                      <motion.div
+                        key={effectiveContactMode}
+                        initial={reduceMotion ? { opacity: 0 } : { opacity: 0, x: effectiveContactMode === 'phone' ? -8 : 8 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: effectiveContactMode === 'phone' ? 8 : -8 }}
+                        transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+                        style={{ marginTop: 11 }}
+                      >
+                        <label
+                          htmlFor="contact-detail"
+                          style={{ display: 'block', margin: '0 0 6px 2px', color: CHAT_MUTED, fontSize: 10.5, fontWeight: 600 }}
+                        >
+                          {effectiveContactMode === 'phone' ? 'Phone number' : 'Email address'}
+                        </label>
+                        <div style={{ display: 'flex', gap: 7 }}>
+                          <div
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              height: 43,
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 8,
+                              padding: '0 11px',
+                              borderRadius: 12,
+                              border: `1px solid rgba(${WIDGET_ACCENT_RGB}, 0.24)`,
+                              background: CONTACT_INPUT_BACKGROUND,
+                              color: CHAT_SUBTLE,
+                              transition: 'border-color 0.18s, box-shadow 0.18s',
+                            }}
+                          >
+                            <ContactMethodIcon mode={effectiveContactMode} size={16} />
+                            <input
+                              ref={contactInputRef}
+                              id="contact-detail"
+                              type={effectiveContactMode === 'phone' ? 'tel' : 'email'}
+                              inputMode={effectiveContactMode === 'phone' ? 'tel' : 'email'}
+                              autoComplete={effectiveContactMode === 'phone' ? 'tel' : 'email'}
+                              value={effectiveContactMode === 'phone' ? contactPhone : contactEmail}
+                              onChange={(e) =>
+                                effectiveContactMode === 'phone'
+                                  ? setContactPhone(formatPhone(e.target.value))
+                                  : setContactEmail(e.target.value)
+                              }
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' && canSubmit) void handleContactSubmit()
+                              }}
+                              placeholder={effectiveContactMode === 'phone' ? '(403) 555-0123' : 'name@email.com'}
+                              style={{
+                                flex: 1,
+                                minWidth: 0,
+                                border: 0,
+                                padding: 0,
+                                outline: 'none',
+                                background: 'transparent',
+                                color: CHAT_TEXT,
+                                fontSize: 13.5,
+                              }}
+                            />
+                          </div>
+                          <motion.button
+                            type="button"
+                            onClick={() => void handleContactSubmit()}
+                            disabled={isLoading || !canSubmit}
+                            aria-label="Send contact details"
+                            whileHover={!canSubmit || reduceMotion ? undefined : { y: -1 }}
+                            whileTap={!canSubmit || reduceMotion ? undefined : { scale: 0.97 }}
+                            style={{
+                              height: 43,
+                              minWidth: 72,
+                              padding: '0 12px',
+                              border: '1px solid',
+                              borderColor: canSubmit ? `rgba(${WIDGET_ACCENT_RGB}, 0.58)` : 'rgba(21,69,101,0.12)',
+                              borderRadius: 12,
+                              background: canSubmit
+                                ? `linear-gradient(135deg, ${WIDGET_ACCENT} 0%, ${WIDGET_ACCENT_STRONG} 100%)`
+                                : DISABLED_BACKGROUND,
+                              color: canSubmit ? '#03111c' : CHAT_SUBTLE,
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: 5,
+                              cursor: canSubmit ? 'pointer' : 'not-allowed',
+                              boxShadow: canSubmit ? `0 7px 18px rgba(${WIDGET_ACCENT_RGB},0.22)` : 'none',
+                              fontSize: 11.5,
+                              fontWeight: 800,
+                              transition: 'background 0.18s, border-color 0.18s, color 0.18s, box-shadow 0.18s',
+                            }}
+                          >
+                            Send <ContactSendIcon />
+                          </motion.button>
+                        </div>
+                      </motion.div>
+                    </AnimatePresence>
+                  </motion.section>
+                )}
+              </AnimatePresence>
             </div>
 
             {/* ── Composer ── */}
             {!showContactStep && (
               <footer
                 style={{
-                  borderTop: '1px solid var(--ocean-border)',
+                  borderTop: `1px solid ${CHAT_BORDER}`,
                   padding: '10px 12px',
                   paddingBottom: isMobile ? 'max(10px, env(safe-area-inset-bottom))' : 10,
-                  background: 'var(--ocean-ink)',
+                  background: COMPOSER_BACKGROUND,
                 }}
               >
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -1101,21 +1371,21 @@ function WidgetPageInner() {
                     style={{
                       flex: 1,
                       minWidth: 0,
-                      border: '1px solid var(--ocean-border)',
+                      border: `1px solid ${COMPOSER_INPUT_BORDER}`,
                       borderRadius: 999,
                       padding: '11px 16px',
                       outline: 'none',
                       fontSize: 14,
-                      background: 'var(--ocean-deep)',
-                      color: 'var(--ocean-text)',
+                      background: COMPOSER_INPUT_BACKGROUND,
+                      color: CHAT_TEXT,
                       transition: 'border-color 0.15s, box-shadow 0.15s',
                     }}
                     onFocus={(e) => {
-                      e.currentTarget.style.borderColor = 'var(--ocean-sky)'
-                      e.currentTarget.style.boxShadow = '0 0 0 3px var(--ocean-sky-muted)'
+                      e.currentTarget.style.borderColor = WIDGET_ACCENT
+                      e.currentTarget.style.boxShadow = `0 0 0 3px rgba(${WIDGET_ACCENT_RGB}, 0.16)`
                     }}
                     onBlur={(e) => {
-                      e.currentTarget.style.borderColor = 'var(--ocean-border)'
+                      e.currentTarget.style.borderColor = COMPOSER_INPUT_BORDER
                       e.currentTarget.style.boxShadow = 'none'
                     }}
                   />
@@ -1136,9 +1406,9 @@ function WidgetPageInner() {
                       cursor: isLoading || !draft.trim() ? 'not-allowed' : 'pointer',
                       background:
                         isLoading || !draft.trim()
-                          ? 'var(--ocean-surface)'
-                          : 'linear-gradient(135deg, var(--ocean-sky) 0%, #0ea5e9 100%)',
-                      boxShadow: isLoading || !draft.trim() ? 'none' : '0 3px 12px rgba(56,189,248,0.35)',
+                          ? DISABLED_BACKGROUND
+                          : `linear-gradient(135deg, ${WIDGET_ACCENT} 0%, ${WIDGET_ACCENT_STRONG} 100%)`,
+                      boxShadow: isLoading || !draft.trim() ? 'none' : `0 3px 12px rgba(${WIDGET_ACCENT_RGB}, 0.3)`,
                       transition: 'background 0.15s, box-shadow 0.15s',
                     }}
                   >
@@ -1149,7 +1419,7 @@ function WidgetPageInner() {
                   style={{
                     margin: '7px 2px 0',
                     fontSize: 10,
-                    color: 'var(--ocean-text-subtle)',
+                    color: CHAT_SUBTLE,
                     textAlign: 'center',
                     letterSpacing: '0.03em',
                   }}
@@ -1177,9 +1447,9 @@ function WidgetPageInner() {
               borderRadius: '50%',
               border: 'none',
               cursor: 'pointer',
-              background: 'linear-gradient(140deg, var(--ocean-sky), var(--ocean-sand-deep))',
-              color: '#04121f',
-              boxShadow: 'var(--ocean-shadow-glow)',
+              background: LAUNCHER_BACKGROUND,
+              color: LAUNCHER_COLOR,
+              boxShadow: `0 0 40px rgba(${WIDGET_ACCENT_RGB}, 0.34)`,
               display: 'grid',
               placeItems: 'center',
             }}

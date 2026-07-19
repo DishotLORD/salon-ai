@@ -17,6 +17,7 @@ import {
   guestAcceptsAnyZone,
   inferZoneIdFromText,
   isAffirmativeReply,
+  isLikelyDiningZoneLabel,
   singleZoneMentioned,
   type DiningZone,
 } from '@/lib/dining-zones'
@@ -43,6 +44,7 @@ import {
 } from '@/lib/guest-preferences'
 import { isPlausibleGuestName } from '@/lib/guest-display'
 import { normalizeGuestContact, normalizeName } from '@/lib/guest-identity'
+import { languageInstruction } from '@/lib/language-preferences'
 import {
   DAY_ORDER,
   formatHoursRangeLabel,
@@ -274,7 +276,8 @@ const BOOKING_TOOLS = [
           },
           guest_name: {
             type: 'string',
-            description: "The guest's name, if known, so staff know who to ask for",
+            description:
+              "The guest's personal name only if they explicitly stated it. Never use a seating area such as Patio, Bar, or Main dining as a name.",
           },
           phone: {
             type: 'string',
@@ -445,9 +448,7 @@ function buildSystemPrompt(
   if (operatingHours) {
     prompt += buildHoursPromptSection(operatingHours, nowParts, slotIntervalMinutes ?? 15)
   }
-  if (language?.trim() && !/^english/i.test(language.trim())) {
-    prompt += `\nLANGUAGE: default to ${language.trim()} unless the guest writes in a different language — then mirror theirs.`
-  }
+  prompt += `\n${languageInstruction(language)}`
   const escalationTriggers: string[] = []
   if (notif?.escalate_complaint) {
     escalationTriggers.push('the guest complains, is upset, or asks for a manager (category "complaint")')
@@ -582,6 +583,20 @@ function extractContactFromMessages(messages: ChatMessage[]) {
     phone: extractPhone(allUserText),
     email: extractEmail(allUserText),
   })
+}
+
+/** The newest contact-bearing guest message represents their current contact choice. */
+function extractLatestContactFromMessages(messages: ChatMessage[]) {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i]
+    if (message.role !== 'user') continue
+    const contact = normalizeGuestContact({
+      phone: extractPhone(message.content),
+      email: extractEmail(message.content),
+    })
+    if (contact.phone || contact.email) return contact
+  }
+  return {} as { phone?: string; email?: string }
 }
 
 type CustomerRow = {
@@ -751,6 +766,7 @@ async function fetchGuestHistory(customer_id: string): Promise<GuestHistory> {
 }
 
 function buildReturningGuestContext(customer: CustomerRow, history: GuestHistory): string {
+  const guestName = safeGuestPersonalName(customer.name)
   const partyHint =
     history.preferredPartySize != null
       ? String(history.preferredPartySize)
@@ -776,7 +792,7 @@ function buildReturningGuestContext(customer: CustomerRow, history: GuestHistory
       : ''
 
   return `RETURNING GUEST CONTEXT:
-- Name: ${customer.name?.trim() || 'Guest'}
+- Name: ${guestName ?? 'not on file'}
 - Phone: ${customer.phone?.trim() || 'not on file'}
 - Email: ${customer.email?.trim() || 'not on file'}
 - Contact on file: ${customer.phone?.trim() || customer.email?.trim() ? 'YES — do NOT ask for a phone or email again' : 'no'}
@@ -784,7 +800,7 @@ function buildReturningGuestContext(customer: CustomerRow, history: GuestHistory
 - Last visit: ${formatVisitDate(history.lastVisit)}
 - Preferred party size: ${partyHint}
 - Past reservations: ${servicesHint}${usualLine}${prefSection}
-Use this info to personalize the conversation. Greet them by name, suggest their usual booking if appropriate.${allergyReminder}`
+Use this info to personalize the conversation. ${guestName ? 'Greet them by name' : 'Their name is unknown — do not invent or guess one'}, and suggest their usual booking if appropriate.${allergyReminder}`
 }
 
 async function linkConversationToCustomer(params: {
@@ -842,11 +858,11 @@ async function persistGuest(params: {
 }): Promise<string> {
   const { business_id, customer_id, conversation_id } = params
 
-  const { name, phone, email } = normalizeGuestContact({
-    name: params.rawName ?? null,
+  const { phone, email } = normalizeGuestContact({
     phone: params.rawPhone ?? null,
     email: params.rawEmail ?? null,
   })
+  const name = safeGuestPersonalName(params.rawName)
 
   if (!name && !phone && !email) return customer_id
 
@@ -901,9 +917,13 @@ async function persistGuest(params: {
 
   const customerUpdate: Record<string, string> = {}
   const placeholderName = /^(guest|website visitor)$/i
+  const existingNameIsPlaceholder =
+    !existing?.name ||
+    placeholderName.test(existing.name.trim()) ||
+    isLikelyDiningZoneLabel(existing.name)
   if (
     name &&
-    (params.authoritativeName || !existing?.name || placeholderName.test(existing.name.trim()))
+    (params.authoritativeName || existingNameIsPlaceholder)
   ) {
     customerUpdate.name = name
   }
@@ -921,7 +941,7 @@ async function persistGuest(params: {
       .eq('business_id', business_id)
   }
 
-  const displayName = name ?? existing?.name ?? returningGuest?.name
+  const displayName = safeGuestPersonalName(name ?? existing?.name ?? returningGuest?.name)
   if (displayName && !placeholderName.test(displayName.trim()) && isPlausibleGuestName(displayName)) {
     await supabaseAdmin
       .from('conversations')
@@ -2417,6 +2437,29 @@ function triggerEscalation(
   return true
 }
 
+function safeGuestPersonalName(
+  rawName: unknown,
+  zones: Pick<DiningZone, 'name' | 'slug'>[] = [],
+): string | null {
+  if (typeof rawName !== 'string') return null
+  const normalized = normalizeGuestContact({ name: rawName }).name ?? null
+  if (!normalized || isLikelyDiningZoneLabel(normalized, zones)) return null
+  return normalized
+}
+
+/** Tool-provided names must be grounded in the guest's own words, not the bot's messages. */
+function guestActuallyStatedName(name: string, messages: ChatMessage[]): boolean {
+  const wordsOnly = (text: string) =>
+    text
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, ' ')
+      .trim()
+  const candidate = wordsOnly(name)
+  if (!candidate) return false
+  const guestText = wordsOnly(getUserMessagesCombined(messages))
+  return ` ${guestText} `.includes(` ${candidate} `)
+}
+
 async function runEscalateToManager(
   args: Record<string, unknown>,
   ctx: ToolContext,
@@ -2432,44 +2475,47 @@ async function runEscalateToManager(
       ? args.reason.trim().slice(0, 300)
       : 'Guest needs staff attention'
 
-  // Resolve the best contact so staff can call the guest back: tool args first,
-  // then anything the guest typed in the conversation, then their saved record.
-  const argContact = normalizeGuestContact({
-    name: typeof args.guest_name === 'string' ? args.guest_name : null,
-    phone: typeof args.phone === 'string' ? args.phone : null,
-    email: typeof args.email === 'string' ? args.email : null,
-  })
-  const msgContact = extractContactFromMessages(ctx.chatMessages)
-  let contactPhone = argContact.phone ?? msgContact.phone ?? null
-  let contactEmail = argContact.email ?? msgContact.email ?? null
-  if (!contactPhone || !contactEmail) {
+  const candidateToolName = safeGuestPersonalName(args.guest_name, ctx.bookingCtx.zones)
+  const toolGuestName =
+    candidateToolName && guestActuallyStatedName(candidateToolName, ctx.chatMessages)
+      ? candidateToolName
+      : null
+
+  // The latest contact the guest typed is authoritative. Never supplement their
+  // email choice with an old saved phone (or vice versa). Fall back to the saved
+  // profile only when this conversation contains no contact at all.
+  const latestContact = extractLatestContactFromMessages(ctx.chatMessages)
+  let contactPhone = latestContact.phone ?? null
+  let contactEmail = latestContact.email ?? null
+  const hasCurrentContact = Boolean(contactPhone || contactEmail)
+  if (!hasCurrentContact) {
     const { data: custRow } = await supabaseAdmin
       .from('customers')
-      .select('name, phone, email')
+      .select('phone, email')
       .eq('id', ctx.customer_id)
       .eq('business_id', ctx.business_id)
       .maybeSingle()
     if (custRow) {
-      contactPhone = contactPhone || (custRow.phone?.trim() || null)
-      contactEmail = contactEmail || (custRow.email?.trim() || null)
+      contactPhone = custRow.phone?.trim() || null
+      contactEmail = custRow.email?.trim() || null
     }
   }
 
   // Persist a phone/name captured only in this escalation so it lands in the CRM
   // (best effort — never block the alert on it).
-  if (argContact.phone || argContact.email || argContact.name) {
+  if (hasCurrentContact || toolGuestName) {
     await persistGuest({
       business_id: ctx.business_id,
       customer_id: ctx.customer_id,
       conversation_id: ctx.conversation_id,
-      rawName: typeof args.guest_name === 'string' ? args.guest_name : null,
-      rawPhone: typeof args.phone === 'string' ? args.phone : null,
-      rawEmail: typeof args.email === 'string' ? args.email : null,
+      rawName: toolGuestName,
+      rawPhone: latestContact.phone ?? null,
+      rawEmail: latestContact.email ?? null,
     })
   }
 
   const sent = triggerEscalation(ctx, category, reason, {
-    name: typeof args.guest_name === 'string' ? args.guest_name : null,
+    name: toolGuestName,
     phone: contactPhone,
     email: contactEmail,
   })

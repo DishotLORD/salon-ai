@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from 'react'
 import { WELCOME_SPLASH_FLAG } from '@/components/dashboard-splash'
 import { defaultSystemPrompt } from '@/lib/default-system-prompt'
 import { supabase } from '@/lib/supabase'
+import { VENUE_TYPE_OPTIONS, type VenueType } from '@/lib/venue-types'
 
 // ─── Validation ───────────────────────────────────────────────
 
@@ -46,14 +47,8 @@ function validate(field: keyof typeof RULES, value: string): string {
 
 // ─── Types ────────────────────────────────────────────────────
 
-const businessTypeOptions = [
-  { value: 'restaurant', label: 'Restaurant' },
-  { value: 'cafe', label: 'Café' },
-  { value: 'bar', label: 'Bar / Lounge' },
-  { value: 'bakery', label: 'Bakery' },
-  { value: 'other', label: 'Other hospitality' },
-] as const
-type BusinessTypeValue = (typeof businessTypeOptions)[number]['value']
+const businessTypeOptions = VENUE_TYPE_OPTIONS
+type BusinessTypeValue = VenueType
 
 const TOTAL_STEPS = 4
 
@@ -562,7 +557,7 @@ export default function SignupPage() {
 
                   <PField
                     label="Email" type="email" value={authEmail} onChange={setAuthEmail}
-                    placeholder="you@restaurant.com" autoFocus
+                    placeholder="you@yourvenue.com" autoFocus
                     validateKey="email" forceError={forceErrors}
                   />
                   <PPasswordField label="Password" value={password} onChange={setPassword} forceError={forceErrors} />

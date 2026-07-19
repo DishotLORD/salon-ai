@@ -137,12 +137,12 @@ export function OceanCoreLogo({ variant = 'full', theme = 'dark', className }: O
         <div style={{
           font: '600 12.5px/1 "Space Grotesk", sans-serif',
           color: accent,
-          letterSpacing: '0.22em',
+          letterSpacing: '0.14em',
           textTransform: 'uppercase',
           marginTop: 11,
           opacity: 0.85,
         }}>
-          Restaurant AI
+          Restaurant & Bar AI
         </div>
       </div>
     </div>
@@ -175,13 +175,13 @@ export function OceanCoreLogoCompact({ theme = 'dark', className }: { theme?: Lo
           OceanCore
         </div>
         <div style={{
-          font: '600 9px/1 "Space Grotesk", sans-serif',
+          font: '600 8.3px/1 "Space Grotesk", sans-serif',
           color: accent,
-          letterSpacing: '0.2em',
+          letterSpacing: '0.12em',
           textTransform: 'uppercase',
           marginTop: 6,
         }}>
-          Restaurant AI
+          Restaurant & Bar AI
         </div>
       </div>
     </div>

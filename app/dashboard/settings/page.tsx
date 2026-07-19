@@ -6,6 +6,7 @@ import { useSearchParams } from 'next/navigation'
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
 
 import { DashboardOceanNav } from '@/components/dashboard-ocean-nav'
+import { AddressAutocompleteField } from '@/components/address-autocomplete-field'
 import {
   SETTINGS_CATEGORIES,
   SettingsCategoryNav,
@@ -1142,7 +1143,11 @@ function SettingsPageInner() {
             <FloatingField label="Email" value={businessEmail} onChange={setBusinessEmail} type="email" />
           </div>
 
-          <FloatingField label="Address" value={businessAddress} onChange={setBusinessAddress} />
+          <AddressAutocompleteField
+            value={businessAddress}
+            onChange={setBusinessAddress}
+            hint="Start typing an address in Canada, or enter it manually."
+          />
 
           <div style={{ ...glassCard, padding: 16 }}>
             <div

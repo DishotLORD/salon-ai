@@ -40,9 +40,9 @@ const plusJakarta = Plus_Jakarta_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "OceanCore — AI Concierge for Restaurants",
+  title: "OceanCore — AI Concierge for Restaurants & Bars",
   description:
-    "Handle reservations, guest questions, and revenue growth automatically with OceanCore — 24/7 AI concierge for restaurants.",
+    "Handle reservations, guest questions, and revenue growth automatically with OceanCore — a 24/7 AI concierge for restaurants and bars.",
 };
 
 export default function RootLayout({
