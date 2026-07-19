@@ -1677,6 +1677,17 @@ async function runCreateReservation(
   await bumpCustomerVisitStats(targetCustomerId, ctx.business_id)
   console.log('[booking] Reservation created via tool:', { guestName, partySize, wallClock, zoneLabel })
 
+  // Keep the in-request availability context honest: a follow-up
+  // check_availability call in this same tool loop must count this booking.
+  ctx.bookingCtx.existingBookings.push({
+    id: inserted?.id != null ? String(inserted.id) : undefined,
+    scheduled_at: wallClock,
+    status: 'pending',
+    duration_minutes: durationMinutes,
+    zone_id: zoneId,
+    party_size: partySize,
+  })
+
   // Persist dietary notes to the guest profile; escalate only for real allergy /
   // intolerance signals — not lifestyle choices like vegan/kosher/halal.
   // Cyrillic roots match bare (JS \b is ASCII-only and never fires on them).
@@ -1876,26 +1887,36 @@ function toActiveAppointment(row: Record<string, unknown>): ActiveAppointment {
   }
 }
 
-/** Find the guest's current active reservation (by conversation, then by customer). */
+/**
+ * Find the guest's current active reservation (by conversation, then by customer).
+ *
+ * Both lookups share a future-time filter with a 3-hour grace window: statuses
+ * never auto-transition after the visit, so without the filter a device that
+ * reuses last week's conversation would see its long-past booking as "active"
+ * and create_reservation would refuse every new booking with already_booked.
+ * The grace window keeps a currently-seated guest's booking findable mid-visit
+ * ("is my deposit paid?") while excluding genuinely past reservations.
+ */
 async function findActiveAppointment(ctx: ToolContext): Promise<ActiveAppointment | null> {
+  const activeSinceIso = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString()
   const { data: byConv } = await supabaseAdmin
     .from('appointments')
     .select(ACTIVE_APPT_SELECT)
     .eq('conversation_id', ctx.conversation_id)
     .in('status', ['pending', 'confirmed', 'seated'])
+    .gte('scheduled_at', activeSinceIso)
     .order('scheduled_at', { ascending: true })
     .limit(1)
     .maybeSingle()
   if (byConv?.id) return toActiveAppointment(byConv as Record<string, unknown>)
 
-  const nowIso = new Date().toISOString()
   const { data: byCustomer } = await supabaseAdmin
     .from('appointments')
     .select(ACTIVE_APPT_SELECT)
     .eq('business_id', ctx.business_id)
     .eq('customer_id', ctx.customer_id)
     .in('status', ['pending', 'confirmed', 'seated'])
-    .gte('scheduled_at', nowIso)
+    .gte('scheduled_at', activeSinceIso)
     .order('scheduled_at', { ascending: true })
     .limit(1)
     .maybeSingle()

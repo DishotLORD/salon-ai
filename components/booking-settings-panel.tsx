@@ -4,6 +4,7 @@ import {
   DEFAULT_BOOKING_SETTINGS,
   type BookingSettings,
 } from '@/lib/booking-settings'
+import { SettingsToggle } from '@/components/settings-toggle'
 
 const fieldStyle: React.CSSProperties = {
   display: 'grid',
@@ -136,14 +137,13 @@ export function BookingSettingsPanel({
           cursor: disabled ? 'not-allowed' : 'pointer',
         }}
       >
-        <input
-          type="checkbox"
-          disabled={disabled}
+        <SettingsToggle
           checked={settings.require_contact_before_booking}
-          onChange={(e) =>
-            onChange({ ...settings, require_contact_before_booking: e.target.checked })
+          disabled={disabled}
+          onChange={(requireContact) =>
+            onChange({ ...settings, require_contact_before_booking: requireContact })
           }
-          style={{ marginTop: 2, width: 16, height: 16, flexShrink: 0, cursor: 'inherit' }}
+          ariaLabel="Require guest contact before booking"
         />
         <span style={{ display: 'grid', gap: 3 }}>
           <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--bk-head)' }}>

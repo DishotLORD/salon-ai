@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { SettingsToggle } from '@/components/settings-toggle'
 
 const labelStyle: React.CSSProperties = {
   fontSize: 10,
@@ -178,12 +179,11 @@ export function ActivityResourcesPanel({
               title={resource.active ? 'Active' : 'Inactive'}
               style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: disabled ? 'not-allowed' : 'pointer', flexShrink: 0 }}
             >
-              <input
-                type="checkbox"
+              <SettingsToggle
                 checked={resource.active}
-                onChange={(e) => update(resource.id, { active: e.target.checked })}
                 disabled={disabled}
-                style={{ width: 14, height: 14, cursor: 'inherit', accentColor: 'var(--bk-indigo)' }}
+                onChange={(active) => update(resource.id, { active })}
+                ariaLabel={`${resource.name || 'Activity'} is active`}
               />
               <span style={{ fontSize: 11, color: 'var(--bk-body)', whiteSpace: 'nowrap' }}>Active</span>
             </label>

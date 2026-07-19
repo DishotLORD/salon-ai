@@ -92,6 +92,9 @@
   button.style.boxShadow = '0 8px 24px rgba(14, 165, 233, 0.45), 0 4px 12px rgba(2, 132, 199, 0.35)'
   button.style.transition = 'transform 0.15s ease, box-shadow 0.15s ease'
 
+  var CHAT_PATH = 'M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z'
+  var CLOSE_PATH = 'M6 6l12 12M18 6L6 18'
+
   var svgNs = 'http://www.w3.org/2000/svg'
   var svg = document.createElementNS(svgNs, 'svg')
   svg.setAttribute('width', '28')
@@ -100,13 +103,11 @@
   svg.setAttribute('fill', 'none')
   svg.setAttribute('aria-hidden', 'true')
   var path = document.createElementNS(svgNs, 'path')
-  path.setAttribute(
-    'd',
-    'M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z'
-  )
+  path.setAttribute('d', CHAT_PATH)
   path.setAttribute('stroke', '#ffffff')
   path.setAttribute('stroke-width', '1.75')
   path.setAttribute('stroke-linejoin', 'round')
+  path.setAttribute('stroke-linecap', 'round')
   path.setAttribute('fill', 'rgba(255,255,255,0.15)')
   svg.appendChild(path)
   button.appendChild(svg)
@@ -119,6 +120,10 @@
     isOpen = open
     button.setAttribute('aria-expanded', open ? 'true' : 'false')
     button.setAttribute('aria-label', open ? 'Close chat' : 'Open chat')
+    // Swap the icon: chat bubble when closed, X when open.
+    path.setAttribute('d', open ? CLOSE_PATH : CHAT_PATH)
+    path.setAttribute('fill', open ? 'none' : 'rgba(255,255,255,0.15)')
+    path.setAttribute('stroke-width', open ? '2.25' : '1.75')
     if (open) {
       if (!iframeLoaded) {
         iframe.src = widgetSrc

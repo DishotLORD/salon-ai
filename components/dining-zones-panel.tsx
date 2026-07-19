@@ -9,6 +9,7 @@ import {
   type DiningZone,
 } from '@/lib/dining-zones'
 import type { BookingSettings } from '@/lib/booking-settings'
+import { SettingsToggle } from '@/components/settings-toggle'
 
 const labelStyle: React.CSSProperties = {
   fontSize: 10,
@@ -134,11 +135,11 @@ export function DiningZonesPanel({
               }}
             />
             <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--bk-body)' }}>
-              <input
-                type="checkbox"
+              <SettingsToggle
                 checked={zone.is_active}
                 disabled={disabled}
-                onChange={(e) => updateAt(index, { is_active: e.target.checked })}
+                onChange={(isActive) => updateAt(index, { is_active: isActive })}
+                ariaLabel={`${zone.name || `Dining area ${index + 1}`} is active`}
               />
               Active
             </label>

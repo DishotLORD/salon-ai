@@ -920,6 +920,7 @@ export default function AnalyticsPage() {
   useEffect(() => {
     if (conversationIds == null) return
     if (conversationIds.length === 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- terminal state for the empty case; no fetch to run
       setMessageStats({ count: 0, medianReplySeconds: null })
       return
     }

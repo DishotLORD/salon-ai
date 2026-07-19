@@ -6,3 +6,4 @@ node_modules/
 public/videos/
 public/ocean.mp4
 .DS_Store
+.codex-backups/

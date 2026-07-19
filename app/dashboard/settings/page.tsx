@@ -9,9 +9,11 @@ import { DashboardOceanNav } from '@/components/dashboard-ocean-nav'
 import { AddressAutocompleteField } from '@/components/address-autocomplete-field'
 import {
   SETTINGS_CATEGORIES,
-  SettingsCategoryNav,
   type SettingsCategoryId,
 } from '@/components/settings-category-nav'
+import { SettingsTabNav } from '@/components/settings-tab-nav'
+import { SettingsHero } from '@/components/settings-hero'
+import { SettingsToggle } from '@/components/settings-toggle'
 import { BookingSettingsPanel } from '@/components/booking-settings-panel'
 import { DiningZonesPanel, type DiningZoneDraft } from '@/components/dining-zones-panel'
 import { WorkingHoursPanel } from '@/components/working-hours-panel'
@@ -144,6 +146,62 @@ function tabToCategory(tab: TabId): CategoryId {
   if (tab === 'billing') return 'billing'
   if (tab === 'notifications' || tab === 'widget') return 'integrations'
   return 'restaurant'
+}
+
+function ReservationModeIcon({ mode }: { mode: 'dining' | 'activities' }) {
+  if (mode === 'dining') {
+    return (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+        <path d="M5 11.5h14M7 11.5v7M17 11.5v7M8 8.5h8a2 2 0 0 1 2 2v1H6v-1a2 2 0 0 1 2-2Z" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M9 5.5h6" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+      </svg>
+    )
+  }
+
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <circle cx="12" cy="12" r="8" stroke="currentColor" strokeWidth="1.7" />
+      <circle cx="12" cy="12" r="3.2" stroke="currentColor" strokeWidth="1.5" opacity="0.55" />
+      <circle cx="12" cy="12" r="1" fill="currentColor" />
+      <path d="m17.6 6.4 2-2M6.4 17.6l-2 2" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function ReservationModeSwitcher({ value, diningCount, activityCount, onChange }: {
+  value: 'dining' | 'activities'
+  diningCount: number
+  activityCount: number
+  onChange: (value: 'dining' | 'activities') => void
+}) {
+  const options = [
+    { value: 'dining' as const, title: 'Dining & tables', description: 'Set booking pace and capacity for each seating area.', count: `${diningCount} ${diningCount === 1 ? 'area' : 'areas'}`, color: '#0284c7', tint: 'rgba(56,189,248,0.10)', border: 'rgba(14,165,233,0.45)' },
+    { value: 'activities' as const, title: 'Activities & games', description: 'Organize pool tables, courts, lanes, and experiences.', count: `${activityCount} ${activityCount === 1 ? 'resource' : 'resources'}`, color: 'var(--bk-purple)', tint: 'var(--bk-purple-bg)', border: 'rgba(124,58,237,0.38)' },
+  ]
+
+  return (
+    <section style={{ padding: 16, borderRadius: 14, border: '1px solid var(--bk-border)', background: 'linear-gradient(145deg, rgba(56,189,248,0.055), transparent 48%), var(--bk-card)', boxShadow: 'var(--bk-shadow)', display: 'grid', gap: 13 }} aria-labelledby="reservation-mode-title">
+      <div>
+        <h2 id="reservation-mode-title" style={{ margin: 0, color: 'var(--bk-head)', fontSize: 16, fontWeight: 750, letterSpacing: '-0.015em' }}>What can guests reserve?</h2>
+        <p style={{ margin: '5px 0 0', color: 'var(--bk-body)', fontSize: 12.5, lineHeight: 1.5 }}>Choose one workspace. Each has its own settings, so table rules never get mixed with activity inventory.</p>
+      </div>
+      <div role="tablist" aria-label="Reservation workspace" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(225px, 1fr))', gap: 9 }}>
+        {options.map((option) => {
+          const selected = value === option.value
+          return (
+            <button key={option.value} type="button" role="tab" aria-selected={selected} aria-controls={`reservation-${option.value}-panel`} onClick={() => onChange(option.value)} style={{ position: 'relative', display: 'grid', gridTemplateColumns: '44px minmax(0, 1fr)', alignItems: 'center', gap: 11, width: '100%', minHeight: 92, padding: 12, borderRadius: 13, border: `1.5px solid ${selected ? option.border : 'var(--bk-border)'}`, background: selected ? option.tint : 'var(--bk-surface)', boxShadow: selected ? '0 8px 22px rgba(15,23,42,0.07)' : 'none', color: 'var(--bk-head)', textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit' }}>
+              <span style={{ width: 44, height: 44, borderRadius: 12, display: 'grid', placeItems: 'center', background: selected ? 'var(--bk-card)' : 'var(--bk-surface-2)', color: selected ? option.color : 'var(--bk-muted)', boxShadow: selected ? '0 4px 12px rgba(15,23,42,0.07)' : 'none' }}><ReservationModeIcon mode={option.value} /></span>
+              <span style={{ minWidth: 0 }}>
+                <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}><span style={{ color: selected ? option.color : 'var(--bk-head)', fontSize: 13.5, fontWeight: 750 }}>{option.title}</span><span style={{ flexShrink: 0, padding: '3px 6px', borderRadius: 999, background: 'var(--bk-card)', color: 'var(--bk-muted)', fontSize: 9.5, fontWeight: 700 }}>{option.count}</span></span>
+                <span style={{ display: 'block', marginTop: 4, color: 'var(--bk-body)', fontSize: 11.5, lineHeight: 1.4 }}>{option.description}</span>
+              </span>
+              {selected ? <span aria-hidden style={{ position: 'absolute', top: 9, right: 9, width: 6, height: 6, borderRadius: 999, background: option.color }} /> : null}
+            </button>
+          )
+        })}
+      </div>
+    </section>
+  )
 }
 
 function SettingsPlaceholder({
@@ -344,7 +402,6 @@ function SettingsPageInner() {
     if (categoryParam === 'reservations') return 'reservations'
     return tabToCategory(initialTab)
   })
-  const [mobileShowDetail, setMobileShowDetail] = useState(false)
 
   useEffect(() => {
     if (
@@ -1060,57 +1117,48 @@ function SettingsPageInner() {
 
     if (activeCategory === 'reservations') {
       return (
-        <div style={{ display: 'grid', gap: 16 }}>
-          <div style={{ ...glassCard, padding: 16 }}>
-            <div
-              style={{
-                color: t.textMuted,
-                fontSize: 11,
-                fontWeight: 700,
-                letterSpacing: '0.16em',
-                textTransform: 'uppercase',
-                marginBottom: 14,
-              }}
-            >
-              Booking defaults
-            </div>
-            {!bookingSettingsSchemaReady ? (
-              <div style={migrationHintBox}>{BOOKING_SETTINGS_MIGRATION_HINT}</div>
-            ) : null}
-            <BookingSettingsPanel
-              settings={bookingSettings}
-              onChange={setBookingSettings}
-              disabled={!bookingSettingsSchemaReady || isSaving}
-            />
-          </div>
+        <div style={{ display: 'grid', gap: 14 }}>
+          <ReservationModeSwitcher
+            value={reservationSubTab}
+            diningCount={zoneDrafts.length}
+            activityCount={activityResources.length}
+            onChange={setReservationSubTab}
+          />
 
           {reservationSubTab === 'dining' ? (
-            <div style={{ ...glassCard, padding: 16 }}>
-              <div style={{ color: t.textMuted, fontSize: 11, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', marginBottom: 14 }}>
-                Dining Zones
-              </div>
-              {!zonesSchemaReady ? (
-                <div style={migrationHintBox}>{DINING_ZONES_MIGRATION_HINT}</div>
-              ) : zonesLoading ? (
-                <p style={{ margin: 0, fontSize: 13, color: t.textMuted }}>Loading zones…</p>
-              ) : (
-                <DiningZonesPanel
-                  zones={zoneDrafts}
-                  bookingSettings={bookingSettings}
-                  onChange={setZoneDrafts}
-                  disabled={!zonesSchemaReady || isSaving}
+            <div id="reservation-dining-panel" role="tabpanel" style={{ display: 'grid', gap: 12 }}>
+              <div style={{ ...glassCard, padding: 16 }}>
+                {!bookingSettingsSchemaReady ? <div style={migrationHintBox}>{BOOKING_SETTINGS_MIGRATION_HINT}</div> : null}
+                <BookingSettingsPanel
+                  settings={bookingSettings}
+                  onChange={setBookingSettings}
+                  disabled={!bookingSettingsSchemaReady || isSaving}
                 />
-              )}
+              </div>
+              <div style={{ ...glassCard, padding: 16 }}>
+                {!zonesSchemaReady ? (
+                  <div style={migrationHintBox}>{DINING_ZONES_MIGRATION_HINT}</div>
+                ) : zonesLoading ? (
+                  <p style={{ margin: 0, fontSize: 13, color: t.textMuted }}>Loading dining areas…</p>
+                ) : (
+                  <DiningZonesPanel
+                    zones={zoneDrafts}
+                    bookingSettings={bookingSettings}
+                    onChange={setZoneDrafts}
+                    disabled={!zonesSchemaReady || isSaving}
+                  />
+                )}
+              </div>
             </div>
           ) : (
-            <div style={{ ...glassCard, padding: 16 }}>
-              <div style={{ color: t.textMuted, fontSize: 11, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', marginBottom: 6 }}>
-                Activities
+            <div id="reservation-activities-panel" role="tabpanel" style={{ ...glassCard, padding: 16, display: 'grid', gap: 14 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)', gap: 10, alignItems: 'start', padding: 12, borderRadius: 11, border: '1px solid var(--bk-purple-bg)', background: 'linear-gradient(135deg, var(--bk-purple-bg), transparent)' }}>
+                <span aria-hidden style={{ color: 'var(--bk-purple)', fontSize: 16, lineHeight: 1 }}>ⓘ</span>
+                <div>
+                  <div style={{ color: 'var(--bk-head)', fontSize: 11.5, fontWeight: 750 }}>Managed separately from dining capacity</div>
+                  <p style={{ margin: '3px 0 0', color: 'var(--bk-body)', fontSize: 11.5, lineHeight: 1.45 }}>Each row represents one physical table, court, lane, or experience. Dining-area timing and capacity rules do not apply here.</p>
+                </div>
               </div>
-              <p style={{ margin: '0 0 14px', fontSize: 12, color: t.textMuted, lineHeight: 1.5 }}>
-                Bookable activity resources — pool tables, tennis tables, and more.
-                Changes are saved with the rest of your Reservations settings.
-              </p>
               <ActivityResourcesPanel
                 resources={activityResources}
                 onChange={setActivityResources}
@@ -1266,7 +1314,7 @@ function SettingsPageInner() {
                 }}
               >
                 {item.label}
-                <input type="checkbox" checked={item.checked} onChange={(event) => item.onChange(event.target.checked)} />
+                <SettingsToggle checked={item.checked} onChange={item.onChange} ariaLabel={item.label} />
               </label>
             ))}
           </div>
@@ -1693,10 +1741,10 @@ function SettingsPageInner() {
                   }}
                 >
                   {item.label}
-                  <input
-                    type="checkbox"
+                  <SettingsToggle
                     checked={item.checked}
-                    onChange={(event) => item.onChange(event.target.checked)}
+                    onChange={item.onChange}
+                    ariaLabel={item.label}
                   />
                 </label>
               ))}
@@ -1837,13 +1885,13 @@ function SettingsPageInner() {
                   The bot mentions the deposit before booking and shares the payment link after
                 </div>
               </div>
-              <input
-                type="checkbox"
+              <SettingsToggle
                 checked={paymentSettings.deposit_enabled}
                 disabled={!paymentSchemaReady || isSaving}
-                onChange={(e) =>
-                  setPaymentSettings((prev) => ({ ...prev, deposit_enabled: e.target.checked }))
+                onChange={(checked) =>
+                  setPaymentSettings((prev) => ({ ...prev, deposit_enabled: checked }))
                 }
+                ariaLabel="Require deposit"
               />
             </label>
 
@@ -1924,11 +1972,10 @@ function SettingsPageInner() {
     return null
   })()
 
-  const selectCategory = (categoryId: CategoryId, mobile: boolean) => {
+  const selectCategory = (categoryId: CategoryId) => {
     const nextIndex = SETTINGS_CATEGORIES.findIndex((c) => c.id === categoryId)
     setPanelDirection(nextIndex >= categoryIndex ? 1 : -1)
     setActiveCategory(categoryId)
-    if (mobile) setMobileShowDetail(true)
   }
 
   return (
@@ -1971,249 +2018,190 @@ function SettingsPageInner() {
             <main
               style={{
                 display: 'flex',
-                flexDirection: isMobile ? 'column' : 'row',
-                gap: isMobile ? 0 : 24,
+                flexDirection: 'column',
                 padding: isMobile ? '20px 16px 24px' : '28px 32px 32px',
                 minHeight: 'inherit',
               }}
             >
-              {/* Left panel — category navigation */}
-              {(!isMobile || !mobileShowDetail) && (
-                <aside
-                  style={{
-                    width: isMobile ? '100%' : 280,
-                    flexShrink: 0,
-                    paddingTop: isMobile ? 52 : 0,
-                  }}
-                >
-                  <div style={{ marginBottom: 20, paddingLeft: 2 }}>
-                    <h1
-                      style={{
-                        margin: 0,
-                        fontSize: isMobile ? 22 : 24,
-                        fontWeight: 700,
-                        color: s.text,
-                        letterSpacing: '-0.02em',
-                        lineHeight: 1.2,
-                      }}
-                    >
-                      Settings
-                    </h1>
-                    {businessName.trim() ? (
-                      <p
-                        style={{
-                          margin: '6px 0 0',
-                          fontSize: 13,
-                          fontWeight: 500,
-                          color: s.accent,
-                          lineHeight: 1.3,
-                        }}
-                      >
-                        {businessName.trim()}
-                      </p>
-                    ) : null}
-                  </div>
-
-                  <SettingsCategoryNav
-                    activeId={activeCategory}
-                    onSelect={(id) => selectCategory(id, isMobile)}
-                    reduceMotion={reduceMotion}
-                    activeSubId={activeCategory === 'reservations' ? reservationSubTab : undefined}
-                    onSelectSub={(id) => setReservationSubTab(id as 'dining' | 'activities')}
-                  />
-                </aside>
-              )}
-
-              {/* Right panel — category content */}
-              {(!isMobile || mobileShowDetail) && (
-                <section
-                  style={{
-                    flex: 1,
-                    minWidth: 0,
-                    background: s.panel,
-                    border: `1px solid ${s.border}`,
-                    borderRadius: 16,
-                    boxShadow: s.shadow,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    overflow: 'hidden',
-                  }}
-                >
-                  <div
+              {/* Hero — venue photo, identity, save action */}
+              <div style={{ paddingTop: isMobile ? 52 : 0, marginBottom: 18 }}>
+                <SettingsHero
+                  venueName={businessName.trim()}
+                  isMobile={isMobile}
+                  actions={showSaveActions ? (
+                <div style={{ display: 'grid', gap: 8, justifyItems: isMobile ? 'stretch' : 'end', width: isMobile ? '100%' : 'auto' }}>
+                  {saveError ? (
+                    // Sits on the dark hero scrim, so it needs a light red rather than --bk-danger.
+                    <div style={{ color: '#fca5a5', fontSize: 13, fontWeight: 600, textAlign: isMobile ? 'left' : 'right' }}>
+                      {saveError}
+                    </div>
+                  ) : null}
+                  <motion.button
+                    type="button"
+                    onClick={() => void handleSave()}
+                    disabled={isLoading || isSaving}
+                    aria-live="polite"
+                    whileHover={
+                      isLoading || isSaving || saveSucceeded || reduceMotion ? undefined : { y: -1 }
+                    }
+                    whileTap={
+                      isLoading || isSaving || saveSucceeded || reduceMotion ? undefined : { scale: 0.98 }
+                    }
+                    animate={{
+                      backgroundColor: saveSucceeded
+                        ? '#0f766e'
+                        : isLoading || isSaving
+                          ? 'var(--bk-surface-2)'
+                          : '#38bdf8',
+                      color: saveSucceeded
+                        ? '#ffffff'
+                        : isLoading || isSaving
+                          ? 'var(--bk-body)'
+                          : '#0f172a',
+                    }}
+                    transition={{ duration: reduceMotion ? 0 : 0.28, ease: [0.22, 1, 0.36, 1] }}
                     style={{
-                      display: 'flex',
-                      alignItems: isMobile ? 'flex-start' : 'center',
-                      justifyContent: 'space-between',
-                      gap: 12,
-                      padding: isMobile ? '16px 18px' : '18px 22px',
-                      borderBottom: `1px solid ${s.border}`,
-                      flexDirection: isMobile ? 'column' : 'row',
+                      border: 'none',
+                      borderRadius: 10,
+                      padding: '11px 20px',
+                      minWidth: 132,
+                      fontWeight: 600,
+                      fontSize: 13,
+                      cursor: isLoading || isSaving ? 'not-allowed' : 'pointer',
+                      width: isMobile ? '100%' : 'auto',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 7,
+                      boxShadow: saveSucceeded
+                        ? '0 4px 14px rgba(15, 118, 110, 0.28)'
+                        : '0 1px 2px rgba(15, 23, 42, 0.06)',
                     }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-                      {isMobile ? (
-                        <button
-                          type="button"
-                          onClick={() => setMobileShowDetail(false)}
-                          style={{
-                            border: 'none',
-                            background: 'transparent',
-                            color: s.accent,
-                            fontSize: 13,
-                            fontWeight: 600,
-                            cursor: 'pointer',
-                            padding: 0,
-                            flexShrink: 0,
-                          }}
-                        >
-                          ← Back
-                        </button>
-                      ) : null}
-                      <div style={{ minWidth: 0 }}>
-                        <motion.div
-                          key={activeCategory}
-                          initial={reduceMotion ? false : { opacity: 0, y: 6 }}
+                    <AnimatePresence mode="wait" initial={false}>
+                      {isLoading ? (
+                        <motion.span
+                          key="loading"
+                          initial={{ opacity: 0, y: 4 }}
                           animate={{ opacity: 1, y: 0 }}
-                          transition={oceanTransition(reduceMotion, { type: 'spring', stiffness: 360, damping: 32 })}
+                          exit={{ opacity: 0, y: -4 }}
+                          transition={{ duration: 0.15 }}
                         >
-                          <div style={{ fontSize: 18, fontWeight: 700, color: s.text, lineHeight: 1.25 }}>
-                            {activeCategoryMeta.title}
-                          </div>
-                          <div style={{ marginTop: 3, fontSize: 12, color: s.textMuted, lineHeight: 1.4 }}>
-                            {activeCategoryMeta.description}
-                          </div>
-                        </motion.div>
-                      </div>
-                    </div>
-
-                    {showSaveActions ? (
-                      <div style={{ display: 'grid', gap: 8, justifyItems: isMobile ? 'stretch' : 'end', width: isMobile ? '100%' : 'auto' }}>
-                        {saveError ? (
-                          <div style={{ color: 'var(--bk-danger)', fontSize: 13, fontWeight: 600 }}>{saveError}</div>
-                        ) : null}
-                        <motion.button
-                          type="button"
-                          onClick={() => void handleSave()}
-                          disabled={isLoading || isSaving}
-                          aria-live="polite"
-                          whileHover={
-                            isLoading || isSaving || saveSucceeded || reduceMotion ? undefined : { y: -1 }
-                          }
-                          whileTap={
-                            isLoading || isSaving || saveSucceeded || reduceMotion ? undefined : { scale: 0.98 }
-                          }
-                          animate={{
-                            backgroundColor: saveSucceeded
-                              ? '#0f766e'
-                              : isLoading || isSaving
-                                ? 'var(--bk-surface-2)'
-                                : '#38bdf8',
-                            color: saveSucceeded
-                              ? '#ffffff'
-                              : isLoading || isSaving
-                                ? 'var(--bk-body)'
-                                : '#0f172a',
-                          }}
-                          transition={{ duration: reduceMotion ? 0 : 0.28, ease: [0.22, 1, 0.36, 1] }}
-                          style={{
-                            border: 'none',
-                            borderRadius: 10,
-                            padding: '11px 20px',
-                            minWidth: 132,
-                            fontWeight: 600,
-                            fontSize: 13,
-                            cursor: isLoading || isSaving ? 'not-allowed' : 'pointer',
-                            width: isMobile ? '100%' : 'auto',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: 7,
-                            boxShadow: saveSucceeded
-                              ? '0 4px 14px rgba(15, 118, 110, 0.28)'
-                              : '0 1px 2px rgba(15, 23, 42, 0.06)',
-                          }}
+                          Loading…
+                        </motion.span>
+                      ) : isSaving ? (
+                        <motion.span
+                          key="saving"
+                          initial={{ opacity: 0, y: 4 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -4 }}
+                          transition={{ duration: 0.15 }}
                         >
-                          <AnimatePresence mode="wait" initial={false}>
-                            {isLoading ? (
-                              <motion.span
-                                key="loading"
-                                initial={{ opacity: 0, y: 4 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                exit={{ opacity: 0, y: -4 }}
-                                transition={{ duration: 0.15 }}
-                              >
-                                Loading…
-                              </motion.span>
-                            ) : isSaving ? (
-                              <motion.span
-                                key="saving"
-                                initial={{ opacity: 0, y: 4 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                exit={{ opacity: 0, y: -4 }}
-                                transition={{ duration: 0.15 }}
-                              >
-                                Saving…
-                              </motion.span>
-                            ) : saveSucceeded ? (
-                              <motion.span
-                                key="saved"
-                                initial={{ opacity: 0, scale: 0.92 }}
-                                animate={{ opacity: 1, scale: 1 }}
-                                exit={{ opacity: 0, scale: 0.96 }}
-                                transition={{ duration: 0.2 }}
-                                style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                              >
-                                <span
-                                  aria-hidden
-                                  style={{
-                                    width: 16,
-                                    height: 16,
-                                    borderRadius: '50%',
-                                    background: 'rgba(255,255,255,0.22)',
-                                    display: 'grid',
-                                    placeItems: 'center',
-                                    fontSize: 11,
-                                    lineHeight: 1,
-                                  }}
-                                >
-                                  ✓
-                                </span>
-                                Saved
-                              </motion.span>
-                            ) : (
-                              <motion.span
-                                key="idle"
-                                initial={{ opacity: 0, y: 4 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                exit={{ opacity: 0, y: -4 }}
-                                transition={{ duration: 0.15 }}
-                              >
-                                Save Changes
-                              </motion.span>
-                            )}
-                          </AnimatePresence>
-                        </motion.button>
-                      </div>
-                    ) : null}
-                  </div>
-
-                  <div style={{ flex: 1, padding: '24px', overflowY: 'auto' }}>
-                    <AnimatePresence mode="wait" custom={panelDirection}>
-                      <motion.div
-                        key={activeCategory}
-                        custom={panelDirection}
-                        variants={settingsPanelHeavy}
-                        initial="initial"
-                        animate="animate"
-                        exit="exit"
-                        transition={oceanTransition(reduceMotion)}
-                      >
-                        {tabPanel}
-                      </motion.div>
+                          Saving…
+                        </motion.span>
+                      ) : saveSucceeded ? (
+                        <motion.span
+                          key="saved"
+                          initial={{ opacity: 0, scale: 0.92 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          exit={{ opacity: 0, scale: 0.96 }}
+                          transition={{ duration: 0.2 }}
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                        >
+                          <span
+                            aria-hidden
+                            style={{
+                              width: 16,
+                              height: 16,
+                              borderRadius: '50%',
+                              background: 'rgba(255,255,255,0.22)',
+                              display: 'grid',
+                              placeItems: 'center',
+                              fontSize: 11,
+                              lineHeight: 1,
+                            }}
+                          >
+                            ✓
+                          </span>
+                          Saved
+                        </motion.span>
+                      ) : (
+                        <motion.span
+                          key="idle"
+                          initial={{ opacity: 0, y: 4 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -4 }}
+                          transition={{ duration: 0.15 }}
+                        >
+                          Save Changes
+                        </motion.span>
+                      )}
                     </AnimatePresence>
-                  </div>
-                </section>
-              )}
+                  </motion.button>
+                </div>
+                  ) : null}
+                />
+              </div>
+
+              {/* Horizontal category tabs */}
+              <SettingsTabNav
+                activeId={activeCategory}
+                onSelect={selectCategory}
+                reduceMotion={reduceMotion}
+              />
+
+              {/* Category content */}
+              <section
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  marginTop: 18,
+                  background: s.panel,
+                  border: `1px solid ${s.border}`,
+                  borderRadius: 16,
+                  boxShadow: s.shadow,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  overflow: 'hidden',
+                }}
+              >
+                <div
+                  style={{
+                    padding: isMobile ? '14px 18px' : '16px 22px',
+                    borderBottom: `1px solid ${s.border}`,
+                  }}
+                >
+                  <motion.div
+                    key={activeCategory}
+                    initial={reduceMotion ? false : { opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={oceanTransition(reduceMotion, { type: 'spring', stiffness: 360, damping: 32 })}
+                  >
+                    <div style={{ fontSize: 16, fontWeight: 700, color: s.text, lineHeight: 1.25 }}>
+                      {activeCategoryMeta.title}
+                    </div>
+                    <div style={{ marginTop: 3, fontSize: 12, color: s.textMuted, lineHeight: 1.4 }}>
+                      {activeCategoryMeta.description}
+                    </div>
+                  </motion.div>
+                </div>
+
+                <div style={{ flex: 1, padding: '24px', overflowY: 'auto' }}>
+                  <AnimatePresence mode="wait" custom={panelDirection}>
+                    <motion.div
+                      key={activeCategory}
+                      custom={panelDirection}
+                      variants={settingsPanelHeavy}
+                      initial="initial"
+                      animate="animate"
+                      exit="exit"
+                      transition={oceanTransition(reduceMotion)}
+                    >
+                      {tabPanel}
+                    </motion.div>
+                  </AnimatePresence>
+                </div>
+              </section>
             </main>
           </div>
         )}
