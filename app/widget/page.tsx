@@ -572,7 +572,13 @@ function WidgetPageInner() {
       return
     }
     el.scrollTo({ top: el.scrollHeight, behavior: reduceMotion ? 'auto' : 'smooth' })
-  }, [messages.length, isOpen, isLoading, reduceMotion])
+    // Late-growing content (staggered suggestion chips, the booking card
+    // spring) adds height after the first scroll — follow it down once settled.
+    const settle = window.setTimeout(() => {
+      el.scrollTo({ top: el.scrollHeight, behavior: reduceMotion ? 'auto' : 'smooth' })
+    }, 520)
+    return () => window.clearTimeout(settle)
+  }, [messages, isOpen, isLoading, reduceMotion])
 
   useEffect(() => {
     if (!businessId) {
@@ -783,11 +789,17 @@ function WidgetPageInner() {
 
       setMessages((prev) => {
         const lastAi = [...prev].reverse().find((m) => m.sender === 'ai')
-        if (lastAi && lastAi.text === aiText && !lastAi.id.startsWith('ai-')) return prev
         const suggestions =
           response.ok && Array.isArray(data.suggested_times) && data.suggested_times.length > 0
             ? data.suggested_times.filter((t): t is string => typeof t === 'string').slice(0, 6)
             : undefined
+        // Realtime may have delivered this reply from the DB before the fetch
+        // resolved. The DB row has no suggestions, so merge them in rather than
+        // dropping the response on the floor.
+        if (lastAi && lastAi.text === aiText && !lastAi.id.startsWith('ai-')) {
+          if (!suggestions) return prev
+          return prev.map((m) => (m.id === lastAi.id ? { ...m, suggestions } : m))
+        }
         const next: WidgetMessage[] = [
           ...prev,
           { id: nextMessageId('ai'), sender: 'ai', text: aiText, suggestions },
@@ -928,10 +940,10 @@ function WidgetPageInner() {
                 <p
                   style={{
                     margin: 0,
-                    fontSize: 15,
-                    fontWeight: 700,
+                    fontSize: 16,
+                    fontWeight: 750,
                     color: CHAT_TEXT,
-                    letterSpacing: '-0.01em',
+                    letterSpacing: '-0.015em',
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap',
@@ -939,7 +951,7 @@ function WidgetPageInner() {
                 >
                   {headerTitle}
                 </p>
-                <p style={{ margin: '2px 0 0', fontSize: 11.5, color: CHAT_MUTED }}>
+                <p style={{ margin: '2px 0 0', fontSize: 11.5, color: CHAT_MUTED, fontWeight: 500 }}>
                   {conciergeName} · Replies instantly
                 </p>
               </div>
@@ -1170,22 +1182,28 @@ function WidgetPageInner() {
                         transition={{ delay: 0.15, duration: 0.2 }}
                         style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '7px 0 0 36px' }}
                       >
-                        {message.suggestions!.map((suggestion) => (
+                        {message.suggestions!.map((suggestion, suggestionIndex) => (
                           <motion.button
                             key={suggestion}
                             type="button"
-                            whileHover={reduceMotion ? undefined : { y: -1, scale: 1.02 }}
-                            whileTap={reduceMotion ? undefined : { scale: 0.97 }}
+                            initial={reduceMotion ? false : { opacity: 0, y: 5 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.12 + suggestionIndex * 0.05, duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+                            whileHover={reduceMotion ? undefined : { y: -1, scale: 1.03 }}
+                            whileTap={reduceMotion ? undefined : { scale: 0.96 }}
                             onClick={() => void handleSend(suggestion)}
                             style={{
-                              border: `1px solid rgba(${WIDGET_ACCENT_RGB}, 0.3)`,
-                              borderRadius: 999,
-                              padding: '6px 12px',
-                              background: WIDGET_ACCENT_SOFT,
+                              border: `1.5px solid rgba(${WIDGET_ACCENT_RGB}, 0.45)`,
+                              borderRadius: 11,
+                              padding: '8px 13px',
+                              background: CHAT_SURFACE,
                               color: WIDGET_ACCENT_TEXT,
                               fontSize: 12.5,
-                              fontWeight: 650,
+                              fontWeight: 700,
+                              letterSpacing: '0.01em',
                               cursor: 'pointer',
+                              boxShadow: SOFT_SHADOW,
+                              fontVariantNumeric: 'tabular-nums',
                             }}
                           >
                             {suggestion}

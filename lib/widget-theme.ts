@@ -29,7 +29,9 @@ export function parseWidgetTheme(value: unknown): WidgetTheme {
 
 export const WIDGET_THEME_PALETTES: Record<WidgetTheme, Record<string, string>> = {
   ice: {
-    '--widget-canvas': '#ffffff',
+    // Tinted toward the brand hue — never pure white, so bubbles and cards
+    // keep definition without heavier borders.
+    '--widget-canvas': '#fafcfe',
     '--widget-surface': '#ffffff',
     '--widget-text': '#122a49',
     '--widget-muted': '#617a99',
@@ -40,17 +42,20 @@ export const WIDGET_THEME_PALETTES: Record<WidgetTheme, Record<string, string>> 
     '--widget-accent-text': '#146fca',
     '--widget-accent-soft': '#e4f4ff',
     '--widget-accent-rgb': '52, 156, 244',
-    '--widget-header-background': 'linear-gradient(135deg, #f5fbff 0%, #e1f2ff 50%, #c9e7fa 100%)',
+    // Radial highlight over the diagonal wash gives the header glass depth
+    // without an actual blur.
+    '--widget-header-background':
+      'radial-gradient(130% 180% at 88% -30%, rgba(255,255,255,0.95) 0%, rgba(255,255,255,0) 55%), linear-gradient(135deg, #ecf7ff 0%, #d9edfc 55%, #bfe1f8 100%)',
     '--widget-header-border': 'rgba(52, 156, 244, 0.3)',
     '--widget-header-shadow': '0 7px 20px rgba(34, 112, 170, 0.12)',
     '--widget-header-button-background': 'rgba(255,255,255,0.74)',
     '--widget-header-button-text': '#477395',
     '--widget-header-online-border': '#ffffff',
-    '--widget-message-ai': '#f0f2f5',
-    '--widget-message-customer': '#e6f3ff',
+    '--widget-message-ai': '#eef3f9',
+    '--widget-message-customer': 'linear-gradient(135deg, #e2f1ff 0%, #d3e9fc 100%)',
     '--widget-customer-text': '#122a49',
-    '--widget-message-ai-border': 'rgba(29, 55, 82, 0.04)',
-    '--widget-message-customer-border': 'rgba(52, 156, 244, 0.08)',
+    '--widget-message-ai-border': 'rgba(30, 74, 115, 0.06)',
+    '--widget-message-customer-border': 'rgba(52, 156, 244, 0.14)',
     '--widget-booking-background': 'linear-gradient(150deg, #ffffff 0%, #effbf6 100%)',
     '--widget-contact-background': 'linear-gradient(145deg, #ffffff 0%, #eef8ff 100%)',
     '--widget-contact-tabs-background': '#edf8ff',
