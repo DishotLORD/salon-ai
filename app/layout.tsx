@@ -59,7 +59,10 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} ${playfair.variable} ${inter.variable} ${plusJakarta.variable} ${montserrat.variable} h-full antialiased`}
     >
       <head>
-        <script dangerouslySetInnerHTML={{ __html: `(function(){try{var t=localStorage.getItem('theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;}catch(e){}})();` }} />
+        {/* Always stamp data-theme (default dark). Without the attribute the
+            token systems disagree: --t-* falls back dark while --bk-* falls
+            back light, so a first visit rendered half-dark, half-light. */}
+        <script dangerouslySetInnerHTML={{ __html: `(function(){try{var t=localStorage.getItem('theme');document.documentElement.dataset.theme=t==='light'?'light':'dark';}catch(e){document.documentElement.dataset.theme='dark';}})();` }} />
       </head>
       <body
         className="min-h-full flex flex-col"

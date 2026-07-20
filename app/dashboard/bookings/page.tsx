@@ -1665,7 +1665,7 @@ function ReservationModal({
                     width: 14,
                     height: 14,
                     borderRadius: '50%',
-                    border: '2px solid rgba(15,23,42,0.15)',
+                    border: '2px solid var(--bk-border-strong)',
                     borderTopColor: 'var(--bk-head)',
                     display: 'inline-block',
                   }}
