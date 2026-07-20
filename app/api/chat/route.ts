@@ -3541,6 +3541,18 @@ export async function POST(request: Request) {
       if (existing) {
         resolvedConversationId = existing.id
         resolvedCustomerId = existing.customer_id ?? null
+
+        // A returning guest reopens an auto-closed thread. Without this the
+        // inbox keeps the row in "Closed", and the dashboard never subscribes
+        // to its presence channel — the guest shows Offline while typing.
+        // 'human' is deliberately untouched: owner takeover must persist.
+        if ((existing.status ?? '').toString().trim().toLowerCase() === 'closed') {
+          await supabaseAdmin
+            .from('conversations')
+            .update({ status: 'active' })
+            .eq('id', existing.id)
+            .eq('business_id', business_id)
+        }
       }
     }
 

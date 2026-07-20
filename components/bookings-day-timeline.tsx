@@ -29,11 +29,11 @@ const STATUS_LABEL: Record<ResStatus, string> = {
 }
 
 const STATUS_STYLE: Record<ResStatus, { bg: string; border: string; color: string }> = {
-  confirmed: { bg: '#f0fdf4', border: '#86efac', color: '#16a34a' },
-  seated: { bg: '#eff6ff', border: '#93c5fd', color: '#2563eb' },
-  pending: { bg: '#fffbeb', border: '#fcd34d', color: '#d97706' },
-  cancelled: { bg: '#fef2f2', border: '#fca5a5', color: '#dc2626' },
-  'no-show': { bg: '#f8fafc', border: '#e2e8f0', color: '#64748b' },
+  confirmed: { bg: 'var(--bk-green-bg)', border: 'var(--bk-green-border)', color: 'var(--bk-green)' },
+  seated: { bg: 'var(--bk-blue-bg)', border: 'var(--bk-blue-border)', color: 'var(--bk-blue)' },
+  pending: { bg: 'var(--bk-amber-bg)', border: 'var(--bk-amber-border)', color: 'var(--bk-amber)' },
+  cancelled: { bg: 'var(--bk-danger-bg)', border: 'var(--bk-danger-border)', color: 'var(--bk-danger)' },
+  'no-show': { bg: 'var(--bk-surface)', border: 'var(--bk-border)', color: 'var(--bk-body)' },
 }
 
 function fmtTime(d: Date) {
@@ -204,7 +204,7 @@ export function BookingsDayTimeline({
       <div
         style={{
           padding: '10px 12px',
-          borderBottom: '1px solid #f1f5f9',
+          borderBottom: '1px solid var(--bk-border)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
@@ -212,8 +212,8 @@ export function BookingsDayTimeline({
         }}
       >
         <div>
-          <div style={{ fontSize: bk.title, fontWeight: 700, color: '#0f172a' }}>{dateLabel}</div>
-          <div style={{ fontSize: bk.micro, color: '#94a3b8', marginTop: 2 }}>
+          <div style={{ fontSize: bk.title, fontWeight: 700, color: 'var(--bk-head)' }}>{dateLabel}</div>
+          <div style={{ fontSize: bk.micro, color: 'var(--bk-muted)', marginTop: 2 }}>
             Drag to reschedule · 15 min slots
           </div>
         </div>
@@ -224,8 +224,8 @@ export function BookingsDayTimeline({
             padding: '5px 12px',
             borderRadius: bk.radiusSm,
             border: 'none',
-            background: '#0f172a',
-            color: '#fff',
+            background: 'var(--bk-inverse)',
+            color: 'var(--bk-inverse-text)',
             fontSize: bk.caption,
             fontWeight: 600,
             cursor: 'pointer',
@@ -236,13 +236,13 @@ export function BookingsDayTimeline({
       </div>
 
       {!range ? (
-        <div style={{ padding: 32, textAlign: 'center', color: '#94a3b8', fontSize: bk.caption }}>
+        <div style={{ padding: 32, textAlign: 'center', color: 'var(--bk-muted)', fontSize: bk.caption }}>
           Restaurant is closed on this day.
         </div>
       ) : loading ? (
         <div style={{ padding: 16, display: 'grid', gap: 8 }}>
           {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} style={{ height: 36, borderRadius: bk.radiusSm, background: '#f1f5f9' }} />
+            <div key={i} style={{ height: 36, borderRadius: bk.radiusSm, background: 'var(--bk-surface)' }} />
           ))}
         </div>
       ) : (
@@ -272,7 +272,7 @@ export function BookingsDayTimeline({
                     right: 6,
                     fontSize: 10,
                     fontWeight: 600,
-                    color: '#94a3b8',
+                    color: 'var(--bk-muted)',
                     whiteSpace: 'nowrap',
                   }}
                 >
@@ -288,7 +288,7 @@ export function BookingsDayTimeline({
                 position: 'relative',
                 height: trackHeight,
                 borderRadius: bk.radiusSm,
-                background: '#f8fafc',
+                background: 'var(--bk-surface)',
                 border: bk.border,
               }}
             >
@@ -301,7 +301,7 @@ export function BookingsDayTimeline({
                     right: 0,
                     top: `${timelinePercent(slot.minutes, range)}%`,
                     height: 1,
-                    background: i % 2 === 0 ? '#e2e8f0' : 'transparent',
+                    background: i % 2 === 0 ? 'var(--bk-border)' : 'transparent',
                     pointerEvents: 'none',
                   }}
                 />
@@ -355,7 +355,7 @@ export function BookingsDayTimeline({
                       overflow: 'hidden',
                     }}
                   >
-                    <div style={{ fontSize: bk.caption, fontWeight: 700, color: '#0f172a' }}>
+                    <div style={{ fontSize: bk.caption, fontWeight: 700, color: 'var(--bk-head)' }}>
                       {isDragging && dragTime
                         ? dragTime
                         : fmtTime(r.scheduledAt)}{' '}
@@ -375,7 +375,7 @@ export function BookingsDayTimeline({
                     inset: 0,
                     display: 'grid',
                     placeItems: 'center',
-                    color: '#94a3b8',
+                    color: 'var(--bk-muted)',
                     fontSize: 12,
                   }}
                 >

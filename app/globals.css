@@ -139,6 +139,7 @@ input[type="number"] { -moz-appearance: textfield; }
   --bk-green-border: #bbf7d0;
   --bk-amber: #d97706;
   --bk-amber-bg: #fef3c7;
+  --bk-amber-border: #fcd34d;
   --bk-blue: #2563eb;
   --bk-blue-bg: #dbeafe;
   --bk-blue-border: #bfdbfe;
@@ -148,6 +149,24 @@ input[type="number"] { -moz-appearance: textfield; }
   --bk-shadow-md: 0 1px 3px rgba(15,23,42,0.12);
   --bk-shadow-pop: 0 10px 24px rgba(15,23,42,0.3);
   --bk-weekend: rgba(15,23,42,0.025);
+
+  /* Bookings calendar: cell load heatmap + chrome. Theme-specific because the
+     heatmap reads as "more ink = busier" in light and "more glow = busier"
+     in dark; a single opaque ramp cannot do both. */
+  --bk-cal-shell: linear-gradient(165deg, rgba(224,247,255,0.92) 0%, #ffffff 42%, rgba(240,249,255,0.98) 100%);
+  --bk-cal-chrome: rgba(255,255,255,0.55);
+  --bk-cal-chrome-soft: rgba(255,255,255,0.45);
+  --bk-cal-line: rgba(56,189,248,0.08);
+  --bk-cal-gutter: rgba(56,189,248,0.06);
+  --bk-cal-border: rgba(56,189,248,0.2);
+  --bk-cal-shadow: 0 4px 20px rgba(14,116,144,0.07), inset 0 1px 0 rgba(255,255,255,0.95);
+  --bk-cal-cell: #ffffff;
+  --bk-cal-load-1: rgba(224,242,254,0.7);
+  --bk-cal-load-2: rgba(186,230,253,0.75);
+  --bk-cal-load-3: rgba(147,197,253,0.82);
+  --bk-cal-selected: linear-gradient(180deg, #e0f2fe 0%, #f0f9ff 100%);
+  --bk-cal-track: rgba(148,163,184,0.15);
+  --bk-cal-count-text: #ffffff;
 }
 
 [data-theme="dark"] {
@@ -178,6 +197,7 @@ input[type="number"] { -moz-appearance: textfield; }
   --bk-green-border: rgba(74,222,128,0.35);
   --bk-amber: #fbbf24;
   --bk-amber-bg: rgba(251,191,36,0.14);
+  --bk-amber-border: rgba(251,191,36,0.35);
   --bk-blue: #93c5fd;
   --bk-blue-bg: rgba(59,130,246,0.18);
   --bk-blue-border: rgba(59,130,246,0.40);
@@ -187,6 +207,25 @@ input[type="number"] { -moz-appearance: textfield; }
   --bk-shadow-md: 0 1px 3px rgba(0,0,0,0.5);
   --bk-shadow-pop: 0 10px 24px rgba(0,0,0,0.6);
   --bk-weekend: rgba(255,255,255,0.03);
+
+  /* Busier days glow brighter instead of getting lighter — the light-theme
+     ramp would read as white patches punched out of the dark surface. */
+  --bk-cal-shell: linear-gradient(165deg, rgba(56,189,248,0.07) 0%, var(--bk-card) 45%, rgba(14,116,144,0.10) 100%);
+  --bk-cal-chrome: rgba(255,255,255,0.03);
+  --bk-cal-chrome-soft: rgba(255,255,255,0.02);
+  --bk-cal-line: rgba(125,211,252,0.10);
+  --bk-cal-gutter: rgba(125,211,252,0.07);
+  --bk-cal-border: rgba(125,211,252,0.18);
+  --bk-cal-shadow: 0 4px 20px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05);
+  --bk-cal-cell: rgba(255,255,255,0.02);
+  --bk-cal-load-1: rgba(56,189,248,0.11);
+  --bk-cal-load-2: rgba(56,189,248,0.21);
+  --bk-cal-load-3: rgba(56,189,248,0.34);
+  --bk-cal-selected: linear-gradient(180deg, rgba(56,189,248,0.24) 0%, rgba(56,189,248,0.12) 100%);
+  --bk-cal-track: rgba(255,255,255,0.09);
+  /* --bk-accent is a light sky blue in dark mode, so the count badge needs
+     dark text rather than white. */
+  --bk-cal-count-text: #04121f;
 }
 
 :root {

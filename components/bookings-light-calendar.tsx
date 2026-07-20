@@ -25,18 +25,17 @@ function calendarCellDateKey(date: Date) {
 }
 
 const water = {
-  shell:
-    'linear-gradient(165deg, rgba(224,247,255,0.92) 0%, #ffffff 42%, rgba(240,249,255,0.98) 100%)',
-  border: '1px solid rgba(56,189,248,0.2)',
-  shadow: '0 4px 20px rgba(14,116,144,0.07), inset 0 1px 0 rgba(255,255,255,0.95)',
-  gridLine: '1px solid rgba(56,189,248,0.08)',
+  shell: 'var(--bk-cal-shell)',
+  border: '1px solid var(--bk-cal-border)',
+  shadow: 'var(--bk-cal-shadow)',
+  gridLine: '1px solid var(--bk-cal-line)',
 } as const
 
 function loadTint(ratio: number, inMonth: boolean): string {
-  if (!inMonth || ratio <= 0) return '#ffffff'
-  if (ratio < 0.34) return 'rgba(224,242,254,0.7)'
-  if (ratio < 0.67) return 'rgba(186,230,253,0.75)'
-  return 'rgba(147,197,253,0.82)'
+  if (!inMonth || ratio <= 0) return 'var(--bk-cal-cell)'
+  if (ratio < 0.34) return 'var(--bk-cal-load-1)'
+  if (ratio < 0.67) return 'var(--bk-cal-load-2)'
+  return 'var(--bk-cal-load-3)'
 }
 
 type DayCellStats = {
@@ -156,9 +155,9 @@ export function BookingsLightCalendar({
     width: 30,
     height: 30,
     borderRadius: bk.radiusSm,
-    border: '1px solid rgba(56,189,248,0.22)',
-    background: 'rgba(255,255,255,0.85)',
-    color: '#0369a1',
+    border: '1px solid var(--bk-cal-border)',
+    background: 'var(--bk-cal-chrome)',
+    color: 'var(--bk-accent)',
     cursor: 'pointer',
     fontSize: 16,
     display: 'grid',
@@ -213,7 +212,7 @@ export function BookingsLightCalendar({
             style={{
               fontSize: 14,
               fontWeight: 700,
-              color: '#0c4a6e',
+              color: 'var(--bk-head)',
               letterSpacing: '-0.02em',
             }}
           >
@@ -233,7 +232,7 @@ export function BookingsLightCalendar({
           gridTemplateColumns: 'repeat(7, minmax(0, 1fr))',
           borderTop: water.gridLine,
           borderBottom: water.gridLine,
-          background: 'rgba(255,255,255,0.55)',
+          background: 'var(--bk-cal-chrome)',
         }}
       >
         {DOW.map((d) => (
@@ -244,7 +243,7 @@ export function BookingsLightCalendar({
               textAlign: 'center',
               fontSize: 10,
               fontWeight: 700,
-              color: '#64748b',
+              color: 'var(--bk-body)',
               letterSpacing: '0.04em',
               textTransform: 'uppercase',
             }}
@@ -263,7 +262,7 @@ export function BookingsLightCalendar({
           initial="initial"
           animate="animate"
           exit="exit"
-          style={{ ...gridStyle, padding: 1, background: 'rgba(56,189,248,0.06)' }}
+          style={{ ...gridStyle, padding: 1, background: 'var(--bk-cal-gutter)' }}
         >
           {cells.map(({ date, inMonth }, idx) => {
             const k = calendarCellDateKey(date)
@@ -298,16 +297,16 @@ export function BookingsLightCalendar({
                   border: 'none',
                   borderRadius: 2,
                   boxShadow: isSelected
-                    ? 'inset 0 0 0 2px #0284c7'
+                    ? 'inset 0 0 0 2px var(--bk-accent)'
                     : showTodayRing
-                      ? 'inset 0 0 0 1px #38bdf8'
+                      ? 'inset 0 0 0 1px var(--bk-accent)'
                       : onlyCancelled
-                        ? 'inset 0 0 0 1px rgba(239,68,68,0.35)'
+                        ? 'inset 0 0 0 1px var(--bk-danger-border)'
                         : 'none',
                   background: closed
-                    ? '#f1f5f9'
+                    ? 'var(--bk-surface)'
                     : isSelected
-                      ? 'linear-gradient(180deg, #e0f2fe 0%, #f0f9ff 100%)'
+                      ? 'var(--bk-cal-selected)'
                       : loadTint(loadRatio, inMonth),
                   cursor: 'pointer',
                   display: 'grid',
@@ -334,8 +333,8 @@ export function BookingsLightCalendar({
                         height: 18,
                         padding: '0 4px',
                         borderRadius: 5,
-                        background: isSelected ? '#0284c7' : '#0ea5e9',
-                        color: '#fff',
+                        background: 'var(--bk-accent)',
+                        color: 'var(--bk-cal-count-text)',
                         fontSize: 10,
                         fontWeight: 700,
                         display: 'inline-flex',
@@ -356,14 +355,12 @@ export function BookingsLightCalendar({
                       fontWeight: isSelected || isToday ? 700 : inMonth ? 600 : 500,
                       lineHeight: 1.1,
                       color: !inMonth
-                        ? '#cbd5e1'
-                        : isSelected
-                          ? '#0369a1'
-                          : isToday
-                            ? '#0284c7'
-                            : isPast
-                              ? '#94a3b8'
-                              : '#0f172a',
+                        ? 'var(--bk-muted)'
+                        : isSelected || isToday
+                          ? 'var(--bk-accent)'
+                          : isPast
+                            ? 'var(--bk-muted)'
+                            : 'var(--bk-head)',
                       marginLeft: 'auto',
                     }}
                   >
@@ -373,12 +370,12 @@ export function BookingsLightCalendar({
 
                 <div style={{ minHeight: 14, display: 'flex', alignItems: 'center' }}>
                   {closed && inMonth ? (
-                    <span style={{ fontSize: 9, color: '#94a3b8', fontWeight: 600 }}>Closed</span>
+                    <span style={{ fontSize: 9, color: 'var(--bk-muted)', fontWeight: 600 }}>Closed</span>
                   ) : covers > 0 && inMonth ? (
                     <span
                       style={{
                         fontSize: 9,
-                        color: isSelected ? '#0369a1' : '#64748b',
+                        color: isSelected ? 'var(--bk-accent)' : 'var(--bk-body)',
                         fontWeight: 500,
                         lineHeight: 1.2,
                       }}
@@ -386,7 +383,7 @@ export function BookingsLightCalendar({
                       {covers} {covers === 1 ? 'guest' : 'guests'}
                     </span>
                   ) : onlyCancelled && inMonth ? (
-                    <span style={{ fontSize: 9, color: '#dc2626', fontWeight: 500 }}>
+                    <span style={{ fontSize: 9, color: 'var(--bk-danger)', fontWeight: 500 }}>
                       {cancelledCount} cancelled
                     </span>
                   ) : null}
@@ -399,7 +396,7 @@ export function BookingsLightCalendar({
                     style={{
                       height: 4,
                       borderRadius: 2,
-                      background: 'rgba(148,163,184,0.15)',
+                      background: 'var(--bk-cal-track)',
                       overflow: 'hidden',
                       visibility: count > 0 && inMonth && !closed ? 'visible' : 'hidden',
                     }}
@@ -408,9 +405,7 @@ export function BookingsLightCalendar({
                       style={{
                         height: '100%',
                         width: `${Math.max(12, loadRatio * 100)}%`,
-                        background: isSelected
-                          ? 'linear-gradient(90deg, #0284c7, #38bdf8)'
-                          : 'linear-gradient(90deg, #0ea5e9, #7dd3fc)',
+                        background: 'linear-gradient(90deg, var(--bk-accent), #7dd3fc)',
                         borderRadius: 2,
                         transition: 'width 0.25s ease',
                       }}
@@ -421,7 +416,7 @@ export function BookingsLightCalendar({
                       style={{
                         height: 2,
                         borderRadius: 1,
-                        background: 'rgba(239,68,68,0.25)',
+                        background: 'var(--bk-danger-bg)',
                         overflow: 'hidden',
                       }}
                     >
@@ -429,7 +424,7 @@ export function BookingsLightCalendar({
                         style={{
                           height: '100%',
                           width: onlyCancelled ? '100%' : `${Math.min(100, cancelledCount * 25)}%`,
-                          background: '#f87171',
+                          background: 'var(--bk-danger)',
                         }}
                       />
                     </div>
@@ -451,19 +446,19 @@ export function BookingsLightCalendar({
           padding: '8px 14px',
           borderTop: water.gridLine,
           fontSize: 10,
-          color: '#64748b',
-          background: 'rgba(255,255,255,0.45)',
+          color: 'var(--bk-body)',
+          background: 'var(--bk-cal-chrome-soft)',
         }}
       >
-        <span style={{ fontWeight: 700, color: '#475569' }}>Load</span>
+        <span style={{ fontWeight: 700, color: 'var(--bk-text)' }}>Load</span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
           <span
             style={{
               width: 12,
               height: 12,
               borderRadius: 3,
-              background: 'rgba(224,242,254,0.9)',
-              border: '1px solid rgba(56,189,248,0.15)',
+              background: 'var(--bk-cal-load-1)',
+              border: '1px solid var(--bk-cal-border)',
             }}
           />
           Light
@@ -474,13 +469,13 @@ export function BookingsLightCalendar({
               width: 12,
               height: 12,
               borderRadius: 3,
-              background: 'rgba(147,197,253,0.82)',
-              border: '1px solid rgba(56,189,248,0.2)',
+              background: 'var(--bk-cal-load-3)',
+              border: '1px solid var(--bk-cal-border)',
             }}
           />
           Busy
         </span>
-        <span style={{ textAlign: 'right', fontWeight: 600, color: '#94a3b8' }}>
+        <span style={{ textAlign: 'right', fontWeight: 600, color: 'var(--bk-muted)' }}>
           Number = bookings
         </span>
       </div>
@@ -494,7 +489,7 @@ export function BookingsLightCalendar({
           justifyContent: 'space-between',
           alignItems: 'center',
           gap: 8,
-          background: 'rgba(255,255,255,0.55)',
+          background: 'var(--bk-cal-chrome)',
           minHeight: 40,
         }}
       >
@@ -504,9 +499,9 @@ export function BookingsLightCalendar({
           style={{
             padding: '6px 14px',
             borderRadius: bk.radiusSm,
-            border: `1px solid ${isAtToday ? 'rgba(56,189,248,0.45)' : 'rgba(56,189,248,0.18)'}`,
-            background: isAtToday ? '#e0f2fe' : '#ffffff',
-            color: isAtToday ? '#0369a1' : '#64748b',
+            border: `1px solid ${isAtToday ? 'var(--bk-accent)' : 'var(--bk-cal-border)'}`,
+            background: isAtToday ? 'var(--bk-accent-soft)' : 'var(--bk-cal-cell)',
+            color: isAtToday ? 'var(--bk-accent)' : 'var(--bk-body)',
             fontSize: bk.caption,
             fontWeight: 600,
             cursor: 'pointer',
@@ -521,9 +516,9 @@ export function BookingsLightCalendar({
             style={{
               padding: '6px 14px',
               borderRadius: bk.radiusSm,
-              border: '1px solid rgba(56,189,248,0.15)',
-              background: '#ffffff',
-              color: '#64748b',
+              border: '1px solid var(--bk-cal-border)',
+              background: 'var(--bk-cal-cell)',
+              color: 'var(--bk-body)',
               fontSize: bk.caption,
               fontWeight: 500,
               cursor: 'pointer',

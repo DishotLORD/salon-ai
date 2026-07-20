@@ -46,12 +46,12 @@ export function BookingsDayEmptyStrip({
         gap: 10,
         padding: '10px 12px',
         borderRadius: bk.radiusSm,
-        background: '#f8fafc',
+        background: 'var(--bk-surface)',
         border: bk.border,
         fontFamily: bk.font,
       }}
     >
-      <span style={{ fontSize: bk.caption, color: '#64748b', fontWeight: 500 }}>
+      <span style={{ fontSize: bk.caption, color: 'var(--bk-body)', fontWeight: 500 }}>
         No bookings on {label}
       </span>
       <button
@@ -61,8 +61,8 @@ export function BookingsDayEmptyStrip({
           padding: '6px 12px',
           borderRadius: 999,
           border: 'none',
-          background: '#0f172a',
-          color: '#fff',
+          background: 'var(--bk-inverse)',
+          color: 'var(--bk-inverse-text)',
           fontSize: bk.micro,
           fontWeight: 600,
           cursor: 'pointer',
@@ -96,7 +96,7 @@ export function BookingsDayChips({
     gap: 6,
     padding: '8px 10px',
     borderRadius: bk.radiusSm,
-    background: '#f8fafc',
+    background: 'var(--bk-surface)',
     border: bk.border,
     fontFamily: bk.font,
   }
@@ -105,7 +105,7 @@ export function BookingsDayChips({
     return (
       <div style={row} aria-busy="true">
         {Array.from({ length: 3 }).map((_, i) => (
-          <div key={i} style={{ height: 24, width: 100, borderRadius: 999, background: '#e2e8f0' }} />
+          <div key={i} style={{ height: 24, width: 100, borderRadius: 999, background: 'var(--bk-surface-2)' }} />
         ))}
       </div>
     )
@@ -128,19 +128,19 @@ export function BookingsDayChips({
               padding: '5px 9px',
               borderRadius: 999,
               border: `1px solid ${sc.color}33`,
-              background: '#ffffff',
-              color: '#0f172a',
+              background: 'var(--bk-card)',
+              color: 'var(--bk-head)',
               fontSize: bk.micro,
               fontWeight: 500,
               cursor: 'pointer',
-              boxShadow: '0 1px 2px rgba(15,23,42,0.04)',
+              boxShadow: 'var(--bk-shadow)',
               maxWidth: '100%',
             }}
           >
             <span style={{ fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
               {fmtTime(r.scheduledAt)}
             </span>
-            <span style={{ color: '#cbd5e1' }}>|</span>
+            <span style={{ color: 'var(--bk-border-strong)' }}>|</span>
             <span
               style={{
                 overflow: 'hidden',
@@ -151,7 +151,7 @@ export function BookingsDayChips({
             >
               {r.guestName}
             </span>
-            <span style={{ color: '#94a3b8', fontSize: 10 }}>{r.partySize}p</span>
+            <span style={{ color: 'var(--bk-muted)', fontSize: 10 }}>{r.partySize}p</span>
             <span
               style={{
                 fontSize: 9,
@@ -167,7 +167,7 @@ export function BookingsDayChips({
         )
       })}
       {more > 0 && (
-        <span style={{ fontSize: 11, fontWeight: 600, color: '#64748b' }}>+{more} more</span>
+        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--bk-body)' }}>+{more} more</span>
       )}
       <button
         type="button"
@@ -176,9 +176,9 @@ export function BookingsDayChips({
           marginLeft: 'auto',
           padding: '6px 12px',
           borderRadius: 999,
-          border: '1px dashed #cbd5e1',
+          border: '1px dashed var(--bk-border-strong)',
           background: 'transparent',
-          color: '#64748b',
+          color: 'var(--bk-body)',
           fontSize: 11,
           fontWeight: 600,
           cursor: 'pointer',
