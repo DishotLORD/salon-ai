@@ -8,34 +8,39 @@
 const CSS = `
 .ocld-root{min-height:100vh;display:grid;place-items:center;overflow:hidden;}
 .ocld-stage{position:relative;display:grid;justify-items:center;gap:26px;}
+/* Draw-in choreography runs at half its original tempo so the whole mark lands
+   in ~1.8s: BrandTransitionLink used to hold the screen for 3.6s waiting on it,
+   which read as a frozen page. The three ambient loops below (halo, breathe,
+   scan) keep their original periods and only start earlier; doubling their
+   speed too made the settled state look agitated. */
 .ocld-halo{position:absolute;top:-100px;left:50%;margin-left:-175px;width:350px;height:350px;border-radius:50%;
   background:radial-gradient(circle,rgba(56,189,248,0.14) 0%,transparent 62%);
   filter:blur(14px);pointer-events:none;
-  animation:ocld-halo 3s ease-in-out .4s infinite;}
-.ocld-mark{overflow:visible;animation:ocld-breathe 3.4s ease-in-out 3.2s infinite;}
+  animation:ocld-halo 3s ease-in-out .2s infinite;}
+.ocld-mark{overflow:visible;animation:ocld-breathe 3.4s ease-in-out 1.6s infinite;}
 .ocld-draw{stroke-dasharray:1;stroke-dashoffset:1;animation:ocld-draw cubic-bezier(.45,0,.18,1) both;}
-.ocld-s1{animation-duration:1.7s;animation-delay:.18s;}
-.ocld-s2{animation-duration:1.5s;animation-delay:.48s;}
-.ocld-s3{animation-duration:1.25s;animation-delay:.78s;}
-.ocld-b1{animation-duration:.5s;animation-delay:1.42s;}
-.ocld-b2{animation-duration:.5s;animation-delay:1.57s;}
-.ocld-b3{animation-duration:.5s;animation-delay:1.72s;}
+.ocld-s1{animation-duration:.85s;animation-delay:.09s;}
+.ocld-s2{animation-duration:.75s;animation-delay:.24s;}
+.ocld-s3{animation-duration:.63s;animation-delay:.39s;}
+.ocld-b1{animation-duration:.25s;animation-delay:.71s;}
+.ocld-b2{animation-duration:.25s;animation-delay:.79s;}
+.ocld-b3{animation-duration:.25s;animation-delay:.86s;}
 .ocld-dot{opacity:0;transform:scale(0);transform-box:fill-box;transform-origin:center;
-  animation:ocld-pop .7s cubic-bezier(.34,1.56,.64,1) both;}
-.ocld-d1{animation-delay:1.68s;}
-.ocld-d2{animation-delay:1.83s;}
-.ocld-d3{animation-delay:1.98s;}
-.ocld-ripple{opacity:0;animation:ocld-ripple 1.1s cubic-bezier(.22,1,.36,1) both;}
-.ocld-r1{--ocld-o:.72;animation-delay:2.12s;}
-.ocld-r2{--ocld-o:.46;animation-delay:2.32s;}
+  animation:ocld-pop .35s cubic-bezier(.34,1.56,.64,1) both;}
+.ocld-d1{animation-delay:.84s;}
+.ocld-d2{animation-delay:.92s;}
+.ocld-d3{animation-delay:.99s;}
+.ocld-ripple{opacity:0;animation:ocld-ripple .55s cubic-bezier(.22,1,.36,1) both;}
+.ocld-r1{--ocld-o:.72;animation-delay:1.06s;}
+.ocld-r2{--ocld-o:.46;animation-delay:1.16s;}
 .ocld-word{font-family:var(--font-plus-jakarta,system-ui,sans-serif);font-size:11.5px;font-weight:700;
   letter-spacing:.44em;margin-right:-.44em;color:#7dd3fc;opacity:0;
-  animation:ocld-rise 1.1s cubic-bezier(.22,1,.36,1) 2.35s both;}
+  animation:ocld-rise .55s cubic-bezier(.22,1,.36,1) 1.18s both;}
 .ocld-bar{width:150px;height:2px;border-radius:2px;background:rgba(125,211,252,.13);overflow:hidden;
-  opacity:0;animation:ocld-rise 1.1s cubic-bezier(.22,1,.36,1) 2.55s both;}
+  opacity:0;animation:ocld-rise .55s cubic-bezier(.22,1,.36,1) 1.28s both;}
 .ocld-bar span{display:block;height:100%;width:42%;border-radius:2px;
   background:linear-gradient(90deg,transparent,#38bdf8 45%,#7dd3fc 55%,transparent);
-  animation:ocld-scan 1.9s cubic-bezier(.45,.05,.55,.95) 3s infinite;}
+  animation:ocld-scan 1.9s cubic-bezier(.45,.05,.55,.95) 1.5s infinite;}
 @keyframes ocld-draw{to{stroke-dashoffset:0;}}
 @keyframes ocld-pop{60%{opacity:1;}to{opacity:1;transform:scale(1);}}
 @keyframes ocld-ripple{from{opacity:0;transform:translateY(3px);}to{opacity:var(--ocld-o,1);transform:none;}}
