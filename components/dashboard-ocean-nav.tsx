@@ -7,6 +7,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 
 import { DashboardLogoutButton } from '@/components/dashboard-logout-button'
 import { OceanCoreLogo } from '@/components/oceancore-logo'
+import { type BusinessAccess, resolveBusinessAccess } from '@/lib/business-access'
 import { drawerOverlay, drawerPanelLeft, oceanTransition } from '@/lib/ocean-motion'
 import { supabase } from '@/lib/supabase'
 import { t, sidebar } from '@/lib/dashboard-theme'
@@ -33,6 +34,12 @@ type NavItem = {
   icon: ReactNode
 }
 
+/** The rail is captioned rather than uniform: work, records, then the account. */
+type NavGroup = {
+  label: string
+  items: NavItem[]
+}
+
 const SIDEBAR_WIDTH = 240
 
 // Theme lives on <html data-theme> (set pre-hydration by the inline script in
@@ -49,6 +56,14 @@ function subscribeTheme(listener: () => void) {
 
 function getThemeSnapshot(): 'dark' | 'light' {
   return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark'
+}
+
+/** Head-only count query — no rows travel, just the number. */
+function buildChatCountQuery(businessId: string) {
+  return supabase
+    .from('conversations')
+    .select('*', { count: 'exact', head: true })
+    .eq('business_id', businessId)
 }
 
 function setGlobalTheme(next: 'dark' | 'light') {
@@ -113,19 +128,32 @@ function IconAnalytics() {
   )
 }
 
-const navItems: NavItem[] = [
-  { id: 'Dashboard', href: '/dashboard', icon: <IconDashboard /> },
-  { id: 'Chats', href: '/dashboard/chats', icon: <IconChats /> },
-  { id: 'Bookings', href: '/dashboard/bookings', icon: <IconBookings /> },
-  { id: 'CRM', href: '/dashboard/crm', icon: <IconCRM /> },
-  { id: 'Analytics', href: '/dashboard/analytics', icon: <IconAnalytics /> },
-  { id: 'Settings', href: '/dashboard/settings', icon: <IconSettings /> },
+const navGroups: NavGroup[] = [
+  {
+    label: 'Main',
+    items: [
+      { id: 'Dashboard', href: '/dashboard', icon: <IconDashboard /> },
+      { id: 'Chats', href: '/dashboard/chats', icon: <IconChats /> },
+      { id: 'Bookings', href: '/dashboard/bookings', icon: <IconBookings /> },
+    ],
+  },
+  {
+    label: 'Manage',
+    items: [
+      { id: 'CRM', href: '/dashboard/crm', icon: <IconCRM /> },
+      { id: 'Analytics', href: '/dashboard/analytics', icon: <IconAnalytics /> },
+    ],
+  },
+  {
+    label: 'System',
+    items: [{ id: 'Settings', href: '/dashboard/settings', icon: <IconSettings /> }],
+  },
 ]
 
 function AnimatedWaveLogo() {
   return (
     <Link href="/dashboard" style={{ textDecoration: 'none' }}>
-      <div style={{ padding: '24px 20px 18px' }}>
+      <div style={{ padding: '24px 20px 22px' }}>
         <OceanCoreLogo variant="sidebar" theme="dark" />
       </div>
     </Link>
@@ -134,18 +162,209 @@ function AnimatedWaveLogo() {
 
 function IconSun() {
   return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-      <circle cx="12" cy="12" r="4"/>
-      <path d="M12 2v2M12 20v2M5 5l1.4 1.4M17.6 17.6 19 19M2 12h2M20 12h2M5 19l1.4-1.4M17.6 6.4 19 5"/>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="5.1" fill="currentColor"/>
+      <path
+        d="M12 2.25v2.1M12 19.65v2.1M5.1 5.1l1.48 1.48M17.42 17.42l1.48 1.48M2.25 12h2.1M19.65 12h2.1M5.1 18.9l1.48-1.48M17.42 6.58l1.48-1.48"
+        stroke="currentColor"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+      />
     </svg>
   )
 }
 
 function IconMoon() {
   return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-      <path d="M21 13A9 9 0 1 1 11 3a7 7 0 0 0 10 10Z"/>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M20.55 14.25A8.75 8.75 0 1 1 9.75 3.45a7.15 7.15 0 0 0 10.8 10.8Z"
+        fill="currentColor"
+      />
+      <path
+        d="M13.55 5.05c.17.93.63 1.67 1.39 2.16.58.38 1.26.6 2.05.66-.79.06-1.47.28-2.05.66-.76.49-1.22 1.23-1.39 2.16-.17-.93-.63-1.67-1.39-2.16a4.14 4.14 0 0 0-2.05-.66c.79-.06 1.47-.28 2.05-.66.76-.49 1.22-1.23 1.39-2.16ZM18.78 2.05c.08.47.32.84.7 1.09.29.19.63.3 1.03.33-.4.03-.74.14-1.03.33-.38.25-.62.62-.7 1.09-.09-.47-.32-.84-.7-1.09a2.08 2.08 0 0 0-1.04-.33c.4-.03.75-.14 1.04-.33.38-.25.61-.62.7-1.09ZM9.1 3.7c.06.34.23.61.51.79.21.14.46.22.75.24-.29.02-.54.1-.75.24-.28.18-.45.45-.51.79-.06-.34-.23-.61-.51-.79a1.52 1.52 0 0 0-.75-.24c.29-.02.54-.1.75-.24.28-.18.45-.45.51-.79Z"
+        fill="currentColor"
+      />
     </svg>
+  )
+}
+
+function ThemeIcon({ theme, reduceMotion }: { theme: 'dark' | 'light'; reduceMotion: boolean | null }) {
+  const isDark = theme === 'dark'
+  const transition = reduceMotion
+    ? { duration: 0.12 }
+    : { duration: 0.28, ease: [0.23, 1, 0.32, 1] as const }
+
+  const layer: CSSProperties = {
+    position: 'absolute',
+    inset: 0,
+    display: 'grid',
+    placeItems: 'center',
+    willChange: 'transform, opacity',
+  }
+
+  // Layers only — the toggle button itself provides the box and tint.
+  return (
+    <>
+      <motion.span
+        aria-hidden="true"
+        initial={false}
+        animate={reduceMotion
+          ? { opacity: isDark ? 1 : 0 }
+          : { opacity: isDark ? 1 : 0, rotate: isDark ? 0 : -55, scale: isDark ? 1 : 0.5 }}
+        transition={transition}
+        style={{ ...layer, color: '#d9e9ff' }}
+      >
+        <IconMoon />
+      </motion.span>
+      <motion.span
+        aria-hidden="true"
+        initial={false}
+        animate={reduceMotion
+          ? { opacity: isDark ? 0 : 1 }
+          : { opacity: isDark ? 0 : 1, rotate: isDark ? 55 : 0, scale: isDark ? 0.5 : 1 }}
+        transition={transition}
+        style={{ ...layer, color: '#ffcf5a' }}
+      >
+        <IconSun />
+      </motion.span>
+    </>
+  )
+}
+
+type IconButtonTone = {
+  bg: string
+  border: string
+  bgHover: string
+  borderHover: string
+  color: string
+  colorHover?: string
+}
+
+const SIGN_OUT_TONE: IconButtonTone = {
+  // Zero-alpha rgba, not `transparent`: framer cannot interpolate the keyword
+  // and warns, leaving the hover tint to snap instead of fade.
+  bg: 'rgba(255,255,255,0)',
+  border: sidebar.border,
+  bgHover: 'rgba(248,113,113,0.14)',
+  borderHover: 'rgba(248,113,113,0.34)',
+  color: sidebar.textSubtle,
+  colorHover: '#f87171',
+}
+
+const ROLE_LABEL = { owner: 'Owner', manager: 'Manager', host: 'Host' } as const
+
+/** Square control for the account row. One shape for every session action. */
+function SidebarIconButton({
+  label,
+  onClick,
+  tone,
+  reduceMotion,
+  pressed,
+  children,
+}: {
+  label: string
+  onClick: () => void
+  tone: IconButtonTone
+  reduceMotion: boolean | null
+  pressed?: boolean
+  children: ReactNode
+}) {
+  return (
+    <motion.button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      aria-pressed={pressed}
+      whileTap={reduceMotion ? undefined : { scale: 0.9 }}
+      // Hover stays declarative: imperative style writes would capture `tone`
+      // from this render, so flipping the theme with the pointer resting on the
+      // button would restore the previous theme's tint on mouseleave.
+      initial={false}
+      animate={{ backgroundColor: tone.bg, borderColor: tone.border, color: tone.color }}
+      whileHover={{
+        backgroundColor: tone.bgHover,
+        borderColor: tone.borderHover,
+        color: tone.colorHover ?? tone.color,
+      }}
+      transition={{ duration: reduceMotion ? 0 : 0.18, ease: [0.23, 1, 0.32, 1] }}
+      style={{
+        width: 30,
+        height: 30,
+        padding: 0,
+        flexShrink: 0,
+        position: 'relative',
+        overflow: 'hidden',
+        display: 'grid',
+        placeItems: 'center',
+        borderRadius: 9,
+        cursor: 'pointer',
+        borderWidth: 1,
+        borderStyle: 'solid',
+      }}
+    >
+      {children}
+    </motion.button>
+  )
+}
+
+/**
+ * Who is answering guests right now. The ripple only runs when a chat is
+ * actually open, so a still dot means a quiet room rather than a dead widget.
+ */
+function ServiceStatus({
+  chats,
+  reduceMotion,
+}: {
+  chats: { live: number; human: number } | null
+  reduceMotion: boolean | null
+}) {
+  if (!chats) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, height: 16 }}>
+        <span style={{ width: 7, height: 7, borderRadius: '50%', background: sidebar.surfaceHover, flexShrink: 0 }} />
+        <span style={{ height: 7, width: 108, borderRadius: 99, background: sidebar.surfaceHover }} />
+      </div>
+    )
+  }
+
+  const waiting = chats.human
+  const live = chats.live
+  const tone = waiting > 0 ? '#fbbf24' : live > 0 ? t.accent : sidebar.textSubtle
+  const alive = waiting > 0 || live > 0
+  const label =
+    waiting > 0
+      ? `${waiting} ${waiting === 1 ? 'chat needs' : 'chats need'} you`
+      : live > 0
+        ? `AI handling ${live} ${live === 1 ? 'chat' : 'chats'}`
+        : 'All quiet'
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, height: 16 }}>
+      {/* color feeds both the dot and the ripple through currentColor. */}
+      <span style={{ position: 'relative', width: 7, height: 7, flexShrink: 0, color: tone }}>
+        {alive && !reduceMotion ? <span className="oc-pulse" aria-hidden="true" /> : null}
+        <span style={{
+          position: 'absolute',
+          inset: 0,
+          borderRadius: '50%',
+          background: 'currentColor',
+          boxShadow: alive ? '0 0 8px currentColor' : 'none',
+        }} />
+      </span>
+      <span style={{
+        fontSize: 12,
+        fontWeight: 500,
+        letterSpacing: 0.1,
+        color: alive ? sidebar.text : sidebar.textMuted,
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+      }}>
+        {label}
+      </span>
+    </div>
   )
 }
 
@@ -154,12 +373,32 @@ export function DashboardOceanNav({ activeNav, fillViewport, flatBackground, chi
   const [isDrawerOpen, setDrawerOpen] = useState(false)
   const [userEmail, setUserEmail] = useState<string | null>(null)
   const [logoutOpen, setLogoutOpen] = useState(false)
+  const [access, setAccess] = useState<BusinessAccess | null>(null)
+  const [venueName, setVenueName] = useState<string | null>(null)
+  // null while the first count is in flight, so the status line can hold its
+  // height with a skeleton instead of shifting when the numbers land.
+  const [chats, setChats] = useState<{ live: number; human: number } | null>(null)
   const theme = useSyncExternalStore(subscribeTheme, getThemeSnapshot, () => 'dark' as const)
   const reduceMotion = useReducedMotion()
 
   const toggleTheme = useCallback(() => {
     setGlobalTheme(theme === 'dark' ? 'light' : 'dark')
   }, [theme])
+
+  // The icon carries the state on its own, so the button needs a label for
+  // screen readers and a tooltip for everyone else.
+  const themeActionLabel = `Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`
+  // Literal rgba rather than --t-* tokens: the tint tracks the icon (cool for
+  // the moon, warm for the sun) rather than the sidebar accent.
+  // `color` is only the type contract: ThemeIcon paints its own two layers.
+  const themeBtn: IconButtonTone = theme === 'dark'
+    ? { bg: 'rgba(96,184,255,0.10)', border: 'rgba(122,196,255,0.16)', bgHover: 'rgba(96,184,255,0.18)', borderHover: 'rgba(122,196,255,0.32)', color: sidebar.textMuted }
+    : { bg: 'rgba(255,190,66,0.12)', border: 'rgba(255,190,66,0.20)', bgHover: 'rgba(255,190,66,0.20)', borderHover: 'rgba(255,190,66,0.36)', color: sidebar.textMuted }
+
+  // Replaces the old hardcoded "Free plan": real role, real venue.
+  const accountSubtitle = [access ? ROLE_LABEL[access.role] : null, venueName]
+    .filter(Boolean)
+    .join(' · ')
 
   useEffect(() => {
     let mounted = true
@@ -187,90 +426,154 @@ export function DashboardOceanNav({ activeNav, fillViewport, flatBackground, chi
     }
   }, [])
 
+  useEffect(() => {
+    let mounted = true
+    void resolveBusinessAccess().then(async (resolved) => {
+      if (!mounted || !resolved) return
+      setAccess(resolved)
+      const { data } = await supabase
+        .from('businesses')
+        .select('name')
+        .eq('id', resolved.businessId)
+        .maybeSingle()
+      if (mounted) setVenueName(typeof data?.name === 'string' ? data.name : null)
+    })
+    return () => {
+      mounted = false
+    }
+  }, [])
+
+  // Open conversations, split by who is answering. 'closed' is the only
+  // terminal status the app writes, so everything else is still open.
+  useEffect(() => {
+    const businessId = access?.businessId
+    if (!businessId) return
+    let mounted = true
+
+    const load = async () => {
+      const [live, human] = await Promise.all([
+        buildChatCountQuery(businessId).or('status.is.null,status.eq.active'),
+        buildChatCountQuery(businessId).eq('status', 'human'),
+      ])
+      if (!mounted) return
+      const next = { live: live.count ?? 0, human: human.count ?? 0 }
+      // Keep the previous object when the counts are unchanged: a fresh object
+      // every 30s re-rendered the whole sidebar for nothing.
+      setChats((prev) =>
+        prev && prev.live === next.live && prev.human === next.human ? prev : next,
+      )
+    }
+
+    void load()
+    const id = setInterval(() => void load(), 30_000)
+    return () => {
+      mounted = false
+      clearInterval(id)
+    }
+  }, [access?.businessId])
+
+  const openChats = chats ? chats.live + chats.human : 0
+
   const openNav = useCallback(() => setDrawerOpen(true), [])
   const closeNav = useCallback(() => setDrawerOpen(false), [])
   const renderProps = useMemo(() => ({ isMobile, openNav, closeNav }), [isMobile, openNav, closeNav])
 
+  // Each row carries its own delay instead of inheriting a `staggerChildren`
+  // variant from the nav: the captions split the list across three wrappers,
+  // and a container-driven stagger only orders its own direct children. Counted
+  // across the whole rail, the entrance still runs top to bottom in one pass.
+  const enter = (index: number) => ({
+    initial: { opacity: 0, x: -10 },
+    animate: { opacity: 1, x: 0 },
+    transition: oceanTransition(reduceMotion, {
+      duration: 0.22,
+      delay: 0.1 + index * 0.07,
+      ease: [0.4, 0, 0.2, 1] as const,
+    }),
+  })
+
+  // Index of each group's caption in that single top-to-bottom count.
+  const groupStart: number[] = []
+  navGroups.reduce((index, group, i) => {
+    groupStart[i] = index
+    return index + group.items.length + 1
+  }, 0)
+
   const navList = (
-    <motion.nav
-      initial="hidden"
-      animate="visible"
-      variants={{ hidden: {}, visible: { transition: { staggerChildren: 0.07, delayChildren: 0.1 } } }}
-      style={{ display: 'grid', gap: 2, padding: '8px 16px 0' }}
-    >
-      {navItems.map((item) => {
-        const active = item.id === activeNav
-        return (
-          <motion.div
-            key={item.id}
-            variants={{
-              hidden: { opacity: 0, x: -10 },
-              visible: { opacity: 1, x: 0, transition: oceanTransition(reduceMotion, { duration: 0.22, ease: [0.4, 0, 0.2, 1] }) },
-            }}
-          >
-            <Link
-              href={item.href}
-              onClick={closeNav}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 12,
-                padding: '11px 14px',
-                borderRadius: 12,
-                textDecoration: 'none',
-                color: active ? t.accent : sidebar.textMuted,
-                background: active ? t.accentSoftBg : 'transparent',
-                border: `1px solid ${active ? t.accentSoftBorder : 'transparent'}`,
-                fontSize: 14,
-                fontWeight: active ? 600 : 500,
-                transition: 'all 0.18s ease',
-                boxShadow: active ? t.accentGlow : 'none',
-                position: 'relative',
-              }}
-              onMouseEnter={(e) => {
-                if (!active) {
-                  e.currentTarget.style.background = sidebar.surfaceHover
-                  e.currentTarget.style.color = sidebar.text
-                  e.currentTarget.style.borderColor = sidebar.border
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (!active) {
-                  e.currentTarget.style.background = 'transparent'
-                  e.currentTarget.style.color = sidebar.textMuted
-                  e.currentTarget.style.borderColor = 'transparent'
-                }
-              }}
-            >
-              <span style={{ flexShrink: 0 }}>{item.icon}</span>
-              <span>{item.id}</span>
-              {active && (
-                <motion.span
-                  layoutId="nav-active-dot"
-                  style={{
-                    marginLeft: 'auto',
-                    width: 6,
-                    height: 6,
-                    borderRadius: '50%',
-                    background: t.accent,
-                    boxShadow: `0 0 8px ${t.accent}`,
-                  }}
-                />
-              )}
-            </Link>
-          </motion.div>
-        )
-      })}
-    </motion.nav>
+    <nav style={{ padding: '4px 16px 0' }}>
+      {navGroups.map((group, groupIndex) => (
+        <div key={group.label} className="oc-side-group" style={{ display: 'grid', gap: 4 }}>
+          <motion.p className="oc-side-caption" {...enter(groupStart[groupIndex])}>
+            {group.label}
+          </motion.p>
+          {group.items.map((item, itemIndex) => {
+            const active = item.id === activeNav
+            // Chats is the only queue that goes stale while you sit on another
+            // page, so it is the only item that carries a count.
+            const badge = item.id === 'Chats' && openChats > 0 ? openChats : null
+            return (
+              <motion.div key={item.id} {...enter(groupStart[groupIndex] + 1 + itemIndex)}>
+                {/* Resting, hover and active states all live in globals.css
+                    (.oc-side-link): imperative hover writes used to fight the
+                    active styling and captured stale colours on re-render. */}
+                <Link
+                  href={item.href}
+                  onClick={closeNav}
+                  className="oc-side-link"
+                  data-active={active}
+                  aria-current={active ? 'page' : undefined}
+                >
+                  {active ? (
+                    <motion.span
+                      layoutId="nav-active-marker"
+                      className="oc-side-marker"
+                      aria-hidden="true"
+                      transition={oceanTransition(reduceMotion, { duration: 0.3, ease: [0.23, 1, 0.32, 1] as const })}
+                    />
+                  ) : null}
+                  <span className="oc-side-icon">{item.icon}</span>
+                  <span className="oc-side-label">{item.id}</span>
+                  {/* Telegram-style counter: flat fill, no glow or ring — the
+                      bump is the only flourish. key={badge} swaps in a fresh
+                      element on every count change so it pops rather than
+                      just relabels — same trick the calendar month slide uses
+                      for its transitions. mode="popLayout" pulls the outgoing
+                      badge out of flow so it doesn't sit beside the incoming
+                      one; the child itself skips the `layout` prop, since
+                      that's for animating a box's own size/position changes
+                      and this one only ever fades and scales in place.
+                      AnimatePresence's own initial={false} only guards the
+                      very first paint; badge is null then, so the first real
+                      count still plays its full entrance. */}
+                  <AnimatePresence mode="popLayout" initial={false}>
+                    {badge !== null ? (
+                      <motion.span
+                        key={badge}
+                        initial={{ scale: 0.5, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        exit={{ scale: 0.5, opacity: 0 }}
+                        transition={oceanTransition(reduceMotion, { type: 'spring', stiffness: 500, damping: 20 })}
+                        className="oc-badge"
+                      >
+                        {badge > 99 ? '99+' : badge}
+                      </motion.span>
+                    ) : null}
+                  </AnimatePresence>
+                </Link>
+              </motion.div>
+            )
+          })}
+        </div>
+      ))}
+    </nav>
   )
 
   const sidebarInner = (
     <aside
+      className="oc-sidebar"
       style={{
         width: SIDEBAR_WIDTH,
         height: '100vh',
-        background: sidebar.bg,
-        borderRight: `1px solid ${sidebar.border}`,
         display: 'flex',
         flexDirection: 'column',
         position: 'relative',
@@ -281,191 +584,84 @@ export function DashboardOceanNav({ activeNav, fillViewport, flatBackground, chi
     >
       <AnimatedWaveLogo />
 
-      <div style={{ margin: '0 16px 12px', height: 1, background: sidebar.border }} />
-
+      {/* No rule under the logo: the section captions separate the rail now,
+          and a divider on top of them read as two competing dividers. */}
       {navList}
 
-      {/* AI status + waveform filler */}
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 0.5 }}
-        style={{ margin: '16px 16px 0', display: 'flex', flexDirection: 'column', gap: 12, flex: 1 }}
-      >
-        {/* AI Online card */}
-        <div style={{
-          padding: '12px 14px',
-          borderRadius: 12,
-          background: t.accentSoftBg,
-          border: `1px solid ${t.accentSoftBorder}`,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-        }}>
-          <motion.span
-            animate={{ scale: [1, 1.4, 1], opacity: [1, 0.6, 1] }}
-            transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
-            style={{ width: 8, height: 8, borderRadius: '50%', background: t.accent, flexShrink: 0, boxShadow: `0 0 8px ${t.accent}` }}
-          />
-          <div>
-            <div style={{ fontSize: 12, fontWeight: 600, color: t.accent }}>AI Online</div>
-            <div style={{ fontSize: 11, color: sidebar.textMuted, marginTop: 1 }}>Ready for service</div>
-          </div>
-        </div>
+      <div style={{ flex: 1 }} />
 
-        {/* Usage card */}
-        <div style={{
-          borderRadius: 12,
-          border: `1px solid ${sidebar.border}`,
-          background: sidebar.surface,
-          padding: '12px 14px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 10,
-        }}>
-          {/* Usage row */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: 11, color: sidebar.textMuted }}>Free plan</span>
-              <span style={{ fontSize: 11, color: sidebar.textSubtle }}>61 / 500</span>
-            </div>
-            <div style={{ height: 3, borderRadius: 99, background: sidebar.surfaceHover, overflow: 'hidden' }}>
-              <motion.div
-                initial={{ width: 0 }}
-                animate={{ width: '12.2%' }}
-                transition={{ duration: 1, delay: 0.8, ease: [0.22, 1, 0.36, 1] }}
-                style={{ height: '100%', borderRadius: 99, background: t.accent }}
-              />
-            </div>
-          </div>
 
-          {/* Upgrade CTA — matches nav item style */}
-          <motion.div
-            whileHover={{ background: t.accentSoftBg, borderColor: t.accentSoftBorder }}
-            whileTap={{ scale: 0.98 }}
-            style={{
-              borderRadius: 8,
-              border: `1px solid ${sidebar.border}`,
-              background: 'transparent',
-              padding: '7px 12px',
-              textAlign: 'center',
-              cursor: 'pointer',
-              color: sidebar.textMuted,
-              fontSize: 12,
-              fontWeight: 500,
-              transition: 'background 0.15s, border-color 0.15s, color 0.15s',
-            }}
+      {/* Bottom — what the room is doing, who is signed in, and the two
+          controls that belong to a session rather than to a page. Both rows
+          park their control in the same trailing column. */}
+      <div style={{ padding: '12px 16px 16px', borderTop: `1px solid ${sidebar.border}`, display: 'grid', gap: 10 }}>
+        {/* minWidth:0 on both rows: as grid items they default to min-width
+            auto, which sizes them to the untruncated email and pushes the
+            buttons outside the sidebar. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <ServiceStatus chats={chats} reduceMotion={reduceMotion} />
+          </div>
+          <SidebarIconButton
+            label={themeActionLabel}
+            onClick={toggleTheme}
+            tone={themeBtn}
+            reduceMotion={reduceMotion}
+            pressed={theme === 'dark'}
           >
-            Upgrade to Pro
-          </motion.div>
+            <ThemeIcon theme={theme} reduceMotion={reduceMotion} />
+          </SidebarIconButton>
         </div>
-      </motion.div>
 
-
-      {/* Theme toggle */}
-      <div style={{ padding: '0 16px 8px' }}>
-        <button
-          type="button"
-          onClick={toggleTheme}
-          aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
-          style={{
-            width: '100%',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '8px 12px',
-            borderRadius: 10,
-            border: `1px solid ${sidebar.border}`,
-            background: 'transparent',
-            color: sidebar.textMuted,
-            fontSize: 12,
-            fontWeight: 500,
-            cursor: 'pointer',
-            transition: 'border-color 0.15s ease, background 0.15s ease',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = t.accentSoftBg
-            e.currentTarget.style.borderColor = t.accentSoftBorder
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = 'transparent'
-            e.currentTarget.style.borderColor = sidebar.border
-          }}
-        >
-          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            {theme === 'dark' ? <IconMoon /> : <IconSun />}
-            <span>Dark mode</span>
-          </span>
-          {/* Toggle pill */}
-          <span style={{
-            display: 'inline-block',
-            width: 34,
-            height: 18,
-            borderRadius: 9,
-            background: theme === 'dark' ? t.accent : sidebar.surfaceHover,
-            border: `1px solid ${theme === 'dark' ? 'transparent' : sidebar.border}`,
-            position: 'relative',
-            flexShrink: 0,
-            transition: 'background 0.2s',
-          }}>
-            <span style={{
-              position: 'absolute',
-              top: 2,
-              left: theme === 'dark' ? 16 : 2,
-              width: 12,
-              height: 12,
-              borderRadius: '50%',
-              background: '#fff',
-              transition: 'left 0.2s',
-              boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
-            }} />
-          </span>
-        </button>
-      </div>
-
-      {/* Bottom — profile */}
-      <div style={{ padding: '12px 16px 16px', borderTop: `1px solid ${sidebar.border}` }}>
-        <motion.div
-          whileHover={{ background: sidebar.surfaceHover }}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-            padding: '10px 12px',
-            borderRadius: 12,
-            background: sidebar.surface,
-            border: `1px solid ${sidebar.border}`,
-            cursor: 'pointer',
-            transition: 'background 0.15s',
-          }}
-          onClick={() => setLogoutOpen(true)}
-        >
-          {/* Avatar */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
           <div style={{
-            width: 34, height: 34, borderRadius: '50%', flexShrink: 0,
+            width: 32, height: 32, borderRadius: '50%', flexShrink: 0,
             background: `linear-gradient(135deg, ${t.accent}, #6366f1)`,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            display: 'grid', placeItems: 'center',
             fontSize: 13, fontWeight: 700, color: '#fff',
-            boxShadow: `0 0 12px rgba(96,184,255,0.3)`,
+            boxShadow: '0 0 12px rgba(96,184,255,0.3)',
           }}>
             {userEmail ? userEmail[0].toUpperCase() : '?'}
           </div>
 
-          {/* Info */}
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: sidebar.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <div
+              title={userEmail ?? undefined}
+              style={{
+                fontSize: 12, fontWeight: 600, color: sidebar.text,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}
+            >
               {userEmail ?? 'Account'}
             </div>
-            <div style={{ fontSize: 11, color: sidebar.textMuted, marginTop: 1 }}>Free plan</div>
+            {accountSubtitle ? (
+              <div
+                title={accountSubtitle}
+                style={{
+                  fontSize: 11, color: sidebar.textMuted, marginTop: 1,
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}
+              >
+                {accountSubtitle}
+              </div>
+            ) : (
+              <div style={{ height: 7, width: 72, borderRadius: 99, background: sidebar.surfaceHover, marginTop: 4 }} />
+            )}
           </div>
 
-          {/* Log out icon */}
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={sidebar.textSubtle} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-            <polyline points="16 17 21 12 16 7" />
-            <line x1="21" y1="12" x2="9" y2="12" />
-          </svg>
-        </motion.div>
+          <SidebarIconButton
+            label="Sign out"
+            onClick={() => setLogoutOpen(true)}
+            tone={SIGN_OUT_TONE}
+            reduceMotion={reduceMotion}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+              <polyline points="16 17 21 12 16 7" />
+              <line x1="21" y1="12" x2="9" y2="12" />
+            </svg>
+          </SidebarIconButton>
+        </div>
         <DashboardLogoutButton hidden open={logoutOpen} onOpenChange={setLogoutOpen} />
       </div>
     </aside>

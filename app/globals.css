@@ -22,6 +22,14 @@ input[type="number"] { -moz-appearance: textfield; }
   --t-sidebar-border: rgba(255,255,255,0.08);
   --t-sidebar-surface: rgba(255,255,255,0.05);
   --t-sidebar-surface-hover: rgba(255,255,255,0.08);
+  /* Rail: section captions sit well below the labels they head, icons rest
+     dimmer than their text and only reach full strength when the row does. */
+  --t-sidebar-caption: rgba(255,255,255,0.34);
+  --t-sidebar-icon: rgba(255,255,255,0.48);
+  --t-sidebar-icon-hover: rgba(255,255,255,0.82);
+  --t-sidebar-hover-bg: rgba(255,255,255,0.055);
+  --t-sidebar-badge-bg: rgba(255,255,255,0.075);
+  --t-sidebar-badge-text: rgba(255,255,255,0.6);
 }
 
 :root,
@@ -43,6 +51,9 @@ input[type="number"] { -moz-appearance: textfield; }
   --t-accent-soft-bg: rgba(96,184,255,0.08);
   --t-accent-soft-border: rgba(96,184,255,0.22);
   --t-accent-glow: 0 0 20px rgba(96,184,255,0.4);
+  --t-sidebar-active-bg: rgba(96,184,255,0.22);
+  --t-sidebar-active-fade: rgba(96,184,255,0.07);
+  --t-sidebar-active-border: rgba(96,184,255,0.16);
   --t-success: #60b8ff;
   --t-success-bg: rgba(96,184,255,0.08);
   --t-success-border: rgba(96,184,255,0.22);
@@ -83,6 +94,9 @@ input[type="number"] { -moz-appearance: textfield; }
   --t-accent-soft-bg: rgba(56,189,248,0.10);
   --t-accent-soft-border: rgba(56,189,248,0.25);
   --t-accent-glow: 0 0 20px rgba(56,189,248,0.3);
+  --t-sidebar-active-bg: rgba(56,189,248,0.22);
+  --t-sidebar-active-fade: rgba(56,189,248,0.07);
+  --t-sidebar-active-border: rgba(56,189,248,0.16);
   --t-success: #38bdf8;
   --t-success-bg: rgba(56,189,248,0.10);
   --t-success-border: rgba(56,189,248,0.25);
@@ -145,6 +159,7 @@ input[type="number"] { -moz-appearance: textfield; }
   --bk-blue-border: #bfdbfe;
   --bk-purple: #7c3aed;
   --bk-purple-bg: #ede9fe;
+  --bk-guest-return: #c7d2fe;        /* returning-guest bar (secondary to cyan) */
   --bk-shadow: 0 1px 2px rgba(15,23,42,0.04);
   --bk-shadow-md: 0 1px 3px rgba(15,23,42,0.12);
   --bk-shadow-pop: 0 10px 24px rgba(15,23,42,0.3);
@@ -203,6 +218,7 @@ input[type="number"] { -moz-appearance: textfield; }
   --bk-blue-border: rgba(59,130,246,0.40);
   --bk-purple: #a78bfa;
   --bk-purple-bg: rgba(139,92,246,0.16);
+  --bk-guest-return: #5a6690;        /* returning-guest bar (secondary to cyan) */
   --bk-shadow: 0 1px 2px rgba(0,0,0,0.4);
   --bk-shadow-md: 0 1px 3px rgba(0,0,0,0.5);
   --bk-shadow-pop: 0 10px 24px rgba(0,0,0,0.6);
@@ -550,8 +566,255 @@ body {
 }
 
 /* =========================================================== */
+/* Dashboard sidebar                                           */
+/* =========================================================== */
+
+/* The sidebar is dark in both themes, so against the dark app background it
+   used to read as one flat slab. A cool wash down from the top plus a lit
+   inner edge and a cast shadow give it a plane of its own. */
+.oc-sidebar {
+  background:
+    linear-gradient(
+      180deg,
+      rgba(96, 184, 255, 0.07) 0%,
+      rgba(96, 184, 255, 0.022) 22%,
+      rgba(96, 184, 255, 0) 46%
+    ),
+    var(--t-sidebar-bg);
+  box-shadow:
+    inset -1px 0 0 rgba(125, 211, 252, 0.11),
+    inset 1px 0 0 rgba(255, 255, 255, 0.03),
+    14px 0 38px -22px rgba(0, 0, 0, 0.8);
+}
+
+/* Section captions carry the structure, so the rows themselves stay
+   borderless: six outlined pills made the list read as a stack of buttons and
+   left the active item nowhere brighter to go. Now only the current row is
+   filled, and the marker in the gutter says which one that is. */
+.oc-side-group + .oc-side-group {
+  margin-top: 22px;
+}
+
+.oc-side-caption {
+  margin: 0 0 8px;
+  padding: 0 14px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--t-sidebar-caption);
+}
+
+.oc-side-link {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 11px 14px;
+  border-radius: 13px;
+  position: relative;
+  text-decoration: none;
+  font-size: 14.5px;
+  font-weight: 500;
+  color: var(--t-sidebar-text-muted);
+  background: rgba(255, 255, 255, 0);
+  border: 1px solid transparent;
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease;
+}
+
+.oc-side-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  color: var(--t-sidebar-icon);
+  transition: color 0.18s ease;
+}
+
+/* One size for the whole set, so an icon never has to be re-drawn to be resized. */
+.oc-side-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.oc-side-link:hover {
+  background: var(--t-sidebar-hover-bg);
+  border-color: rgba(255, 255, 255, 0.055);
+  color: var(--t-sidebar-text);
+}
+
+.oc-side-link:hover .oc-side-icon {
+  color: var(--t-sidebar-icon-hover);
+}
+
+.oc-side-link:focus-visible {
+  outline: 2px solid var(--t-accent);
+  outline-offset: 2px;
+}
+
+/* The fill is brightest at the marker and drains across the row, so the two
+   read as one gesture instead of a bar parked next to a slab. */
+.oc-side-link[data-active="true"] {
+  color: var(--t-sidebar-text);
+  font-weight: 600;
+  background: linear-gradient(
+    90deg,
+    var(--t-sidebar-active-bg),
+    var(--t-sidebar-active-fade) 88%
+  );
+  border-color: var(--t-sidebar-active-border);
+}
+
+.oc-side-link[data-active="true"] .oc-side-icon {
+  color: var(--t-accent);
+}
+
+/* Service dot ripple.
+
+   Two things make this stutter if done naively. It ran on framer's rAF loop,
+   so any main-thread work (the 30s poll, a route change) showed up as a hitch;
+   as a CSS animation it lives on the compositor instead. And it scaled a 7px
+   circle up to 2.6x, which stretches a texture rasterised at 7px and leaves a
+   soft, shimmering rim: the element is now sized at its widest and scaled
+   *down* to start, so the edge stays crisp the whole way.
+
+   It also fades in over the first 10% rather than appearing at full opacity,
+   so the loop restart has nothing to pop. */
+.oc-pulse {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 20px;
+  height: 20px;
+  margin: -10px 0 0 -10px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0;
+  transform: scale(0.34);
+  will-change: transform, opacity;
+  pointer-events: none;
+  /* Scale and fade run as separate animations so each gets its own curve. On a
+     single shared ease-out the ripple reached full size a third of the way in
+     and then sat invisible for over a second, which reads as a flash and a
+     pause rather than a pulse. */
+  animation:
+    oc-pulse-scale 1.9s cubic-bezier(0.15, 0.6, 0.4, 1) infinite,
+    oc-pulse-fade 1.9s linear infinite;
+}
+
+@keyframes oc-pulse-scale {
+  from {
+    transform: scale(0.34);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+
+/* Fades in over the first eighth so the loop restart has nothing to pop, then
+   drains to fully transparent exactly as the scale completes. */
+@keyframes oc-pulse-fade {
+  0% {
+    opacity: 0;
+  }
+  12% {
+    opacity: 0.5;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oc-pulse {
+    animation: none;
+  }
+}
+
+/* Hover underline: the accent rule wipes in from the left, same curve and
+   timing as the landing top bar (.oc-nav-link). It rides on top of the row's
+   hover fill rather than replacing it. */
+.oc-side-label {
+  position: relative;
+  display: inline-block;
+}
+
+.oc-side-label::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: -3px;
+  height: 2px;
+  width: 100%;
+  background: var(--t-accent);
+  border-radius: 2px;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 1.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.oc-side-link:hover .oc-side-label::after {
+  transform: scaleX(1);
+}
+
+/* The active row already carries the accent through its fill and marker, so a
+   second accent line under its label would just be noise. */
+.oc-side-link[data-active="true"] .oc-side-label::after {
+  content: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oc-side-label::after {
+    transition: none;
+  }
+}
+
+/* Marker in the left gutter. It is a layout-animated element, so it never
+   animates its own left/top — framer slides it between rows. */
+.oc-side-marker {
+  position: absolute;
+  left: -16px;
+  top: 50%;
+  width: 4px;
+  height: 24px;
+  margin-top: -12px;
+  border-radius: 0 4px 4px 0;
+  background: var(--t-accent);
+  box-shadow: 0 0 12px var(--t-accent);
+}
+
+/* Unread-count badge, Telegram-style: a flat solid pill with a plain drop
+   shadow, not a glowing gradient chip — the bump on count change (in the
+   component, via keyed AnimatePresence) is the only flourish. */
+.oc-badge {
+  margin-left: auto;
+  min-width: 22px;
+  padding: 0 7px;
+  height: 20px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+  background: var(--t-accent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+/* =========================================================== */
 /* Light mode overrides                                        */
 /* =========================================================== */
+
+/* Against a bright content plane the shadow carries the separation, so it is
+   cooler and wider than the dark-theme one. */
+[data-theme="light"] .oc-sidebar {
+  box-shadow:
+    inset -1px 0 0 rgba(125, 211, 252, 0.14),
+    inset 1px 0 0 rgba(255, 255, 255, 0.04),
+    16px 0 40px -20px rgba(15, 40, 90, 0.42);
+}
 
 [data-theme="light"] .aurora-bg {
   background: #f0f4f8;
@@ -581,3 +844,4 @@ body {
 [data-theme="light"] .glass::after {
   background: linear-gradient(180deg, var(--t-glass-highlight), transparent 28%);
 }
+
