@@ -28,6 +28,11 @@ import {
   slugifyActivityName,
 } from '@/lib/activity-resources'
 import {
+  CANADIAN_LANGUAGE_OPTIONS,
+  DEFAULT_LANGUAGE_PREFERENCE,
+  normalizeLanguagePreference,
+} from '@/lib/language-preferences'
+import {
   DEFAULT_BOOKING_SETTINGS,
   parseBookingSettings,
   type BookingSettings,
@@ -392,6 +397,62 @@ function FloatingSelect({ label, value, onChange, options }: FloatingSelectProps
   )
 }
 
+/**
+ * Spells out what the language setting actually does at chat time.
+ *
+ * The two rules that surprise owners are that the concierge does not mirror a
+ * guest who switches language, and that it asks first — so both are stated
+ * here, next to the control, rather than being discovered in a live chat.
+ */
+function LanguageBehaviourNote({ language }: { language: string }) {
+  const isAuto = language === DEFAULT_LANGUAGE_PREFERENCE
+  const spoken = isAuto ? "the language of the guest's first message" : language
+  // Any language that is not the selected one works as the example; French
+  // stays neutral for an English venue, and English covers the rest.
+  const otherLanguage = language.startsWith('French') ? 'English' : 'French'
+
+  return (
+    <div
+      style={{
+        ...glassCard,
+        padding: '12px 14px',
+        display: 'grid',
+        gap: 6,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span
+          style={{
+            width: 18,
+            height: 18,
+            borderRadius: 6,
+            display: 'grid',
+            placeItems: 'center',
+            background: t.accentSoftBg,
+            color: t.accent,
+            fontSize: 11,
+            fontWeight: 700,
+            flexShrink: 0,
+          }}
+          aria-hidden
+        >
+          i
+        </span>
+        <span style={{ fontSize: 12.5, fontWeight: 600, color: t.text }}>
+          {isAuto
+            ? 'Opens in whichever language the guest writes first'
+            : `Opens every chat in ${language}`}
+        </span>
+      </div>
+      <p style={{ margin: 0, fontSize: 12, color: t.textMuted, lineHeight: 1.55 }}>
+        The concierge never switches language on its own. If a guest writes in{' '}
+        {otherLanguage}, it keeps answering in {spoken} and asks once, in {otherLanguage},
+        whether to continue there — and switches only if the guest says yes.
+      </p>
+    </div>
+  )
+}
+
 function SettingsPageInner() {
   const searchParams = useSearchParams()
   const tabParam = searchParams.get('tab')
@@ -458,7 +519,7 @@ function SettingsPageInner() {
 
   const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT_PLACEHOLDER)
   const [agentName, setAgentName] = useState('AI Concierge')
-  const [language, setLanguage] = useState('English (US)')
+  const [language, setLanguage] = useState(DEFAULT_LANGUAGE_PREFERENCE)
 
   const [notificationSettings, setNotificationSettings] = useState<NotificationSettings>(
     DEFAULT_NOTIFICATION_SETTINGS,
@@ -584,7 +645,7 @@ function SettingsPageInner() {
         setBusinessAddress((data.address as string) ?? '')
         if (data.system_prompt) setSystemPrompt(data.system_prompt as string)
         if (data.agent_name) setAgentName(data.agent_name as string)
-        setLanguage((data.language as string) ?? 'English (US)')
+        setLanguage(normalizeLanguagePreference(data.language))
         setMenuPdfText((data.menu_pdf_text as string | null) ?? null)
         if (schemaReady) {
           setHours(parseOperatingHours(data.operating_hours))
@@ -1369,14 +1430,13 @@ function SettingsPageInner() {
               label="Language"
               value={language}
               onChange={setLanguage}
-              options={[
-                { value: 'English (US)', label: 'English (US)' },
-                { value: 'English (UK)', label: 'English (UK)' },
-                { value: 'Spanish', label: 'Spanish' },
-                { value: 'French', label: 'French' },
-              ]}
+              options={CANADIAN_LANGUAGE_OPTIONS.map((option) => ({
+                value: option.value,
+                label: option.label,
+              }))}
             />
           </div>
+          <LanguageBehaviourNote language={language} />
           <div style={{ ...glassCard, padding: 16, display: 'grid', gap: 10 }}>
             <div
               style={{
