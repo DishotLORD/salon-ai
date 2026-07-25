@@ -28,6 +28,9 @@ type Conversation = {
   email: string | null
   preview: string
   time: string
+  /** Epoch ms of the last message (or updated_at). Drives archiving; the
+   *  formatted `time` above cannot be compared. */
+  lastActivityMs: number
   status: ConversationStatus
   messages: Message[]
 }
@@ -118,6 +121,9 @@ function mapDbConversationToConversation(row: DbConversationRow): Conversation {
   const last = ordered[ordered.length - 1]
   const preview = last?.content ?? 'No messages yet'
   const lastActivity = last?.created_at ?? row.updated_at
+  // Supabase timestamps arrive without a zone suffix; parseUtc keeps them from
+  // being read as local time, which would age every chat by the UTC offset.
+  const lastActivityMs = lastActivity ? parseUtc(lastActivity).getTime() : 0
   return {
     id: row.id,
     customerId: row.customer_id ?? null,
@@ -129,11 +135,32 @@ function mapDbConversationToConversation(row: DbConversationRow): Conversation {
     email: (Array.isArray(row.customers) ? row.customers[0]?.email : row.customers?.email)?.trim() || null,
     preview,
     time: formatRelativeTime(lastActivity),
+    lastActivityMs,
     status: normalizeStatus(row.status),
     messages: ordered.map(mapDbMessageToMessage),
   }
 }
 
+
+function IconArchive() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="3" y="4" width="18" height="4" rx="1" />
+      <path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" />
+      <path d="M10 12h4" />
+    </svg>
+  )
+}
+
+/** A chat drops out of the inbox once its last activity is a day old. */
+const ARCHIVE_AFTER_MS = 24 * 60 * 60 * 1000
+
+function isArchived(conversation: Conversation, nowMs: number): boolean {
+  // A conversation with no usable timestamp stays in the inbox: hiding it would
+  // make it unreachable, since the archive is keyed on the age it is missing.
+  if (!conversation.lastActivityMs) return false
+  return nowMs - conversation.lastActivityMs > ARCHIVE_AFTER_MS
+}
 
 function getInitials(name: string) {
   return name
@@ -156,6 +183,11 @@ export default function ChatsInboxPage() {
   const [takeoverError, setTakeoverError] = useState('')
   const [businessId, setBusinessId] = useState<string | null>(null)
   const [filterTab, setFilterTab] = useState<'All' | 'Active' | 'Human' | 'Closed'>('All')
+  // Archive is derived from age, not a stored flag: nothing has to move rows on
+  // a schedule, the cutoff stays correct as time passes, and a guest replying
+  // pulls their chat back into the inbox on its own.
+  const [showArchive, setShowArchive] = useState(false)
+  const [nowMs, setNowMs] = useState(() => Date.now())
   const [searchQuery, setSearchQuery] = useState('')
   const [hoveredId, setHoveredId] = useState<string | null>(null)
   const [onlineConvIds, setOnlineConvIds] = useState<Set<string>>(new Set())
@@ -320,9 +352,42 @@ export default function ChatsInboxPage() {
     return result
   }, [conversationList])
 
+  // Re-read the clock so a chat crosses the one-day line while the tab is open.
+  // A backgrounded tab has its timers frozen, so refresh on return too.
+  useEffect(() => {
+    const tick = () => setNowMs(Date.now())
+    const id = setInterval(tick, 60_000)
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') tick()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      clearInterval(id)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [])
+
+  const toggleArchive = useCallback(() => {
+    setShowArchive((prev) => {
+      const next = !prev
+      // Land on the first chat of the room being entered; leaving the pane on a
+      // chat that is no longer in the list reads as a broken selection.
+      const firstInRoom = conversationList.find((c) => isArchived(c, Date.now()) === next)
+      setSelectedId(firstInRoom?.id ?? '')
+      return next
+    })
+  }, [conversationList])
+
+  const archivedCount = useMemo(
+    () => conversationList.filter((c) => isArchived(c, nowMs)).length,
+    [conversationList, nowMs],
+  )
+
   const filteredList = useMemo(() => {
     const statusOrder: Record<ConversationStatus, number> = { Live: 0, Human: 1, Waiting: 2, Resolved: 3 }
-    let list = conversationList
+    // The archive is a separate room, not an extra filter: the inbox hides
+    // everything older than a day, and the archive shows only those.
+    let list = conversationList.filter((c) => isArchived(c, nowMs) === showArchive)
     if (filterTab === 'Active') list = list.filter((c) => c.status === 'Live')
     else if (filterTab === 'Human') list = list.filter((c) => c.status === 'Human')
     else if (filterTab === 'Closed') list = list.filter((c) => c.status === 'Resolved')
@@ -337,7 +402,7 @@ export default function ChatsInboxPage() {
       )
     }
     return list
-  }, [conversationList, filterTab, searchQuery])
+  }, [conversationList, filterTab, searchQuery, showArchive, nowMs])
 
   useEffect(() => {
     if (!selectedId) {
@@ -915,9 +980,13 @@ export default function ChatsInboxPage() {
 
               {inboxLoaded && !inboxFetchError && filteredList.length === 0 && (
                 <div style={{ padding: '28px 12px', color: t.textMuted, fontSize: 13, textAlign: 'center', lineHeight: 1.6 }}>
-                  {conversationList.length === 0
-                    ? 'No conversations yet'
-                    : 'Nothing matches that search'}
+                  {searchQuery.trim()
+                    ? 'Nothing matches that search'
+                    : showArchive
+                      ? 'Nothing archived yet — chats move here a day after their last message'
+                      : conversationList.length === 0
+                        ? 'No conversations yet'
+                        : 'Inbox is clear — older chats are in the archive'}
                 </div>
               )}
 
@@ -1098,6 +1167,49 @@ export default function ChatsInboxPage() {
                 )
               })}
             </div>
+
+            {/* ── Archive switch ── */}
+            <button
+              type="button"
+              onClick={toggleArchive}
+              style={{
+                flexShrink: 0,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 9,
+                width: '100%',
+                padding: '11px 14px',
+                border: 'none',
+                borderTop: `1px solid ${t.border}`,
+                background: showArchive ? t.accentSoftBg : 'transparent',
+                color: showArchive ? t.accent : t.textMuted,
+                fontSize: 12.5,
+                fontWeight: 600,
+                cursor: 'pointer',
+                textAlign: 'left',
+                transition: 'background 0.15s, color 0.15s',
+              }}
+            >
+              <IconArchive />
+              <span>{showArchive ? 'Back to inbox' : 'Archive'}</span>
+              {!showArchive && archivedCount > 0 && (
+                <span
+                  style={{
+                    marginLeft: 'auto',
+                    minWidth: 20,
+                    padding: '1px 7px',
+                    borderRadius: 999,
+                    background: t.bgSurfaceMuted,
+                    color: t.textMuted,
+                    fontSize: 11,
+                    fontWeight: 700,
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
+                >
+                  {archivedCount}
+                </span>
+              )}
+            </button>
           </motion.section>
 
           <motion.section
