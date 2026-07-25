@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+import { parseActivityResourceRow, type ActivityResource } from '@/lib/activity-resources'
 import type { ExistingBooking } from '@/lib/booking-availability'
 import { logAvailabilityDebug } from '@/lib/booking-availability'
 import { parseBookingSettings, type BookingSettings } from '@/lib/booking-settings'
@@ -23,6 +24,7 @@ export type BusinessBookingContext = {
   bookingSettings: BookingSettings
   existingBookings: ExistingBooking[]
   zones: DiningZone[]
+  activities: ActivityResource[]
 }
 
 /** Load hours, settings, zones, and upcoming appointments for availability checks. */
@@ -81,9 +83,22 @@ export async function loadBusinessBookingContext(
   const fromIso = wallClockInCalgaryToUtcDate(fromKey).toISOString()
   const toIso = wallClockInCalgaryToUtcDate(toKey).toISOString()
 
+  // Activities are optional: a venue with no pool tables simply has none, and
+  // the table is only present once migration 019 has run, so a failed read must
+  // not take the whole booking context down with it.
+  const { data: activityRows } = await supabase
+    .from('activity_resources')
+    .select('*')
+    .eq('business_id', businessId)
+    .order('sort_order', { ascending: true })
+
+  const activities: ActivityResource[] = (activityRows ?? []).map((r) =>
+    parseActivityResourceRow(r as Record<string, unknown>),
+  )
+
   const { data: rows } = await supabase
     .from('appointments')
-    .select('id, scheduled_at, status, duration_minutes, zone_id, party_size')
+    .select('id, scheduled_at, status, duration_minutes, zone_id, party_size, activity_id')
     .eq('business_id', businessId)
     .gte('scheduled_at', fromIso)
     .lte('scheduled_at', toIso)
@@ -100,6 +115,7 @@ export async function loadBusinessBookingContext(
         row.duration_minutes != null ? Number(row.duration_minutes) : null,
       zone_id: row.zone_id != null ? String(row.zone_id) : null,
       party_size: row.party_size != null ? Number(row.party_size) : null,
+      activity_id: row.activity_id != null ? String(row.activity_id) : null,
     }
   })
 
@@ -116,5 +132,5 @@ export async function loadBusinessBookingContext(
     })),
   })
 
-  return { operatingHours, bookingSettings, existingBookings, zones }
+  return { operatingHours, bookingSettings, existingBookings, zones, activities }
 }

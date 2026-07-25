@@ -36,6 +36,9 @@ export type ExistingBooking = {
   duration_minutes?: number | null
   zone_id?: string | null
   party_size?: number | null
+  /** Set when the booking holds an activity resource (pool table, court) rather
+   *  than a dining table. Such a row must not consume dining capacity. */
+  activity_id?: string | null
 }
 
 export type AvailableSlot = {
@@ -92,6 +95,10 @@ function durationForBooking(
 }
 
 function bookingCountsTowardZone(row: ExistingBooking, zone: DiningZone): boolean {
+  // An activity booking holds a pool table or court, not a seat. It carries no
+  // zone_id, so without this guard it would fall through to the main-dining
+  // default below and silently eat covers the kitchen never has to serve.
+  if (row.activity_id) return false
   if (row.zone_id != null) return row.zone_id === zone.id
   return zone.slug === 'main-dining'
 }

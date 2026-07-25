@@ -1,6 +1,6 @@
 'use client'
 
-import { Fragment, useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 
 import { DashboardOceanNav } from '@/components/dashboard-ocean-nav'
 import type { AnalyticsBucket, AnalyticsRange, AnalyticsReport } from '@/lib/analytics'
@@ -105,6 +105,33 @@ function smoothPath(points: { x: number; y: number }[]): string {
     d += ` C ${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${points[i + 1].x.toFixed(1)} ${points[i + 1].y.toFixed(1)}`
   }
   return d
+}
+
+/**
+ * Width of the returned ref's element, so an svg viewBox can be sized 1:1 with
+ * it. With a fixed viewBox and width:100% the whole drawing scales with the
+ * container, which rendered axis type at ~7px on a phone and oversized it on a
+ * tablet; pinning one unit to one pixel keeps type and stroke weights exact at
+ * every width.
+ *
+ * `resetKey` re-measures on a layout-affecting change (the nav resolves its
+ * mobile flag one commit after mount, which relayouts these panels).
+ */
+function useMeasuredWidth(resetKey?: unknown) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [width, setWidth] = useState(880)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    // Measure up front rather than waiting on the observer's first async
+    // callback, so the chart never paints once at the placeholder width.
+    const measure = (w: number) => setWidth((prev) => (w > 0 && w !== prev ? w : prev))
+    measure(Math.round(el.getBoundingClientRect().width))
+    const ro = new ResizeObserver(([entry]) => measure(Math.round(entry.contentRect.width)))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [resetKey])
+  return [ref, width] as const
 }
 
 // ── delta pill ──────────────────────────────────────────────────────────────
@@ -244,12 +271,14 @@ function TrendChart({
   const [hover, setHover] = useState<number | null>(null)
   const meta = METRIC_META[metric]
 
-  const W = 760
-  const H = isMobile ? 220 : 280
-  const PAD_L = 40
-  const PAD_R = 16
-  const PAD_B = 30
-  const PAD_T = 22
+  const [wrapRef, boxW] = useMeasuredWidth(isMobile)
+
+  const W = Math.max(280, boxW)
+  const H = isMobile ? 130 : 120
+  const PAD_L = 38
+  const PAD_R = 10
+  const PAD_B = 22
+  const PAD_T = 16
   const innerW = W - PAD_L - PAD_R
   const innerH = H - PAD_T - PAD_B
 
@@ -282,13 +311,17 @@ function TrendChart({
   const peakVal = Math.max(0, ...values)
   const peakIdx = values.indexOf(peakVal)
 
-  const tickDiv = [4, 5, 3, 2].find((d) => axisMax % d === 0) ?? 4
+  // Fewer bands than a tall chart would take: prefer 3 over 4/5 so the
+  // gridlines stay far enough apart to read at this height.
+  const tickDiv = [3, 4, 2, 5].find((d) => axisMax % d === 0) ?? 3
   const gridLines = Array.from({ length: tickDiv + 1 }, (_, i) => {
     const v = (axisMax / tickDiv) * i
     return { first: i === 0, y: yFor(v), v }
   })
 
-  const labelEvery = Math.max(1, Math.ceil(n / (isMobile ? 4 : 7)))
+  // Now that units are pixels, fit labels to the actual plot width (~58px each)
+  // instead of guessing from a mobile flag.
+  const labelEvery = Math.max(1, Math.ceil(n / Math.max(2, Math.floor(innerW / 58))))
   const focus = hover != null ? hover : points.length - 1
   const focused = focus >= 0 ? series[focus] : null
   const areaId = `an-area-${metric}`
@@ -312,7 +345,7 @@ function TrendChart({
   }
 
   return (
-    <div style={{ position: 'relative' }}>
+    <div ref={wrapRef} style={{ position: 'relative' }}>
       <style>{`
         @keyframes anDraw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
         @keyframes anAreaIn { from { opacity: 0; } to { opacity: 1; } }
@@ -351,7 +384,7 @@ function TrendChart({
               stroke={g.first ? 'var(--bk-border)' : 'var(--bk-grid)'}
               strokeWidth="1"
             />
-            <text x={PAD_L - 10} y={g.y + 3.5} fontSize="10.5" fill={MUTED} textAnchor="end" style={{ fontVariantNumeric: 'tabular-nums' }}>
+            <text x={PAD_L - 8} y={g.y + 4} fontSize="11" fill={MUTED} textAnchor="end" style={{ fontVariantNumeric: 'tabular-nums' }}>
               {fmtCompact(g.v)}
             </text>
           </g>
@@ -363,7 +396,7 @@ function TrendChart({
             d={prevPath}
             fill="none"
             stroke="var(--bk-muted)"
-            strokeWidth="1.6"
+            strokeWidth="1.5"
             strokeDasharray="5 5"
             strokeLinejoin="round"
             strokeLinecap="round"
@@ -378,7 +411,7 @@ function TrendChart({
           d={linePath}
           fill="none"
           stroke={`url(#${strokeId})`}
-          strokeWidth="2.75"
+          strokeWidth="2.5"
           strokeLinejoin="round"
           strokeLinecap="round"
           filter={`url(#${glowId})`}
@@ -390,7 +423,7 @@ function TrendChart({
         {peakVal > 0 && peakIdx !== focus && (
           <g opacity="0.9">
             <circle cx={xFor(peakIdx)} cy={yFor(peakVal)} r="3" fill="var(--bk-card)" stroke={meta.color} strokeWidth="1.5" />
-            <text x={xFor(peakIdx)} y={yFor(peakVal) - 9} fontSize="9.5" fontWeight="700" fill={meta.color} textAnchor="middle">
+            <text x={xFor(peakIdx)} y={yFor(peakVal) - 8} fontSize="11" fontWeight="700" fill={meta.color} textAnchor="middle">
               {fmtCompact(peakVal)}
             </text>
           </g>
@@ -418,14 +451,14 @@ function TrendChart({
         {focused != null && (
           <>
             <circle cx={xFor(focus)} cy={yFor(values[focus])} r="8" fill={meta.color} opacity="0.14" />
-            <circle cx={xFor(focus)} cy={yFor(values[focus])} r="4.5" fill="var(--bk-card)" stroke={meta.color} strokeWidth="2.5" />
+            <circle cx={xFor(focus)} cy={yFor(values[focus])} r="4" fill="var(--bk-card)" stroke={meta.color} strokeWidth="2.5" />
           </>
         )}
 
         {/* x labels */}
         {series.map((b, i) =>
           i % labelEvery === 0 ? (
-            <text key={b.key} x={xFor(i)} y={H - 8} fontSize="10.5" fill={MUTED} textAnchor="middle">
+            <text key={b.key} x={xFor(i)} y={H - 7} fontSize="11" fill={MUTED} textAnchor="middle">
               {b.label}
             </text>
           ) : null,
@@ -644,86 +677,181 @@ const fmtHour = (h: number) => {
   return `${d}${period}`
 }
 
-function PeakHoursHeatmap({
-  heatmap,
-  heatmapMax,
-  hourRange,
+/**
+ * Hour-of-day distribution as a curve. Time of day is continuous, so the shape
+ * of the service (lunch bump, afternoon lull, dinner peak) is the point; the
+ * monotone spline never overshoots, so a run of quiet hours stays flat on the
+ * baseline instead of dipping below zero.
+ */
+function HourCurve({
+  hours,
+  byHour,
+  maxHour,
+  resetKey,
 }: {
-  heatmap: AnalyticsReport['heatmap']
-  heatmapMax: number
-  hourRange: AnalyticsReport['heatmapHourRange']
+  hours: number[]
+  byHour: Map<number, number>
+  maxHour: number
+  resetKey?: unknown
 }) {
-  if (!hourRange || heatmapMax === 0) {
-    return <div style={{ fontSize: bk.body, color: MUTED, padding: '12px 0' }}>No booking activity yet.</div>
-  }
-  const start = Math.max(0, hourRange.start - 1)
-  const end = Math.min(23, hourRange.end + 1)
-  const hours: number[] = []
-  for (let h = start; h <= end; h++) hours.push(h)
+  const [wrapRef, boxW] = useMeasuredWidth(resetKey)
+  const W = Math.max(240, boxW)
+  const H = 104
+  const PAD_X = 16
+  const PAD_T = 20
+  const PAD_B = 20
+  const innerW = W - PAD_X * 2
+  const innerH = H - PAD_T - PAD_B
 
-  const byKey = new Map(heatmap.map((c) => [`${c.weekday}-${c.hour}`, c.count]))
-  const weekdays = [1, 2, 3, 4, 5, 6, 0]
-  // Square-root scale keeps mid cells visible next to a single dominant peak.
-  const alphaFor = (count: number) => (count === 0 ? 0 : 0.1 + 0.9 * Math.sqrt(count / heatmapMax))
-  const cellBg = (count: number) =>
-    count === 0 ? 'var(--bk-surface)' : `color-mix(in srgb, var(--bk-accent) ${Math.round(alphaFor(count) * 100)}%, transparent)`
+  const n = hours.length
+  const step = n > 1 ? innerW / (n - 1) : 0
+  const xFor = (i: number) => (n > 1 ? PAD_X + i * step : W / 2)
+  const yFor = (v: number) => PAD_T + innerH - (v / maxHour) * innerH
 
-  const cols = `28px repeat(${hours.length}, minmax(0, 1fr))`
+  const values = hours.map((h) => byHour.get(h) ?? 0)
+  const pts = values.map((v, i) => ({ x: xFor(i), y: yFor(v) }))
+  const line = smoothPath(pts)
+  const base = PAD_T + innerH
+  const area = pts.length ? `${line} L ${pts[pts.length - 1].x.toFixed(1)} ${base} L ${pts[0].x.toFixed(1)} ${base} Z` : ''
+  const peak = Math.max(...values)
+  // Thin the hour ticks if they would collide at narrow widths.
+  const tickEvery = Math.max(1, Math.ceil(n / Math.max(2, Math.floor(innerW / 42))))
 
   return (
-    <div style={{ display: 'grid', gap: 12 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 5, alignItems: 'center' }}>
-        {/* hour header */}
-        <div />
-        {hours.map((h) => (
-          <div key={`h-${h}`} style={{ fontSize: 9.5, fontWeight: 500, color: MUTED, textAlign: 'center' }}>
-            {fmtHour(h)}
-          </div>
-        ))}
-        {/* rows */}
-        {weekdays.map((wd) => (
-          <Fragment key={wd}>
-            <div style={{ fontSize: 10.5, fontWeight: 600, color: BODY }}>{WEEKDAY_LABELS[wd]}</div>
-            {hours.map((h) => {
-              const count = byKey.get(`${wd}-${h}`) ?? 0
-              return (
-                <div
-                  key={`${wd}-${h}`}
-                  title={`${WEEKDAY_LABELS[wd]} ${fmtHour(h)} · ${count} booking${count === 1 ? '' : 's'}`}
-                  style={{ height: 26, borderRadius: 6, background: cellBg(count) }}
-                />
-              )
-            })}
-          </Fragment>
-        ))}
+    <div ref={wrapRef} style={{ position: 'relative' }}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', display: 'block', overflow: 'visible' }}>
+        <defs>
+          <linearGradient id="an-hour-area" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="var(--bk-accent)" stopOpacity="0.28" />
+            <stop offset="100%" stopColor="var(--bk-accent)" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <line x1={PAD_X} x2={W - PAD_X} y1={base} y2={base} stroke="var(--bk-border)" strokeWidth="1" />
+        <path d={area} fill="url(#an-hour-area)" />
+        <path d={line} fill="none" stroke="var(--bk-accent)" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+        {hours.map((h, i) => {
+          const v = values[i]
+          return (
+            <g key={h}>
+              <title>{`${fmtHour(h)} · ${v} booking${v === 1 ? '' : 's'}`}</title>
+              {v > 0 && <circle cx={xFor(i)} cy={yFor(v)} r="3" fill="var(--bk-card)" stroke="var(--bk-accent)" strokeWidth="2" />}
+              {v === peak && v > 0 && (
+                <text x={xFor(i)} y={yFor(v) - 9} fontSize="11" fontWeight="700" fill="var(--bk-accent)" textAnchor="middle">
+                  {v}
+                </text>
+              )}
+              {i % tickEvery === 0 && (
+                <text x={xFor(i)} y={H - 6} fontSize="11" fill={MUTED} textAnchor="middle">
+                  {fmtHour(h)}
+                </text>
+              )}
+            </g>
+          )
+        })}
+      </svg>
+    </div>
+  )
+}
+
+/** Totals per hour and per weekday, collapsed out of the weekday×hour grid. */
+function foldPeaks(heatmap: AnalyticsReport['heatmap']) {
+  const byHour = new Map<number, number>()
+  const byDay = new Map<number, number>()
+  let total = 0
+  for (const c of heatmap) {
+    byHour.set(c.hour, (byHour.get(c.hour) ?? 0) + c.count)
+    byDay.set(c.weekday, (byDay.get(c.weekday) ?? 0) + c.count)
+    total += c.count
+  }
+  return { byHour, byDay, total }
+}
+
+/**
+ * Hour-of-day and weekday distributions, as two 1-D charts.
+ *
+ * This replaced a weekday×hour heatmap. A heatmap needs dense data to say
+ * anything: at the volumes a single venue actually books, the max cell was
+ * often 1, so every non-empty cell rendered at full saturation and the
+ * intensity ramp (and its Less/More legend) carried no information at all.
+ * Folding each axis separately keeps both readable at any volume.
+ */
+function PeakHours({
+  heatmap,
+  hourRange,
+  isMobile,
+}: {
+  heatmap: AnalyticsReport['heatmap']
+  hourRange: AnalyticsReport['heatmapHourRange']
+  isMobile: boolean
+}) {
+  const { byHour, byDay, total } = foldPeaks(heatmap)
+  if (!hourRange || total === 0) {
+    return <div style={{ fontSize: bk.body, color: MUTED, padding: '12px 0' }}>No booking activity yet.</div>
+  }
+
+  const hours: number[] = []
+  for (let h = Math.max(0, hourRange.start); h <= Math.min(23, hourRange.end); h++) hours.push(h)
+  const maxHour = Math.max(1, ...hours.map((h) => byHour.get(h) ?? 0))
+
+  const weekdays = [1, 2, 3, 4, 5, 6, 0]
+  const maxDay = Math.max(1, ...weekdays.map((d) => byDay.get(d) ?? 0))
+
+  const label = { fontSize: 10, fontWeight: 700, color: MUTED, textTransform: 'uppercase' as const, letterSpacing: '0.09em' }
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) 240px', gap: isMobile ? 22 : 32 }}>
+      {/* by hour */}
+      <div style={{ display: 'grid', gap: 10, minWidth: 0 }}>
+        <div style={label}>By hour</div>
+        <HourCurve hours={hours} byHour={byHour} maxHour={maxHour} resetKey={isMobile} />
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 7, justifyContent: 'flex-end' }}>
-        <span style={{ fontSize: bk.micro, color: MUTED }}>Less</span>
-        {[0.14, 0.35, 0.55, 0.78, 1].map((a) => (
-          <span
-            key={a}
-            style={{
-              width: 15,
-              height: 13,
-              borderRadius: 3,
-              background: `color-mix(in srgb, var(--bk-accent) ${Math.round(a * 100)}%, transparent)`,
-              display: 'inline-block',
-            }}
-          />
-        ))}
-        <span style={{ fontSize: bk.micro, color: MUTED }}>More</span>
+
+      {/* by weekday */}
+      <div style={{ display: 'grid', gap: 10, alignContent: 'start' }}>
+        <div style={label}>By weekday</div>
+        <div style={{ display: 'grid', gap: 7 }}>
+          {weekdays.map((wd) => {
+            const v = byDay.get(wd) ?? 0
+            return (
+              <div key={wd} style={{ display: 'grid', gridTemplateColumns: '30px minmax(0, 1fr) 26px', gap: 9, alignItems: 'center' }}>
+                <span style={{ fontSize: 11, fontWeight: 600, color: BODY }}>{WEEKDAY_LABELS[wd]}</span>
+                <div style={{ height: 8, borderRadius: 99, background: 'var(--bk-surface)', overflow: 'hidden' }}>
+                  <div
+                    style={{
+                      width: `${(v / maxDay) * 100}%`,
+                      height: '100%',
+                      borderRadius: 99,
+                      background: 'linear-gradient(90deg, #0ea5e9, #38bdf8)',
+                      transition: 'width 0.4s cubic-bezier(0.22, 1, 0.36, 1)',
+                    }}
+                  />
+                </div>
+                <span style={{ fontSize: 11, color: v > 0 ? HEAD : MUTED, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{v}</span>
+              </div>
+            )
+          })}
+        </div>
       </div>
     </div>
   )
 }
 
-/** Busiest weekday+hour, formatted like "Fri 7pm", or null when no activity. */
-function busiestWindow(heatmap: AnalyticsReport['heatmap']): string | null {
-  let best: AnalyticsReport['heatmap'][number] | null = null
-  for (const c of heatmap) if (!best || c.count > best.count) best = c
-  if (!best || best.count === 0) return null
-  const h = best.hour % 12 === 0 ? 12 : best.hour % 12
-  return `${WEEKDAY_LABELS[best.weekday]} ${h}${best.hour < 12 ? 'am' : 'pm'}`
+/** Busiest hour overall, e.g. "7pm". Folded across weekdays so a single
+ *  booking on a quiet day cannot masquerade as the venue's peak. */
+function busiestHour(heatmap: AnalyticsReport['heatmap']): string | null {
+  const { byHour, total } = foldPeaks(heatmap)
+  if (total === 0) return null
+  let bestHour: number | null = null
+  let bestCount = 0
+  for (const [h, c] of byHour) {
+    if (c > bestCount) {
+      bestCount = c
+      bestHour = h
+    }
+  }
+  if (bestHour == null) return null
+  const h12 = bestHour % 12 === 0 ? 12 : bestHour % 12
+  return `${h12}${bestHour < 12 ? 'am' : 'pm'}`
 }
 
 // ── section shell ─────────────────────────────────────────────────────────────
@@ -839,7 +967,7 @@ export function AnalyticsView({
 
   const trendTotal = chartMetric === 'bookings' ? k.bookings : k.covers
   const trendDelta = chartMetric === 'bookings' ? k.bookingsDeltaPct : k.coversDeltaPct
-  const busiest = busiestWindow(report.heatmap)
+  const busiest = busiestHour(report.heatmap)
 
   const saveCheck = async () => {
     const parsed = parseFloat(checkDraft)
@@ -1090,7 +1218,7 @@ export function AnalyticsView({
               {/* peak hours */}
               <Panel
                 title="Peak hours"
-                desc="Active bookings by weekday and hour (Calgary time)"
+                desc="When guests actually show up (Calgary time)"
                 right={
                   busiest ? (
                     <span
@@ -1107,12 +1235,12 @@ export function AnalyticsView({
                       }}
                     >
                       <span style={{ width: 6, height: 6, borderRadius: 99, background: ACCENT }} />
-                      Busiest · {busiest}
+                      Peak · {busiest}
                     </span>
                   ) : undefined
                 }
               >
-                <PeakHoursHeatmap heatmap={report.heatmap} heatmapMax={report.heatmapMax} hourRange={report.heatmapHourRange} />
+                <PeakHours heatmap={report.heatmap} hourRange={report.heatmapHourRange} isMobile={isMobile} />
               </Panel>
             </>
           )}

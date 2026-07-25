@@ -29,6 +29,13 @@ import { card, t } from '@/lib/dashboard-theme'
 import { bk, bkCard } from '@/lib/bookings-compact-ui'
 import { computeBookingKpi, isInDisplayMonth } from '@/lib/booking-kpi'
 import { parsePartySizeFromServiceName } from '@/lib/appointment-service-name'
+import {
+  activeActivities,
+  isActivityFree,
+  parseActivityResourceRow,
+  type ActivityBooking,
+  type ActivityResource,
+} from '@/lib/activity-resources'
 import { isLikelyDiningZoneLabel, parseDiningZoneRow, type DiningZone } from '@/lib/dining-zones'
 import {
   calgaryCalendarDayKey,
@@ -36,6 +43,7 @@ import {
   formatCalgaryTime,
   getCalgaryPartsFromInstant,
   isSameCalgaryCalendarDay,
+  scheduledAtToWallClock,
   wallClockInCalgaryToUtcDate,
 } from '@/lib/booking-wall-clock'
 import {
@@ -62,6 +70,7 @@ type DbRow = {
   notes: string | null
   zone_id?: string | null
   party_size?: number | null
+  activity_id?: string | null
 }
 
 type AdvancedFilters = {
@@ -111,6 +120,7 @@ function parseReservation(
   row: DbRow,
   customerName?: string,
   zoneNameById?: Map<string, string>,
+  activityNameById?: Map<string, string>,
 ): Reservation {
   const parts = (row.service_name ?? '').split(' \u00b7 ') // split on " · "
   let guestName = customerName?.trim() || parts[0]?.trim() || 'Guest'
@@ -145,6 +155,17 @@ function parseReservation(
   const notesFromServiceName = notesPart ? notesPart.replace(/^Notes:\s*/i, '').trim() : ''
   const specialRequests = row.notes?.trim() || notesFromServiceName
 
+  // An activity booking carries no zone; showing one would name a dining area
+  // the guest never reserved. Same fallback chain as the zone above: prefer the
+  // live resource map, then the name the bot encoded into service_name
+  // ("Guest · Pool Table 1"), so the real name shows even before that read
+  // lands (or if RLS blocks it) instead of a bare "Activity".
+  const activityId = row.activity_id ?? null
+  const activityFromService = activityId ? parts.slice(1).map((p) => p.trim()).find(Boolean) ?? null : null
+  const activityName = activityId
+    ? activityNameById?.get(activityId) ?? activityFromService ?? 'Activity'
+    : null
+
   return {
     id: row.id,
     guestName,
@@ -156,7 +177,9 @@ function parseReservation(
     customerId: row.customer_id ?? null,
     conversationId: row.conversation_id ?? null,
     zoneId,
-    zoneName,
+    zoneName: activityName ? null : zoneName,
+    activityId,
+    activityName,
   }
 }
 
@@ -820,10 +843,13 @@ function PartySizeCompact({
   value,
   onChange,
   reduceMotion,
+  unit = 'guest',
 }: {
   value: number
   onChange: (n: number) => void
   reduceMotion: boolean | null
+  /** "guest" for a table, "player" for an activity. */
+  unit?: 'guest' | 'player'
 }) {
   const quick = [1, 2, 3, 4, 5, 6, 7, 8]
   const clamp = (n: number) => Math.min(50, Math.max(1, n))
@@ -884,7 +910,7 @@ function PartySizeCompact({
           +
         </motion.button>
         <span style={{ fontSize: 12, color: t.textMuted, fontFamily: MODAL_FONT.jakarta }}>
-          {value === 1 ? 'guest' : 'guests'}
+          {value === 1 ? unit : `${unit}s`}
         </span>
       </div>
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
@@ -926,6 +952,7 @@ function ReservationModal({
   onClose,
   businessId,
   diningZones,
+  activityResources,
   onAdded,
   onUpdated,
   initialDate,
@@ -935,6 +962,7 @@ function ReservationModal({
   onClose: () => void
   businessId: string | null
   diningZones: DiningZone[]
+  activityResources: ActivityResource[]
   onAdded: (r: Reservation) => void
   onUpdated: (r: Reservation) => void
   initialDate?: string
@@ -963,6 +991,17 @@ function ReservationModal({
   const dateInputRef = useRef<HTMLInputElement>(null)
   const [operatingHours, setOperatingHours] = useState<OperatingHours>(DEFAULT_OPERATING_HOURS)
   const [zoneId, setZoneId] = useState<string>('')
+  // A booking is either a seat in a dining zone or one physical activity
+  // resource — never both, so the two pickers are mutually exclusive.
+  const [bookingKind, setBookingKind] = useState<'dining' | 'activity'>('dining')
+  const [activityId, setActivityId] = useState<string>('')
+
+  const bookableActivities = useMemo(
+    () => activeActivities(activityResources),
+    [activityResources],
+  )
+  const selectedActivity = bookableActivities.find((a) => a.id === activityId) ?? null
+  const isActivityBooking = bookingKind === 'activity' && selectedActivity != null
 
   const dayHours = useMemo(() => getDayHoursForDate(operatingHours, date), [operatingHours, date])
   const timeRange = useMemo(() => timelineRangeFromDayHours(dayHours), [dayHours])
@@ -1007,6 +1046,8 @@ function ReservationModal({
       setSpecialRequests(r.specialRequests)
       setEditStatus(r.status)
       setZoneId(r.zoneId ?? diningZones[0]?.id ?? '')
+      setBookingKind(r.activityId ? 'activity' : 'dining')
+      setActivityId(r.activityId ?? '')
     },
     [operatingHours, diningZones],
   )
@@ -1029,6 +1070,8 @@ function ReservationModal({
         setSpecialRequests('')
         setEditStatus('pending')
         setZoneId(diningZones[0]?.id ?? '')
+        setBookingKind('dining')
+        setActivityId('')
       }
       setHydrating(false)
       return
@@ -1041,7 +1084,7 @@ function ReservationModal({
     void (async () => {
       const { data, error: fetchError } = await supabase
         .from('appointments')
-        .select('id, service_name, scheduled_at, status, customer_id, notes, zone_id, party_size')
+        .select('id, service_name, scheduled_at, status, customer_id, notes, zone_id, party_size, activity_id')
         .eq('id', appointmentId)
         .single()
 
@@ -1098,7 +1141,36 @@ function ReservationModal({
       editReservation != null &&
       editReservation.scheduledAt.getTime() === scheduledAt.getTime()
 
-    if (businessId && !slotUnchanged) {
+    // An activity holds one physical unit, so "is it free" is an overlap
+    // question on that resource — dining capacity and party-size rules do not
+    // apply. Checked here so the dashboard cannot double-book a table the bot
+    // already gave away.
+    if (businessId && isActivityBooking && !slotUnchanged) {
+      const { data: sameDay } = await supabase
+        .from('appointments')
+        .select('id, scheduled_at, status, duration_minutes, activity_id')
+        .eq('business_id', businessId)
+        .eq('activity_id', selectedActivity.id)
+      const existing: ActivityBooking[] = (sameDay ?? []).map((r) => {
+        const row = r as Record<string, unknown>
+        return {
+          id: String(row.id),
+          scheduled_at: scheduledAtToWallClock(String(row.scheduled_at ?? '')) ?? '',
+          status: row.status != null ? String(row.status) : null,
+          duration_minutes: Number(row.duration_minutes) || selectedActivity.duration_minutes,
+          party_size: null,
+          zone_id: null,
+          activity_id: row.activity_id != null ? String(row.activity_id) : null,
+        }
+      })
+      if (!isActivityFree(selectedActivity, wallClock, existing, appointmentId)) {
+        setSaving(false)
+        setError(`${selectedActivity.name} is already booked at that time — pick another time or unit.`)
+        return
+      }
+    }
+
+    if (businessId && !isActivityBooking && !slotUnchanged) {
       const params = new URLSearchParams({
         business_id: businessId,
         date,
@@ -1128,20 +1200,34 @@ function ReservationModal({
     }
 
     const selectedZone = diningZones.find((z) => z.id === zoneId)
-    const durationMinutes = selectedZone?.turnover_minutes ?? 90
-    const resolvedZoneId = zoneId || null
-    const zoneName = selectedZone?.name ?? null
+    // An activity booking carries no zone: it holds a resource, not a seat, and
+    // must not consume dining capacity. Mirrors the bot's insert in the chat route.
+    const durationMinutes = isActivityBooking
+      ? selectedActivity.duration_minutes
+      : selectedZone?.turnover_minutes ?? 90
+    const resolvedZoneId = isActivityBooking ? null : zoneId || null
+    const zoneName = isActivityBooking ? null : selectedZone?.name ?? null
+    const resolvedActivityId = isActivityBooking ? selectedActivity.id : null
+    const activityName = isActivityBooking ? selectedActivity.name : null
+    // Same encoding the bot uses ("Guest · Pool Table 1 · 2 players"), so the
+    // service_name fallback in parseReservation resolves the name either way.
+    const serviceNameFinal = isActivityBooking
+      ? [guestName.trim().replace(/\u00b7/g, '-'), selectedActivity.name, `${partySize} players`]
+          .join(' \u00b7 ')
+          .slice(0, 500)
+      : serviceName
 
     if (isEdit && editReservation) {
       const { error: updateError } = await supabase
         .from('appointments')
         .update({
-          service_name: serviceName,
+          service_name: serviceNameFinal,
           scheduled_at: scheduledAtIso,
           status: editStatus,
           notes: notesValue,
           party_size: partySize,
           zone_id: resolvedZoneId,
+          activity_id: resolvedActivityId,
           duration_minutes: durationMinutes,
         })
         .eq('id', editReservation.id)
@@ -1162,6 +1248,8 @@ function ReservationModal({
         specialRequests: specialRequests.trim(),
         zoneId: resolvedZoneId,
         zoneName,
+        activityId: resolvedActivityId,
+        activityName,
       })
       return
     }
@@ -1170,15 +1258,16 @@ function ReservationModal({
       .from('appointments')
       .insert({
         business_id: businessId,
-        service_name: serviceName,
+        service_name: serviceNameFinal,
         scheduled_at: scheduledAtIso,
         status: 'confirmed',
         notes: notesValue,
         party_size: partySize,
         zone_id: resolvedZoneId,
+        activity_id: resolvedActivityId,
         duration_minutes: durationMinutes,
       })
-      .select('id, service_name, scheduled_at, status, customer_id, notes, zone_id, party_size')
+      .select('id, service_name, scheduled_at, status, customer_id, notes, zone_id, party_size, activity_id')
       .single()
 
     setSaving(false)
@@ -1188,7 +1277,8 @@ function ReservationModal({
     }
 
     const zoneMap = new Map(diningZones.map((z) => [z.id, z.name]))
-    onAdded(parseReservation(data as DbRow, undefined, zoneMap))
+    const activityMap = new Map(activityResources.map((a) => [a.id, a.name]))
+    onAdded(parseReservation(data as DbRow, undefined, zoneMap, activityMap))
   }
 
   const guestFloating = focusedField === 'guest' || guestName.length > 0
@@ -1395,11 +1485,104 @@ function ReservationModal({
               </motion.div>
 
               <motion.div variants={{ hidden: { opacity: 0, y: 8 }, visible: { opacity: 1, y: 0 } }}>
-                <span style={sectionLabel}>Party size</span>
-                <PartySizeCompact value={partySize} onChange={setPartySize} reduceMotion={reduceMotion} />
+                <span style={sectionLabel}>{isActivityBooking ? 'Players' : 'Party size'}</span>
+                <PartySizeCompact
+                  value={partySize}
+                  onChange={setPartySize}
+                  reduceMotion={reduceMotion}
+                  unit={isActivityBooking ? 'player' : 'guest'}
+                />
               </motion.div>
 
-              {diningZones.length > 0 && (
+              {bookableActivities.length > 0 && (
+                <motion.div variants={{ hidden: { opacity: 0, y: 8 }, visible: { opacity: 1, y: 0 } }}>
+                  <span style={sectionLabel}>Reserving</span>
+                  <div
+                    role="tablist"
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '1fr 1fr',
+                      gap: 6,
+                      padding: 4,
+                      borderRadius: 12,
+                      background: t.bgSurface,
+                      border: `1px solid ${t.border}`,
+                    }}
+                  >
+                    {([
+                      { kind: 'dining' as const, label: 'Dining table', tint: t.accent, bg: t.accentSoftBg },
+                      { kind: 'activity' as const, label: 'Activity', tint: 'var(--bk-activity)', bg: 'var(--bk-activity-bg)' },
+                    ]).map((opt) => {
+                      const active = bookingKind === opt.kind
+                      return (
+                        <button
+                          key={opt.kind}
+                          type="button"
+                          role="tab"
+                          aria-selected={active}
+                          onClick={() => {
+                            setBookingKind(opt.kind)
+                            // Preselect the first unit so the picker is never
+                            // left in a state that silently saves as dining.
+                            if (opt.kind === 'activity' && !activityId) {
+                              setActivityId(bookableActivities[0]?.id ?? '')
+                            }
+                          }}
+                          style={{
+                            height: 34,
+                            borderRadius: 9,
+                            cursor: 'pointer',
+                            fontSize: 12.5,
+                            fontWeight: 700,
+                            fontFamily: MODAL_FONT.jakarta,
+                            border: active ? `1px solid ${opt.tint}` : '1px solid transparent',
+                            background: active ? opt.bg : 'transparent',
+                            color: active ? opt.tint : t.textMuted,
+                            transition: 'background 0.15s, color 0.15s, border-color 0.15s',
+                          }}
+                        >
+                          {opt.label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </motion.div>
+              )}
+
+              {bookingKind === 'activity' && bookableActivities.length > 0 && (
+                <motion.div variants={{ hidden: { opacity: 0, y: 8 }, visible: { opacity: 1, y: 0 } }}>
+                  <span style={sectionLabel}>Activity</span>
+                  <select
+                    value={activityId}
+                    onChange={(e) => setActivityId(e.target.value)}
+                    style={{
+                      width: '100%',
+                      height: 42,
+                      borderRadius: 10,
+                      border: `1px solid ${t.border}`,
+                      padding: '0 12px',
+                      fontSize: 13,
+                      fontFamily: MODAL_FONT.jakarta,
+                      background: t.bgSurface,
+                      color: t.text,
+                    }}
+                  >
+                    {bookableActivities.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name} ({a.duration_minutes} min)
+                      </option>
+                    ))}
+                  </select>
+                  <p style={{ margin: '6px 0 0', fontSize: 11, color: t.textMuted }}>
+                    Holds the whole unit for {selectedActivity?.duration_minutes ?? 60} min ·{' '}
+                    <a href="/dashboard/settings?category=reservations" style={{ color: t.accent }}>
+                      Manage activities
+                    </a>
+                  </p>
+                </motion.div>
+              )}
+
+              {bookingKind === 'dining' && diningZones.length > 0 && (
                 <motion.div variants={{ hidden: { opacity: 0, y: 8 }, visible: { opacity: 1, y: 0 } }}>
                   <span style={sectionLabel}>Dining zone</span>
                   <select
@@ -1882,6 +2065,7 @@ export default function BookingsPage() {
   const [statusFilter, setStatusFilter] = useState<'all' | 'confirmed' | 'pending' | 'cancelled'>('all')
   const [operatingHours, setOperatingHours] = useState<OperatingHours>(DEFAULT_OPERATING_HOURS)
   const [diningZones, setDiningZones] = useState<DiningZone[]>([])
+  const [activityResources, setActivityResources] = useState<ActivityResource[]>([])
   const [tableVisibleCount, setTableVisibleCount] = useState(10)
   const [advancedFilters, setAdvancedFilters] = useState<AdvancedFilters>(DEFAULT_ADVANCED_FILTERS)
   const [filtersOpen, setFiltersOpen] = useState(false)
@@ -1942,6 +2126,33 @@ export default function BookingsPage() {
     for (const z of diningZones) m.set(z.id, z.name)
     return m
   }, [diningZones])
+
+  const activityNameById = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const a of activityResources) m.set(a.id, a.name)
+    return m
+  }, [activityResources])
+
+  // Same back-fill for activities: the resource list lands after the first
+  // reservations fetch, and a row that turns out to be an activity must also
+  // drop the dining zone it was provisionally labelled with.
+  useEffect(() => {
+    if (activityNameById.size === 0) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- back-fill activity names after async fetch
+    setReservations((prev) => {
+      let changed = false
+      const next = prev.map((r) => {
+        if (!r.activityId) return r
+        const mapped = activityNameById.get(r.activityId)
+        if (mapped && mapped !== r.activityName) {
+          changed = true
+          return { ...r, activityName: mapped, zoneName: null }
+        }
+        return r
+      })
+      return changed ? next : prev
+    })
+  }, [activityNameById])
 
   // Zones load after the first reservations fetch — back-fill zoneName on the
   // already-mapped rows once the zone map arrives (or changes).
@@ -2015,7 +2226,7 @@ export default function BookingsPage() {
 
       const { data: rows, error } = await supabase
         .from('appointments')
-        .select('id, service_name, scheduled_at, status, customer_id, conversation_id, notes, zone_id, party_size')
+        .select('id, service_name, scheduled_at, status, customer_id, conversation_id, notes, zone_id, party_size, activity_id')
         .eq('business_id', business.id)
         .gte('scheduled_at', startIso)
         .lt('scheduled_at', endIso)
@@ -2062,6 +2273,7 @@ export default function BookingsPage() {
             r,
             r.customer_id ? nameById.get(r.customer_id) : undefined,
             zoneNameById,
+            activityNameById,
           ),
         )
         setReservations((prev) => {
@@ -2082,7 +2294,7 @@ export default function BookingsPage() {
         if (!silent) setLoading(false)
       }
     },
-    [loadMonthYear, loadMonthIndex, zoneNameById],
+    [loadMonthYear, loadMonthIndex, zoneNameById, activityNameById],
   )
 
   const fetchReservationsRef = useRef(fetchReservations)
@@ -2173,14 +2385,22 @@ export default function BookingsPage() {
     if (!businessId) return
     let cancelled = false
     void (async () => {
-      const { data } = await supabase
-        .from('dining_zones')
-        .select('*')
-        .eq('business_id', businessId)
-        .eq('is_active', true)
-        .order('sort_order', { ascending: true })
+      const [zoneRes, activityRes] = await Promise.all([
+        supabase
+          .from('dining_zones')
+          .select('*')
+          .eq('business_id', businessId)
+          .eq('is_active', true)
+          .order('sort_order', { ascending: true }),
+        // Inactive resources are still needed here: a booking made before the
+        // owner retired that table must keep showing its name.
+        supabase.from('activity_resources').select('*').eq('business_id', businessId),
+      ])
       if (!cancelled) {
-        setDiningZones((data ?? []).map((r) => parseDiningZoneRow(r as Record<string, unknown>)))
+        setDiningZones((zoneRes.data ?? []).map((r) => parseDiningZoneRow(r as Record<string, unknown>)))
+        setActivityResources(
+          (activityRes.data ?? []).map((r) => parseActivityResourceRow(r as Record<string, unknown>)),
+        )
       }
     })()
     return () => {
@@ -2406,7 +2626,24 @@ export default function BookingsPage() {
               marginTop: 1,
             }}
           >
-            {r.partySize} {r.partySize === 1 ? 'guest' : 'guests'} · {location}
+            {r.partySize} {r.partySize === 1 ? 'guest' : 'guests'} ·{' '}
+            {r.activityName ? (
+              <span
+                style={{
+                  display: 'inline-block',
+                  padding: '1px 7px',
+                  borderRadius: 999,
+                  background: 'var(--bk-activity-bg)',
+                  border: '1px solid var(--bk-activity-border)',
+                  color: 'var(--bk-activity)',
+                  fontWeight: 700,
+                }}
+              >
+                {r.activityName}
+              </span>
+            ) : (
+              location
+            )}
           </div>
         </td>
         <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' as const }}>
@@ -3225,6 +3462,7 @@ export default function BookingsPage() {
                   mode={editReservation ? 'edit' : 'add'}
                   editReservation={editReservation}
                   diningZones={diningZones}
+                  activityResources={activityResources}
                   initialDate={editReservation ? undefined : prefilledDate}
                   onClose={() => {
                     setShowAddModal(false)

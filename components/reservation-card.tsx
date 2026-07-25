@@ -23,6 +23,10 @@ export type Reservation = {
   conversationId?: string | null
   zoneId?: string | null
   zoneName?: string | null
+  /** Set when the booking holds an activity resource (pool table, court)
+   *  instead of a dining table. Shown in place of the seating zone. */
+  activityId?: string | null
+  activityName?: string | null
 }
 
 export type ReservationCardProps = {
@@ -70,6 +74,16 @@ function IconTable() {
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <rect x="2" y="6" width="20" height="3" rx="1" />
       <path d="M6 9v9M18 9v9M4 18h16" />
+    </svg>
+  )
+}
+
+/** Rack of balls — reads as "game", the common case for activity bookings. */
+function IconActivity() {
+  return (
+    <svg width="10" height="10" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <circle cx="8" cy="8" r="6.2" stroke="currentColor" strokeWidth="1.4" />
+      <circle cx="8" cy="8" r="2" fill="currentColor" />
     </svg>
   )
 }
@@ -317,19 +331,43 @@ export function ReservationCard({
                 <IconTable /> {r.tableNumber}
               </span>
             )}
-            {r.zoneName && (
+            {/* An activity holds a physical resource, not a seat, so it takes
+                the zone slot and carries its own colour — violet here and in
+                settings — to keep it from reading as another dining area. */}
+            {r.activityName ? (
               <span
+                title="Activity booking, not a dining table"
                 style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
                   fontSize: 10,
-                  fontWeight: 600,
+                  fontWeight: 700,
                   padding: '2px 8px',
                   borderRadius: 999,
-                  background: t.accentSoftBg,
-                  color: t.accent,
+                  background: 'var(--bk-activity-bg)',
+                  border: '1px solid var(--bk-activity-border)',
+                  color: 'var(--bk-activity)',
                 }}
               >
-                {r.zoneName}
+                <IconActivity />
+                {r.activityName}
               </span>
+            ) : (
+              r.zoneName && (
+                <span
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 600,
+                    padding: '2px 8px',
+                    borderRadius: 999,
+                    background: t.accentSoftBg,
+                    color: t.accent,
+                  }}
+                >
+                  {r.zoneName}
+                </span>
+              )
             )}
           </span>
 

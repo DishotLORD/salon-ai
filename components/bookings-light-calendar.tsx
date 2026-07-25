@@ -43,6 +43,8 @@ type DayCellStats = {
   covers: number
   cancelledCount: number
   pendingCount: number
+  /** Bookings that hold an activity resource rather than a dining table. */
+  activityCount: number
 }
 
 function buildDayTooltip(stats: DayCellStats): string | undefined {
@@ -113,7 +115,13 @@ export function BookingsLightCalendar({
     const map = new Map<string, DayCellStats>()
     for (const r of reservations) {
       const k = calgaryCalendarDayKey(r.scheduledAt)
-      const curr = map.get(k) ?? { count: 0, covers: 0, cancelledCount: 0, pendingCount: 0 }
+      const curr = map.get(k) ?? {
+        count: 0,
+        covers: 0,
+        cancelledCount: 0,
+        pendingCount: 0,
+        activityCount: 0,
+      }
       if (r.status === 'cancelled') {
         map.set(k, { ...curr, cancelledCount: curr.cancelledCount + 1 })
         continue
@@ -124,6 +132,7 @@ export function BookingsLightCalendar({
         covers: curr.covers + r.partySize,
         cancelledCount: curr.cancelledCount,
         pendingCount: curr.pendingCount + (r.status === 'pending' ? 1 : 0),
+        activityCount: curr.activityCount + (r.activityName ? 1 : 0),
       })
     }
     return map
@@ -271,8 +280,9 @@ export function BookingsLightCalendar({
               covers: 0,
               cancelledCount: 0,
               pendingCount: 0,
+              activityCount: 0,
             }
-            const { count, covers, cancelledCount } = stats
+            const { count, covers, cancelledCount, activityCount } = stats
             const loadRatio = count / maxCount
             const isToday = isSameDay(date, today)
             const isSelected = selectedDay ? isSameDay(date, selectedDay) : false
@@ -411,6 +421,27 @@ export function BookingsLightCalendar({
                       }}
                     />
                   </div>
+                  {activityCount > 0 && inMonth && !closed ? (
+                    <div
+                      style={{
+                        height: 2,
+                        borderRadius: 1,
+                        background: 'var(--bk-activity-bg)',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      <div
+                        style={{
+                          height: '100%',
+                          // Share of the day's bookings that are activities, so
+                          // the stripe reads against the load bar above it.
+                          width: `${Math.max(12, (activityCount / Math.max(1, count)) * 100)}%`,
+                          background: 'var(--bk-activity)',
+                          borderRadius: 1,
+                        }}
+                      />
+                    </div>
+                  ) : null}
                   {cancelledCount > 0 && inMonth && !closed ? (
                     <div
                       style={{
@@ -440,7 +471,7 @@ export function BookingsLightCalendar({
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'auto auto auto 1fr',
+          gridTemplateColumns: 'auto auto auto auto 1fr',
           alignItems: 'center',
           gap: '6px 14px',
           padding: '8px 14px',
@@ -474,6 +505,10 @@ export function BookingsLightCalendar({
             }}
           />
           Busy
+        </span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+          <span style={{ width: 12, height: 3, borderRadius: 2, background: 'var(--bk-activity)' }} />
+          Activity
         </span>
         <span style={{ textAlign: 'right', fontWeight: 600, color: 'var(--bk-muted)' }}>
           Number = bookings

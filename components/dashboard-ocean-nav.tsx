@@ -456,6 +456,9 @@ export function DashboardOceanNav({ activeNav, fillViewport, flatBackground, chi
         buildChatCountQuery(businessId).eq('status', 'human'),
       ])
       if (!mounted) return
+      // A failed request must not read as "no open chats": keep the last known
+      // counts rather than flashing a confident zero.
+      if (live.error || human.error) return
       const next = { live: live.count ?? 0, human: human.count ?? 0 }
       // Keep the previous object when the counts are unchanged: a fresh object
       // every 30s re-rendered the whole sidebar for nothing.
@@ -466,9 +469,33 @@ export function DashboardOceanNav({ activeNav, fillViewport, flatBackground, chi
 
     void load()
     const id = setInterval(() => void load(), 30_000)
+
+    // The 30s poll alone leaves a stale badge: a backgrounded tab gets its
+    // timers frozen (Chrome memory saver, laptop sleep), so a chat closed
+    // meanwhile still shows as open until the tab has been focused for another
+    // full interval. Realtime corrects it the moment a status changes, and the
+    // visibility check covers the window where the socket itself was asleep.
+    const refreshIfVisible = () => {
+      if (document.visibilityState === 'visible') void load()
+    }
+    document.addEventListener('visibilitychange', refreshIfVisible)
+    window.addEventListener('focus', refreshIfVisible)
+
+    const channel = supabase
+      .channel(`sidebar-chats-${businessId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'conversations', filter: `business_id=eq.${businessId}` },
+        () => void load(),
+      )
+      .subscribe()
+
     return () => {
       mounted = false
       clearInterval(id)
+      document.removeEventListener('visibilitychange', refreshIfVisible)
+      window.removeEventListener('focus', refreshIfVisible)
+      void supabase.removeChannel(channel)
     }
   }, [access?.businessId])
 

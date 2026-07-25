@@ -160,6 +160,11 @@ input[type="number"] { -moz-appearance: textfield; }
   --bk-purple: #7c3aed;
   --bk-purple-bg: #ede9fe;
   --bk-guest-return: #c7d2fe;        /* returning-guest bar (secondary to cyan) */
+  /* Activity bookings (pool table, court, lane). Violet everywhere so a booking
+     that holds a resource never reads as another dining area. */
+  --bk-activity: #7c3aed;
+  --bk-activity-bg: #f3f0ff;
+  --bk-activity-border: #ddd6fe;
   --bk-shadow: 0 1px 2px rgba(15,23,42,0.04);
   --bk-shadow-md: 0 1px 3px rgba(15,23,42,0.12);
   --bk-shadow-pop: 0 10px 24px rgba(15,23,42,0.3);
@@ -219,6 +224,9 @@ input[type="number"] { -moz-appearance: textfield; }
   --bk-purple: #a78bfa;
   --bk-purple-bg: rgba(139,92,246,0.16);
   --bk-guest-return: #5a6690;        /* returning-guest bar (secondary to cyan) */
+  --bk-activity: #a78bfa;
+  --bk-activity-bg: rgba(139,92,246,0.16);
+  --bk-activity-border: rgba(139,92,246,0.42);
   --bk-shadow: 0 1px 2px rgba(0,0,0,0.4);
   --bk-shadow-md: 0 1px 3px rgba(0,0,0,0.5);
   --bk-shadow-pop: 0 10px 24px rgba(0,0,0,0.6);

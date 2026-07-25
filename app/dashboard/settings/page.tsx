@@ -19,9 +19,14 @@ import { DiningZonesPanel, type DiningZoneDraft } from '@/components/dining-zone
 import { WorkingHoursPanel } from '@/components/working-hours-panel'
 import {
   ActivityResourcesPanel,
-  DEFAULT_ACTIVITY_RESOURCES,
   type ActivityResource,
 } from '@/components/activity-resources-panel'
+import {
+  isActivityType,
+  isUuid,
+  parseActivityResourceRow,
+  slugifyActivityName,
+} from '@/lib/activity-resources'
 import {
   DEFAULT_BOOKING_SETTINGS,
   parseBookingSettings,
@@ -53,6 +58,8 @@ import {
   BOOKING_SETTINGS_MIGRATION_HINT,
   DINING_ZONES_MIGRATION_HINT,
   isBookingSettingsSchemaError,
+  ACTIVITY_RESOURCES_MIGRATION_HINT,
+  isActivityResourcesSchemaError,
   isDiningZonesSchemaError,
   isOperatingHoursSchemaError,
   isPaymentSettingsSchemaError,
@@ -445,7 +452,8 @@ function SettingsPageInner() {
   const [zonesSchemaReady, setZonesSchemaReady] = useState(true)
   const [zoneDrafts, setZoneDrafts] = useState<DiningZoneDraft[]>([])
   const [zonesLoading, setZonesLoading] = useState(false)
-  const [activityResources, setActivityResources] = useState<ActivityResource[]>(DEFAULT_ACTIVITY_RESOURCES)
+  const [activityResources, setActivityResources] = useState<ActivityResource[]>([])
+  const [activitiesSchemaReady, setActivitiesSchemaReady] = useState(true)
   const [reservationSubTab, setReservationSubTab] = useState<'dining' | 'activities'>('dining')
 
   const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT_PLACEHOLDER)
@@ -665,15 +673,62 @@ function SettingsPageInner() {
     setZonesLoading(false)
   }
 
+  const loadActivitiesForBusiness = async (bizId: string) => {
+    const { data, error } = await supabase
+      .from('activity_resources')
+      .select('*')
+      .eq('business_id', bizId)
+      .eq('is_active', true)
+      .order('sort_order', { ascending: true })
+
+    if (error) {
+      if (isActivityResourcesSchemaError(error.message)) setActivitiesSchemaReady(false)
+      return
+    }
+    setActivitiesSchemaReady(true)
+    const rows = (data ?? []).map((r) => {
+      const row = parseActivityResourceRow(r as Record<string, unknown>)
+      return { id: row.id, name: row.name, type: row.type, active: row.is_active }
+    })
+
+    // Activities used to be stored per-browser in localStorage, so they never
+    // reached the server and the bot could not see them. When the table is
+    // still empty, offer that old list back as unsaved drafts (their short ids
+    // make the save path insert them) so the owner only has to press Save.
+    if (rows.length === 0) {
+      const legacy = localStorage.getItem(`activity_resources_${bizId}`)
+      if (legacy) {
+        try {
+          const parsed: unknown = JSON.parse(legacy)
+          const recovered = Array.isArray(parsed)
+            ? parsed
+                .filter((r): r is Record<string, unknown> => !!r && typeof r === 'object')
+                .map((r) => ({
+                  id: typeof r.id === 'string' ? r.id : Math.random().toString(36).slice(2, 9),
+                  name: typeof r.name === 'string' ? r.name : '',
+                  type: isActivityType(r.type) ? r.type : ('other' as const),
+                  active: r.active !== false,
+                }))
+                .filter((r) => r.name.trim())
+            : []
+          if (recovered.length > 0) {
+            setActivityResources(recovered)
+            return
+          }
+        } catch {
+          /* corrupt legacy value — fall through to the empty list */
+        }
+      }
+    }
+    setActivityResources(rows)
+  }
+
   useEffect(() => {
     if (!businessRowId || activeCategory !== 'reservations') return
     // eslint-disable-next-line react-hooks/set-state-in-effect -- async zone fetch syncs external Supabase state
     void loadZonesForBusiness(businessRowId)
-    const stored = localStorage.getItem(`activity_resources_${businessRowId}`)
-    if (stored) {
-      try { setActivityResources(JSON.parse(stored)) } catch { /* ignore */ }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- loadZonesForBusiness identity changes every render; keyed by businessRowId
+    void loadActivitiesForBusiness(businessRowId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- loader identities change every render; keyed by businessRowId
   }, [businessRowId, activeCategory])
 
   const saveReservations = async (bizId: string) => {
@@ -760,7 +815,66 @@ function SettingsPageInner() {
 
     setZoneDrafts(nextDrafts)
     await loadZonesForBusiness(bizId)
-    localStorage.setItem(`activity_resources_${bizId}`, JSON.stringify(activityResources))
+    if (!(await saveActivities(bizId))) return false
+    return true
+  }
+
+  /**
+   * Persist activities. Rows the owner removed are deactivated rather than
+   * deleted, so reservations already holding that pool table keep pointing at a
+   * real resource instead of silently losing it.
+   */
+  const saveActivities = async (bizId: string): Promise<boolean> => {
+    if (!activitiesSchemaReady) {
+      setSaveError(ACTIVITY_RESOURCES_MIGRATION_HINT)
+      return false
+    }
+
+    const keptIds = new Set(activityResources.map((a) => a.id).filter(isUuid))
+    const { data: existingRows } = await supabase
+      .from('activity_resources')
+      .select('id')
+      .eq('business_id', bizId)
+
+    for (const row of existingRows ?? []) {
+      const id = String((row as { id: string }).id)
+      if (!keptIds.has(id)) {
+        await supabase.from('activity_resources').update({ is_active: false }).eq('id', id)
+      }
+    }
+
+    for (let i = 0; i < activityResources.length; i++) {
+      const a = activityResources[i]
+      const name = a.name.trim() || 'Activity'
+      const payload = {
+        business_id: bizId,
+        name,
+        slug: slugifyActivityName(name),
+        type: a.type,
+        is_active: a.active,
+        sort_order: i,
+        updated_at: new Date().toISOString(),
+      }
+
+      const { error } = isUuid(a.id)
+        ? await supabase.from('activity_resources').update(payload).eq('id', a.id)
+        : await supabase.from('activity_resources').insert(payload)
+
+      if (error) {
+        if (isActivityResourcesSchemaError(error.message)) {
+          setActivitiesSchemaReady(false)
+          setSaveError(ACTIVITY_RESOURCES_MIGRATION_HINT)
+        } else {
+          setSaveError(error.message ?? 'Failed to save activity')
+        }
+        return false
+      }
+    }
+
+    // The rows now live server-side; drop the per-browser copy so a later
+    // "remove everything" cannot be undone by the legacy recovery above.
+    localStorage.removeItem(`activity_resources_${bizId}`)
+    await loadActivitiesForBusiness(bizId)
     return true
   }
 

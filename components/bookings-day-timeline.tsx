@@ -17,7 +17,9 @@ import {
   type TimelineRange,
 } from '@/lib/time-timeline'
 
-const CARD_H = 40
+// Two lines of text plus 6px padding each side: at 40 the second line (which
+// carries the activity name) was clipped in half.
+const CARD_H = 46
 const GUTTER_W = 44
 
 const STATUS_LABEL: Record<ResStatus, string> = {
@@ -314,6 +316,11 @@ export function BookingsDayTimeline({
                   ? timelinePercent(timeToTimelineMinutes(dragTime, range), range)
                   : topPct
                 const st = STATUS_STYLE[r.status]
+                // An activity holds a physical resource, so it gets the violet
+                // frame used for activities everywhere else. The status tint
+                // stays on the fill, and the label below still spells the
+                // status out, so nothing is lost by recolouring the border.
+                const isActivity = !!r.activityName
                 const widthPct = laneCount > 1 ? 100 / laneCount - 2 : 100
                 const leftPct = laneCount > 1 ? (lane / laneCount) * 100 + 1 : 0
 
@@ -340,7 +347,7 @@ export function BookingsDayTimeline({
                       height: CARD_H,
                       padding: '6px 8px',
                       borderRadius: bk.radiusSm,
-                      border: `1px solid ${isDragging ? '#38bdf8' : st.border}`,
+                      border: `1px solid ${isDragging ? '#38bdf8' : isActivity ? 'var(--bk-activity-border)' : st.border}`,
                       background: isDragging ? '#f0f9ff' : st.bg,
                       boxShadow: isDragging
                         ? '0 8px 24px rgba(56,189,248,0.25)'
@@ -361,8 +368,17 @@ export function BookingsDayTimeline({
                         : fmtTime(r.scheduledAt)}{' '}
                       · {r.guestName}
                     </div>
-                    <div style={{ fontSize: bk.micro, color: st.color, fontWeight: 600 }}>
-                      Party {r.partySize} · {STATUS_LABEL[r.status]}
+                    <div
+                      style={{
+                        fontSize: bk.micro,
+                        color: isActivity ? 'var(--bk-activity)' : st.color,
+                        fontWeight: 600,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {isActivity ? r.activityName : `Party ${r.partySize}`} · {STATUS_LABEL[r.status]}
                     </div>
                   </motion.div>
                 )
