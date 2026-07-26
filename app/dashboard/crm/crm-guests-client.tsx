@@ -101,7 +101,12 @@ function CrmGuestFilterBar({
 }) {
   const [hover, setHover] = useState<GuestTagFilter | null>(null)
   return (
-    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', width: 'fit-content' }}>
+    // Six filters with counts and labels as long as "Large party" would be
+    // squeezed into a fixed segmented track, so these stay chips that can wrap.
+    // What they borrow from the chats filters is the quiet language: the active
+    // one is a raised surface at full contrast rather than a solid dark block,
+    // which was the loudest thing on a page whose point is the guest list.
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
       {GUEST_TAG_FILTERS.map((f) => {
         const active = value === f
         const hot = hover === f && !active
@@ -114,23 +119,23 @@ function CrmGuestFilterBar({
             onMouseEnter={() => setHover(f)}
             onMouseLeave={() => setHover(null)}
             style={{
-              padding: '6px 13px',
+              padding: '6px 12px',
               borderRadius: 999,
-              border: active ? '1px solid var(--bk-inverse)' : bk.border,
-              background: active ? 'var(--bk-inverse)' : hot ? 'var(--bk-surface)' : 'var(--bk-card)',
-              color: active ? 'var(--bk-inverse-text)' : 'var(--bk-body)',
+              border: `1px solid ${active ? 'var(--bk-border-strong)' : 'var(--bk-border)'}`,
+              background: active ? 'var(--bk-card)' : hot ? 'var(--bk-surface)' : 'transparent',
+              color: active ? 'var(--bk-head)' : 'var(--bk-body)',
               fontSize: bk.caption,
-              fontWeight: active ? 600 : 500,
+              fontWeight: active ? 700 : 500,
               lineHeight: 1.2,
               whiteSpace: 'nowrap',
               cursor: 'pointer',
               fontFamily: bk.font,
               outline: 'none',
+              boxShadow: active ? 'var(--bk-shadow-md)' : 'none',
               transition: 'background 0.16s ease, color 0.16s ease, border-color 0.16s ease',
               display: 'inline-flex',
               alignItems: 'center',
               gap: 6,
-              boxShadow: active ? 'var(--bk-shadow-md)' : 'none',
             }}
           >
             {f}
@@ -142,10 +147,11 @@ function CrmGuestFilterBar({
                   lineHeight: 1,
                   padding: '2px 6px',
                   borderRadius: 999,
-                  background: active ? 'rgba(255,255,255,0.22)' : 'var(--bk-surface)',
-                  color: active ? 'var(--bk-inverse-text)' : 'var(--bk-body)',
+                  background: 'var(--bk-surface)',
+                  color: active ? 'var(--bk-head)' : 'var(--bk-muted)',
                   minWidth: 18,
                   textAlign: 'center',
+                  fontVariantNumeric: 'tabular-nums',
                 }}
               >
                 {counts[f]}
@@ -455,20 +461,23 @@ export function CrmGuestsClient({ initialCustomers, initialBusinessId }: CrmGues
             </div>
           </div>
 
-          {/* stats */}
+          {/* stats — one strip with hairline dividers, matching Analytics.
+              Three floating cards for three numbers read as three separate
+              things to compare rather than one summary of the guest book. */}
           <div
             style={{
+              ...bkCard,
               display: 'grid',
-              gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)',
-              gap: 12,
+              gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(3, 1fr)',
+              overflow: 'hidden',
             }}
           >
             {[
-              { label: 'Total guests', value: showInitialSkeleton ? '—' : String(stats.total), sub: undefined },
+              { label: 'Total guests', value: showInitialSkeleton ? '—' : String(stats.total), sub: 'in the guest book' },
               {
                 label: 'New this month',
                 value: showInitialSkeleton ? '—' : String(stats.newThisMonth),
-                sub: undefined,
+                sub: 'first visit this month',
               },
               {
                 label: 'Repeat rate',
@@ -479,34 +488,46 @@ export function CrmGuestsClient({ initialCustomers, initialBusinessId }: CrmGues
                     ? `${stats.returningCount} returning`
                     : 'No repeat guests yet',
               },
-            ].map(({ label, value, sub }) => (
-              <div key={label} style={{ ...bkCard, padding: bk.cardPad, minHeight: 88 }}>
+            ].map(({ label, value, sub }, i) => (
+              <div
+                key={label}
+                style={{
+                  padding: '16px 18px',
+                  display: 'grid',
+                  gap: 7,
+                  alignContent: 'start',
+                  ...(isMobile
+                    ? {
+                        borderLeft: i % 2 === 1 ? '1px solid var(--bk-border)' : undefined,
+                        borderTop: i >= 2 ? '1px solid var(--bk-border)' : undefined,
+                      }
+                    : { borderLeft: i > 0 ? '1px solid var(--bk-border)' : undefined }),
+                }}
+              >
                 <div
                   style={{
-                    fontSize: bk.micro,
-                    fontWeight: 600,
+                    fontSize: 10.5,
+                    fontWeight: 700,
                     color: 'var(--bk-muted)',
                     textTransform: 'uppercase',
-                    letterSpacing: '0.08em',
+                    letterSpacing: '0.09em',
                   }}
                 >
                   {label}
                 </div>
                 <div
                   style={{
-                    fontSize: bk.statValue,
+                    fontSize: 30,
                     fontWeight: 700,
                     color: 'var(--bk-head)',
-                    marginTop: 4,
+                    letterSpacing: '-0.035em',
                     lineHeight: 1,
-                    minHeight: 28,
+                    fontVariantNumeric: 'tabular-nums',
                   }}
                 >
                   {value}
                 </div>
-                <div style={{ fontSize: bk.micro, color: 'var(--bk-body)', marginTop: 4, minHeight: 14 }}>
-                  {sub ?? ' '}
-                </div>
+                <div style={{ fontSize: 11.5, color: 'var(--bk-body)', minHeight: 16 }}>{sub}</div>
               </div>
             ))}
           </div>

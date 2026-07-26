@@ -32,6 +32,23 @@ type AppointmentRow = {
   notes?: string | null
 }
 
+function IconPhone() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.4-1.2a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z" />
+    </svg>
+  )
+}
+
+function IconMail() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="2" y="4" width="20" height="16" rx="2" />
+      <path d="m22 7-10 6L2 7" />
+    </svg>
+  )
+}
+
 function statusLabel(raw: string | null): string {
   const s = (raw ?? 'pending').toLowerCase()
   if (s === 'confirmed') return 'Confirmed'
@@ -915,49 +932,70 @@ export function CrmGuestDetail({
             </div>
           </div>
 
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12, marginBottom: 14 }}>
-            {contactHasPhone && (
-              <a
-                href={`tel:${customer.phone.replace(/\s/g, '')}`}
-                style={{
-                  padding: '6px 12px',
-                  borderRadius: 999,
-                  border: bk.border,
-                  background: 'var(--bk-surface)',
-                  fontSize: 12,
-                  fontWeight: 500,
-                  color: 'var(--bk-head)',
-                  textDecoration: 'none',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {customer.phone}
-              </a>
-            )}
-            {customer.email && (
-              <a
-                href={`mailto:${customer.email}`}
-                style={{
-                  padding: '6px 12px',
-                  borderRadius: 999,
-                  border: bk.border,
-                  background: 'var(--bk-surface)',
-                  fontSize: 12,
-                  fontWeight: 500,
-                  color: 'var(--bk-head)',
-                  textDecoration: 'none',
-                  maxWidth: '100%',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {customer.email}
-              </a>
-            )}
-            {!contactHasPhone && !customer.email && (
-              <span style={{ fontSize: 12, color: 'var(--bk-muted)' }}>No contact yet</span>
-            )}
+          {/* Contact as labelled rows, not chips. The email chip truncated the
+              one thing a host copies out of this drawer, and a bare pill gave
+              no clue which value was which. Same treatment as the chat panel. */}
+          <div style={{ display: 'grid', gap: 6, marginTop: 12, marginBottom: 14 }}>
+            {([
+              {
+                key: 'phone',
+                label: 'Phone',
+                value: contactHasPhone ? customer.phone : null,
+                href: contactHasPhone ? `tel:${customer.phone.replace(/\s/g, '')}` : null,
+                icon: <IconPhone />,
+              },
+              {
+                key: 'email',
+                label: 'Email',
+                value: customer.email || null,
+                href: customer.email ? `mailto:${customer.email}` : null,
+                icon: <IconMail />,
+              },
+            ] as const).map((row) => {
+              const body = (
+                <>
+                  <span
+                    style={{
+                      width: 32, height: 32, borderRadius: 9, flexShrink: 0,
+                      display: 'grid', placeItems: 'center',
+                      background: row.value ? 'var(--bk-accent-soft)' : 'var(--bk-surface)',
+                      color: row.value ? 'var(--bk-accent)' : 'var(--bk-muted)',
+                    }}
+                  >
+                    {row.icon}
+                  </span>
+                  <span style={{ minWidth: 0, display: 'grid', gap: 1 }}>
+                    <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--bk-muted)' }}>
+                      {row.label}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 12.5,
+                        fontWeight: row.value ? 600 : 400,
+                        fontStyle: row.value ? 'normal' : 'italic',
+                        color: row.value ? 'var(--bk-head)' : 'var(--bk-muted)',
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {row.value ?? 'Not provided'}
+                    </span>
+                  </span>
+                </>
+              )
+              const shared: React.CSSProperties = {
+                display: 'flex', alignItems: 'center', gap: 9,
+                padding: '7px 10px', borderRadius: 11,
+                background: 'var(--bk-surface)', border: bk.border,
+                textDecoration: 'none', minWidth: 0,
+              }
+              return row.href ? (
+                <a key={row.key} href={row.href} style={shared} title={row.value ?? undefined}>
+                  {body}
+                </a>
+              ) : (
+                <div key={row.key} style={shared}>{body}</div>
+              )
+            })}
           </div>
 
           <TabBar
