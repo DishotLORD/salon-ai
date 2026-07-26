@@ -1036,29 +1036,67 @@ export default function ChatsInboxPage() {
                 }}
               />
 
-              {/* Filter tabs — pill style */}
-              <div style={{ display: 'flex', gap: 4, paddingBottom: 12 }}>
-                {(['All', 'Active', 'Human', 'Closed'] as const).map((tab) => (
-                  <button
-                    key={tab}
-                    type="button"
-                    onClick={() => setFilterTab(tab)}
-                    style={{
-                      flex: 1,
-                      padding: '5px 0',
-                      borderRadius: 999,
-                      border: 'none',
-                      background: filterTab === tab ? t.accent : t.bgSurfaceMuted,
-                      color: filterTab === tab ? '#ffffff' : t.textMuted,
-                      fontSize: 11,
-                      fontWeight: filterTab === tab ? 700 : 500,
-                      cursor: 'pointer',
-                      transition: 'background 0.15s, color 0.15s',
-                    }}
-                  >
-                    {tab}
-                  </button>
-                ))}
+              {/* Filter tabs — one segmented control, not four chips. A single
+                  choice should look like a single control, and the moving
+                  thumb shows where the selection went instead of one pill
+                  lighting up while another goes out. */}
+              <div
+                role="tablist"
+                style={{
+                  display: 'flex',
+                  gap: 2,
+                  padding: 3,
+                  marginBottom: 12,
+                  borderRadius: 12,
+                  background: t.bgSurfaceMuted,
+                  border: `1px solid ${t.border}`,
+                }}
+              >
+                {(['All', 'Active', 'Human', 'Closed'] as const).map((tab) => {
+                  const active = filterTab === tab
+                  return (
+                    <button
+                      key={tab}
+                      type="button"
+                      role="tab"
+                      aria-selected={active}
+                      onClick={() => setFilterTab(tab)}
+                      style={{
+                        position: 'relative',
+                        flex: 1,
+                        padding: '6px 0',
+                        borderRadius: 9,
+                        border: 'none',
+                        background: 'transparent',
+                        color: active ? t.text : t.textMuted,
+                        fontSize: 11,
+                        fontWeight: active ? 700 : 500,
+                        cursor: 'pointer',
+                        transition: 'color 0.15s',
+                      }}
+                    >
+                      {active && (
+                        <motion.span
+                          layoutId="chat-filter-thumb"
+                          transition={oceanTransition(reduceMotion, {
+                            type: 'spring',
+                            stiffness: 420,
+                            damping: 34,
+                          })}
+                          style={{
+                            position: 'absolute',
+                            inset: 0,
+                            borderRadius: 9,
+                            background: t.bgSurface,
+                            border: `1px solid ${t.border}`,
+                            boxShadow: t.shadowSm,
+                          }}
+                        />
+                      )}
+                      <span style={{ position: 'relative' }}>{tab}</span>
+                    </button>
+                  )
+                })}
               </div>
             </div>
 
