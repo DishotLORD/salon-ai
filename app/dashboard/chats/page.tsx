@@ -2,7 +2,7 @@
 
 import { motion, useReducedMotion } from 'framer-motion'
 import { useSearchParams } from 'next/navigation'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 
 import { DashboardOceanNav } from '@/components/dashboard-ocean-nav'
 import { resolveBusinessAccess } from '@/lib/business-access'
@@ -141,6 +141,59 @@ function mapDbConversationToConversation(row: DbConversationRow): Conversation {
   }
 }
 
+
+/** Colour per conversation state, so Status reads at a glance instead of
+ *  being one more grey value in the list. */
+const STATUS_COLOR: Record<ConversationStatus, string> = {
+  Live: t.accent,
+  Human: t.warning,
+  Waiting: t.textMuted,
+  Resolved: '#4ade80',
+}
+
+function IconTakeOver() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+      <path d="M13 8l-3 3 3 3" />
+      <path d="M10 11h5" />
+    </svg>
+  )
+}
+
+function IconReopen() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M3 12a9 9 0 1 0 3-6.7" />
+      <path d="M3 4v5h5" />
+    </svg>
+  )
+}
+
+function IconCheck() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M20 6L9 17l-5-5" />
+    </svg>
+  )
+}
+
+function IconPhone() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.4-1.2a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z" />
+    </svg>
+  )
+}
+
+function IconMail() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="2" y="4" width="20" height="16" rx="2" />
+      <path d="m22 7-10 6L2 7" />
+    </svg>
+  )
+}
 
 function IconArchive() {
   return (
@@ -1526,63 +1579,60 @@ export default function ChatsInboxPage() {
                     <div style={{ color: t.textMuted, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', fontWeight: 600, padding: '0 2px' }}>
                       Actions
                     </div>
+                    {/* One solid button carries the primary action; everything
+                        else is a quiet outline. Three equally tinted buttons
+                        gave the panel no focus — nothing looked like the thing
+                        to press. */}
                     <motion.button
                       type="button"
                       onClick={() => void handleTakeOverToggle()}
-                      whileHover={reduceMotion ? undefined : { scale: 1.02, y: -2 }}
-                      whileTap={reduceMotion ? undefined : { scale: 0.97 }}
-                      transition={{ type: 'spring', stiffness: 400, damping: 20 }}
+                      whileTap={reduceMotion ? undefined : { scale: 0.98 }}
                       style={{
                         width: '100%', padding: '11px 14px', borderRadius: 10,
-                        border: 'none',
-                        background: isTakenOver
-                          ? 'linear-gradient(135deg, rgba(245,158,11,0.2) 0%, rgba(245,158,11,0.08) 100%)'
-                          : 'linear-gradient(135deg, rgba(56,189,248,0.2) 0%, rgba(96,184,255,0.08) 100%)',
-                        color: isTakenOver ? t.warning : t.accent,
-                        fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                        border: '1px solid transparent',
+                        background: isTakenOver ? t.warning : t.accent,
+                        // Ink is a token, not a constant: the amber is dark in
+                        // the light theme and bright in the dark one, so one
+                        // fixed colour cannot stay legible on both.
+                        color: isTakenOver ? 'var(--t-on-warning)' : 'var(--t-on-accent)',
+                        fontSize: 13, fontWeight: 700, cursor: 'pointer',
                         display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                        boxShadow: isTakenOver
-                          ? '0 2px 12px rgba(245,158,11,0.15), inset 0 1px 0 rgba(255,255,255,0.06)'
-                          : '0 2px 12px rgba(56,189,248,0.15), inset 0 1px 0 rgba(255,255,255,0.06)',
                       }}
                     >
-                      {isTakenOver ? 'Return to AI' : 'Take Over Chat'}
+                      <IconTakeOver />
+                      {isTakenOver ? 'Return to AI' : 'Take over chat'}
                     </motion.button>
                     {selectedConversation.status !== 'Resolved' ? (
                       <motion.button
                         type="button"
                         onClick={() => void handleResolve(selectedConversation.id)}
-                        whileHover={reduceMotion ? undefined : { scale: 1.02, y: -2 }}
-                        whileTap={reduceMotion ? undefined : { scale: 0.97 }}
-                        transition={{ type: 'spring', stiffness: 400, damping: 20 }}
+                        whileTap={reduceMotion ? undefined : { scale: 0.98 }}
                         style={{
                           width: '100%', padding: '11px 14px', borderRadius: 10,
-                          border: 'none',
-                          background: 'linear-gradient(135deg, rgba(74,222,128,0.15) 0%, rgba(74,222,128,0.05) 100%)',
-                          color: '#4ade80', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                          border: `1px solid ${t.border}`,
+                          background: t.bgSurfaceMuted,
+                          color: t.text, fontSize: 13, fontWeight: 600, cursor: 'pointer',
                           display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                          boxShadow: '0 2px 12px rgba(74,222,128,0.1), inset 0 1px 0 rgba(255,255,255,0.06)',
                         }}
                       >
-                        Mark as Resolved
+                        <IconCheck />
+                        Mark as resolved
                       </motion.button>
                     ) : (
                       <motion.button
                         type="button"
                         onClick={() => void handleReopen(selectedConversation.id)}
-                        whileHover={reduceMotion ? undefined : { scale: 1.02, y: -2 }}
-                        whileTap={reduceMotion ? undefined : { scale: 0.97 }}
-                        transition={{ type: 'spring', stiffness: 400, damping: 20 }}
+                        whileTap={reduceMotion ? undefined : { scale: 0.98 }}
                         style={{
                           width: '100%', padding: '11px 14px', borderRadius: 10,
-                          border: 'none',
-                          background: 'linear-gradient(135deg, rgba(56,189,248,0.2) 0%, rgba(96,184,255,0.08) 100%)',
-                          color: t.accent, fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                          border: `1px solid ${t.border}`,
+                          background: t.bgSurfaceMuted,
+                          color: t.text, fontSize: 13, fontWeight: 600, cursor: 'pointer',
                           display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                          boxShadow: '0 2px 12px rgba(56,189,248,0.15), inset 0 1px 0 rgba(255,255,255,0.06)',
                         }}
                       >
-                        Reopen Conversation
+                        <IconReopen />
+                        Reopen conversation
                       </motion.button>
                     )}
                   </div>
@@ -1592,54 +1642,104 @@ export default function ChatsInboxPage() {
                     <div style={{ color: t.textMuted, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', fontWeight: 600, padding: '0 2px' }}>
                       Contact
                     </div>
-                    <div style={{
-                      borderRadius: 12, padding: 14,
-                      background: t.bgSurfaceMuted, border: `1px solid ${t.border}`,
-                      display: 'grid', gap: 10,
-                    }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
-                        <span style={{ color: t.textMuted, fontSize: 12 }}>Phone</span>
-                        {selectedConversation.phone ? (
-                          <a href={`tel:${selectedConversation.phone}`} style={{ color: t.accent, fontSize: 12, fontWeight: 600, textDecoration: 'none' }}>
-                            {selectedConversation.phone}
+                    {/* Label above value, not beside it: an email had to be
+                        truncated to fit a side-by-side row, and a phone number
+                        the host is about to dial is the wrong thing to hide. */}
+                    <div style={{ display: 'grid', gap: 6 }}>
+                      {([
+                        {
+                          key: 'phone',
+                          label: 'Phone',
+                          value: selectedConversation.phone,
+                          href: selectedConversation.phone ? `tel:${selectedConversation.phone}` : null,
+                          icon: <IconPhone />,
+                        },
+                        {
+                          key: 'email',
+                          label: 'Email',
+                          value: selectedConversation.email,
+                          href: selectedConversation.email ? `mailto:${selectedConversation.email}` : null,
+                          icon: <IconMail />,
+                        },
+                      ] as const).map((row) => {
+                        const body = (
+                          <>
+                            <span
+                              style={{
+                                width: 34, height: 34, borderRadius: 10, flexShrink: 0,
+                                display: 'grid', placeItems: 'center',
+                                background: row.value ? t.accentSoftBg : t.bgSurfaceMuted,
+                                color: row.value ? t.accent : t.textSubtle,
+                              }}
+                            >
+                              {row.icon}
+                            </span>
+                            <span style={{ minWidth: 0, display: 'grid', gap: 1 }}>
+                              <span style={{ color: t.textMuted, fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', fontWeight: 600 }}>
+                                {row.label}
+                              </span>
+                              <span
+                                style={{
+                                  color: row.value ? t.text : t.textSubtle,
+                                  fontSize: 13,
+                                  fontWeight: row.value ? 600 : 400,
+                                  fontStyle: row.value ? 'normal' : 'italic',
+                                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                }}
+                              >
+                                {row.value ?? 'Not provided'}
+                              </span>
+                            </span>
+                          </>
+                        )
+                        const shared: CSSProperties = {
+                          display: 'flex', alignItems: 'center', gap: 10,
+                          padding: '8px 10px', borderRadius: 12,
+                          background: t.bgSurfaceMuted, border: `1px solid ${t.border}`,
+                          textDecoration: 'none', minWidth: 0,
+                        }
+                        return row.href ? (
+                          <a key={row.key} href={row.href} style={shared} title={row.value ?? undefined}>
+                            {body}
                           </a>
                         ) : (
-                          <span style={{ color: t.textSubtle, fontSize: 12, fontStyle: 'italic' }}>Not provided</span>
-                        )}
-                      </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
-                        <span style={{ color: t.textMuted, fontSize: 12 }}>Email</span>
-                        {selectedConversation.email ? (
-                          <a href={`mailto:${selectedConversation.email}`} style={{ color: t.accent, fontSize: 12, fontWeight: 600, textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 180 }}>
-                            {selectedConversation.email}
-                          </a>
-                        ) : (
-                          <span style={{ color: t.textSubtle, fontSize: 12, fontStyle: 'italic' }}>Not provided</span>
-                        )}
-                      </div>
+                          <div key={row.key} style={shared}>{body}</div>
+                        )
+                      })}
                     </div>
                   </div>
 
                   {/* Stats */}
-                  <div style={{
-                    borderRadius: 12, padding: 14,
-                    background: t.bgSurfaceMuted, border: `1px solid ${t.border}`,
-                    display: 'grid', gap: 10,
-                  }}>
-                    <div style={{ color: t.textMuted, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', fontWeight: 600 }}>
+                  <div style={{ display: 'grid', gap: 8 }}>
+                    <div style={{ color: t.textMuted, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', fontWeight: 600, padding: '0 2px' }}>
                       Info
                     </div>
-                    {[
-                      { label: 'Status', value: selectedConversation.status },
-                      { label: 'Messages', value: String(selectedConversation.messages.length) },
-                      { label: 'Last activity', value: selectedConversation.time },
-                      { label: 'Handled by', value: isTakenOver ? 'Human' : conciergeName },
-                    ].map((item) => (
-                      <div key={item.label} style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                        <span style={{ color: t.textMuted, fontSize: 12 }}>{item.label}</span>
-                        <span style={{ color: t.text, fontSize: 12, fontWeight: 600 }}>{item.value}</span>
-                      </div>
-                    ))}
+                    <div style={{
+                      borderRadius: 12,
+                      background: t.bgSurfaceMuted, border: `1px solid ${t.border}`,
+                      overflow: 'hidden',
+                    }}>
+                      {[
+                        { label: 'Status', value: selectedConversation.status, color: STATUS_COLOR[selectedConversation.status] },
+                        { label: 'Messages', value: String(selectedConversation.messages.length), color: t.text },
+                        { label: 'Last activity', value: selectedConversation.time, color: t.text },
+                        { label: 'Handled by', value: isTakenOver ? 'Human' : conciergeName, color: t.text },
+                      ].map((item, i) => (
+                        <div
+                          key={item.label}
+                          style={{
+                            display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center',
+                            padding: '10px 12px',
+                            // Hairlines between rows keep the eye on one line
+                            // while it travels from label to value.
+                            borderTop: i === 0 ? 'none' : `1px solid ${t.border}`,
+                          }}
+                        >
+                          <span style={{ color: t.textMuted, fontSize: 12 }}>{item.label}</span>
+                          <span style={{ color: item.color, fontSize: 12, fontWeight: 600, textAlign: 'right' }}>{item.value}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
               ) : (

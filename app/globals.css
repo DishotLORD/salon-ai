@@ -51,6 +51,8 @@ input[type="number"] { -moz-appearance: textfield; }
   --t-accent-soft-bg: rgba(96,184,255,0.08);
   --t-accent-soft-border: rgba(96,184,255,0.22);
   --t-accent-glow: 0 0 20px rgba(96,184,255,0.4);
+  --t-on-accent: #08243a;
+  --t-on-warning: #3a2600;
   --t-sidebar-active-bg: rgba(96,184,255,0.22);
   --t-sidebar-active-fade: rgba(96,184,255,0.07);
   --t-sidebar-active-border: rgba(96,184,255,0.16);
@@ -94,6 +96,11 @@ input[type="number"] { -moz-appearance: textfield; }
   --t-accent-soft-bg: rgba(56,189,248,0.10);
   --t-accent-soft-border: rgba(56,189,248,0.25);
   --t-accent-glow: 0 0 20px rgba(56,189,248,0.3);
+  /* Ink for text sitting ON a filled accent/warning button. The accent stays a
+     light cyan in both themes so it always wants dark ink; the amber flips from
+     dark (light theme) to bright (dark theme), so its ink has to flip with it. */
+  --t-on-accent: #08243a;
+  --t-on-warning: #ffffff;
   --t-sidebar-active-bg: rgba(56,189,248,0.22);
   --t-sidebar-active-fade: rgba(56,189,248,0.07);
   --t-sidebar-active-border: rgba(56,189,248,0.16);
