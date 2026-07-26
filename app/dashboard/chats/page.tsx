@@ -201,6 +201,43 @@ function IconMail() {
   )
 }
 
+function IconSparkle() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M12 3l1.7 4.6L18 9.3l-4.3 1.7L12 15.6l-1.7-4.6L6 9.3l4.3-1.7z" />
+      <path d="M18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z" />
+    </svg>
+  )
+}
+
+function IconBolt() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M13 2L4.5 13.5H11l-1 8.5 8.5-11.5H12z" />
+    </svg>
+  )
+}
+
+function IconSend() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M4.5 12L20 4l-4 16-4.5-6z" />
+      <path d="M11.5 14L20 4" />
+    </svg>
+  )
+}
+
+/** Openers a host reaches for most while covering the AI. Deliberately
+ *  unfinished sentences where a real answer has to follow, so nothing here can
+ *  be fired off as a complete reply by mistake. */
+const COMPOSER_MAX_H = 132
+
+const SUGGESTED_REPLIES = [
+  'Happy to help with that!',
+  'Let me check availability.',
+  "You're all set — anything else?",
+] as const
+
 function IconArchive() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -240,6 +277,7 @@ export default function ChatsInboxPage() {
   const [draft, setDraft] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [sendingConversationId, setSendingConversationId] = useState<string | null>(null)
+  const composerRef = useRef<HTMLTextAreaElement>(null)
   const [inboxLoaded, setInboxLoaded] = useState(false)
   const [inboxFetchError, setInboxFetchError] = useState(false)
   const [conciergeName, setConciergeName] = useState('AI Concierge')
@@ -793,6 +831,16 @@ export default function ChatsInboxPage() {
       ),
     )
   }
+
+  // Grow the composer with the reply. A textarea does not size to its content
+  // on its own, so measure after every change: collapse first, then take the
+  // scroll height, capped so a long message never pushes the thread off screen.
+  useEffect(() => {
+    const el = composerRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, COMPOSER_MAX_H)}px`
+  }, [draft])
 
   const handleSend = async () => {
     if (!selectedConversation || !draft.trim() || isLoading) {
@@ -1421,7 +1469,7 @@ export default function ChatsInboxPage() {
                             color: isAi ? t.text : '#ffffff',
                           }}
                         >
-                          <p style={{ margin: 0, fontSize: 14.5, lineHeight: 1.55, wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
+                          <p style={{ margin: 0, fontSize: 14.5, lineHeight: 1.55, wordBreak: 'break-word', overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}>
                             {message.text}
                           </p>
                           <div style={{ marginTop: 6, fontSize: 10, color: isAi ? t.textSubtle : 'rgba(255,255,255,0.55)', textAlign: isAi ? 'left' : 'right' }}>
@@ -1456,18 +1504,26 @@ export default function ChatsInboxPage() {
                     borderTop: `1px solid ${t.border}`,
                   }}
                 >
+                  {/* Who is answering, as a pill rather than a loose line —
+                      it sits above the composer as a label for it. */}
                   <div
                     style={{
                       marginBottom: 8,
-                      display: 'flex',
+                      display: 'inline-flex',
                       alignItems: 'center',
-                      gap: 6,
+                      gap: 7,
+                      padding: '5px 11px',
+                      borderRadius: 999,
+                      background: isTakenOver ? t.warningBg : t.bgSurfaceMuted,
+                      border: `1px solid ${isTakenOver ? t.warningBorder : t.border}`,
                       color: isTakenOver ? t.warning : t.textMuted,
-                      fontSize: 11,
-                      fontWeight: 500,
+                      fontSize: 11.5,
+                      fontWeight: 600,
                     }}
                   >
-                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: isTakenOver ? t.warning : t.success, flexShrink: 0 }} />
+                    <span style={{ color: isTakenOver ? t.warning : t.accent, display: 'grid', placeItems: 'center' }}>
+                      <IconSparkle />
+                    </span>
                     {isTakenOver
                       ? 'You are responding manually'
                       : `${conciergeName} is handling this chat`}
@@ -1489,9 +1545,46 @@ export default function ChatsInboxPage() {
                     </div>
                   ) : null}
 
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <input
-                      type="text"
+                  {/* Quick replies, only while a human is on the chat: when
+                      the AI is answering, the host is not typing and these
+                      would be noise. They fill the field instead of sending,
+                      so the reply is still read before it goes out. */}
+                  {isTakenOver && !draft.trim() && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: t.accent, fontSize: 11, fontWeight: 600 }}>
+                        <IconBolt />
+                        Suggested
+                      </span>
+                      {SUGGESTED_REPLIES.map((reply) => (
+                        <button
+                          key={reply}
+                          type="button"
+                          onClick={() => {
+                            setDraft(reply)
+                            composerRef.current?.focus()
+                          }}
+                          style={{
+                            padding: '5px 11px',
+                            borderRadius: 999,
+                            border: `1px solid ${t.border}`,
+                            background: t.bgSurfaceMuted,
+                            color: t.textMuted,
+                            fontSize: 11.5,
+                            cursor: 'pointer',
+                            fontFamily: 'inherit',
+                            transition: 'color 0.15s, border-color 0.15s',
+                          }}
+                        >
+                          {reply}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+                    <textarea
+                      ref={composerRef}
+                      rows={1}
                       value={draft}
                       onChange={(event) => setDraft(event.target.value)}
                       disabled={!isTakenOver || isLoading}
@@ -1503,7 +1596,7 @@ export default function ChatsInboxPage() {
                       }}
                       placeholder={
                         isTakenOver
-                          ? 'Write a message…'
+                          ? 'Write a reply…  (Enter to send, Shift+Enter for a new line)'
                           : 'Take over from the sidebar to reply'
                       }
                       style={{
@@ -1512,10 +1605,17 @@ export default function ChatsInboxPage() {
                         borderRadius: 10,
                         border: `1px solid ${t.border}`,
                         background: isTakenOver ? t.bgSurface : t.bgSurfaceMuted,
-                        padding: '10px 14px',
+                        padding: '11px 14px',
                         fontSize: 14,
+                        lineHeight: 1.45,
                         color: isTakenOver ? t.text : t.textMuted,
                         outline: 'none',
+                        fontFamily: 'inherit',
+                        // Height is set by the effect above; the cap keeps a
+                        // long reply from pushing the thread off screen.
+                        resize: 'none',
+                        maxHeight: COMPOSER_MAX_H,
+                        overflowY: 'auto',
                       }}
                     />
                     <motion.button
@@ -1535,17 +1635,24 @@ export default function ChatsInboxPage() {
                           !isTakenOver || isLoading || !draft.trim()
                             ? t.bgSurfaceMuted
                             : t.accent,
+                        // Same ink token the panel's filled buttons use: white
+                        // on the light cyan accent sat under 3:1.
                         color:
-                          !isTakenOver || isLoading || !draft.trim() ? t.textSubtle : '#ffffff',
-                        fontWeight: 600,
+                          !isTakenOver || isLoading || !draft.trim()
+                            ? t.textSubtle
+                            : 'var(--t-on-accent)',
+                        fontWeight: 700,
                         fontSize: 13,
-                        padding: '0 18px',
+                        padding: '0 16px',
                         minHeight: 42,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 7,
                         cursor:
                           !isTakenOver || isLoading || !draft.trim() ? 'not-allowed' : 'pointer',
                       }}
                     >
-                      {isLoading ? '…' : 'Send'}
+                      {isLoading ? '…' : <><IconSend />Send</>}
                     </motion.button>
                   </div>
                 </footer>
