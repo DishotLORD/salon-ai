@@ -1035,7 +1035,20 @@ export default function ChatsInboxPage() {
   return (
     <DashboardOceanNav activeNav="Chats" fillViewport>
       {({ isMobile, openNav }) => (
-        <div style={{ height: '100%', display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', gap: 14, overflow: 'hidden' }}>
+        <div
+          style={{
+            // Reclaim half of the shell's top padding. This view fills the
+            // viewport, so space above the title is height the conversation
+            // list never gets back. The height grows by the same amount, or
+            // the panels would hang past the bottom and get clipped.
+            marginTop: isMobile ? -10 : -18,
+            height: isMobile ? 'calc(100% + 10px)' : 'calc(100% + 18px)',
+            display: 'grid',
+            gridTemplateRows: 'auto minmax(0, 1fr)',
+            gap: 12,
+            overflow: 'hidden',
+          }}
+        >
           {/* Page header. Every other dashboard page opens with one; chats
               dropped straight into three panels, which is what made it read as
               a different product. */}
