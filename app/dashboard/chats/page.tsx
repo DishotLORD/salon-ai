@@ -121,9 +121,15 @@ function mapDbConversationToConversation(row: DbConversationRow): Conversation {
   const last = ordered[ordered.length - 1]
   const preview = last?.content ?? 'No messages yet'
   const lastActivity = last?.created_at ?? row.updated_at
+  // Activity is the later of the guest's last message and the last change to
+  // the row, so reopening or taking over a chat counts as working on it. Going
+  // by messages alone let a chat a host had just reopened stay filed as stale.
   // Supabase timestamps arrive without a zone suffix; parseUtc keeps them from
   // being read as local time, which would age every chat by the UTC offset.
-  const lastActivityMs = lastActivity ? parseUtc(lastActivity).getTime() : 0
+  const lastActivityMs = Math.max(
+    last?.created_at ? parseUtc(last.created_at).getTime() : 0,
+    row.updated_at ? parseUtc(row.updated_at).getTime() : 0,
+  )
   return {
     id: row.id,
     customerId: row.customer_id ?? null,
@@ -209,6 +215,10 @@ function IconArchive() {
 const ARCHIVE_AFTER_MS = 24 * 60 * 60 * 1000
 
 function isArchived(conversation: Conversation, nowMs: number): boolean {
+  // Only finished chats file themselves away. One still open is waiting on
+  // somebody however old it is — a chat a host took over and left overnight is
+  // exactly the one that must not disappear into the archive.
+  if (conversation.status !== 'Resolved') return false
   // A conversation with no usable timestamp stays in the inbox: hiding it would
   // make it unreachable, since the archive is keyed on the age it is missing.
   if (!conversation.lastActivityMs) return false
@@ -357,8 +367,12 @@ export default function ChatsInboxPage() {
           (latest, m) => (latest === null || m.created_at > latest ? m.created_at : latest),
           null,
         )
-        const lastActivityIso = lastMessageAt ?? conv.updated_at
-        const lastActivity = lastActivityIso ? parseUtc(lastActivityIso).getTime() : 0
+        // Same definition of activity the inbox uses: a chat someone just
+        // reopened is being worked on, even if the guest has not written since.
+        const lastActivity = Math.max(
+          lastMessageAt ? parseUtc(lastMessageAt).getTime() : 0,
+          conv.updated_at ? parseUtc(conv.updated_at).getTime() : 0,
+        )
         if (lastActivity > 0 && now - lastActivity > STALE_MS) {
           staleIds.push(conv.id)
         }
@@ -711,11 +725,25 @@ export default function ChatsInboxPage() {
   const isTakenOver = selectedConversation?.status === 'Human'
 
   const handleReopen = async (conversationId: string) => {
-    const { error } = await supabase.from('conversations').update({ status: 'active' }).eq('id', conversationId)
+    // Stamp updated_at ourselves: nothing on the table maintains it, and the
+    // stale sweep would otherwise close this chat again on the next load,
+    // dropping it straight back into the archive it was just pulled out of.
+    const reopenedAt = new Date().toISOString()
+    const { error } = await supabase
+      .from('conversations')
+      .update({ status: 'active', updated_at: reopenedAt })
+      .eq('id', conversationId)
     if (!error) {
       setConversationList((prev) =>
-        prev.map((c) => (c.id === conversationId ? { ...c, status: 'Live' } : c)),
+        prev.map((c) =>
+          c.id === conversationId
+            ? { ...c, status: 'Live', lastActivityMs: parseUtc(reopenedAt).getTime() }
+            : c,
+        ),
       )
+      // Reopening from the archive moves the row to the inbox, so follow it
+      // there rather than leaving the host looking at an empty archive slot.
+      if (showArchive) setShowArchive(false)
       // If on Closed filter the row disappears — clear selection so the right panel empties
       if (selectedId === conversationId && filterTab === 'Closed') {
         setSelectedId('')
@@ -744,14 +772,24 @@ export default function ChatsInboxPage() {
     setTakeoverError('')
     const next = selectedConversation.status !== 'Human'
     const status = next ? 'human' : 'active'
-    const { error } = await supabase.from('conversations').update({ status }).eq('id', selectedId)
+    const changedAt = new Date().toISOString()
+    const { error } = await supabase
+      .from('conversations')
+      .update({ status, updated_at: changedAt })
+      .eq('id', selectedId)
     if (error) {
       setTakeoverError(error.message ?? 'Could not switch modes. Please try again.')
       return
     }
     setConversationList((prev) =>
       prev.map((conversation) =>
-        conversation.id === selectedId ? { ...conversation, status: next ? 'Human' : 'Live' } : conversation,
+        conversation.id === selectedId
+          ? {
+              ...conversation,
+              status: next ? 'Human' : 'Live',
+              lastActivityMs: parseUtc(changedAt).getTime(),
+            }
+          : conversation,
       ),
     )
   }
