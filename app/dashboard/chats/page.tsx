@@ -322,9 +322,18 @@ export default function ChatsInboxPage() {
       const mapped = data.map((row) => mapDbConversationToConversation(row as DbConversationRow))
       setConversationList(mapped)
       const deepLink = searchParams.get('conversation')
-      const initialId =
-        deepLink && mapped.some((c) => c.id === deepLink) ? deepLink : (mapped[0]?.id ?? '')
-      setSelectedId(initialId)
+      const linked = deepLink ? mapped.find((c) => c.id === deepLink) : undefined
+      if (linked) {
+        // A link can point at a day-old chat, so open the room that actually
+        // holds it rather than leaving the list and the pane disagreeing.
+        setShowArchive(isArchived(linked, now))
+        setSelectedId(linked.id)
+      } else {
+        // Auto-open only from the room on screen. Picking the newest chat
+        // overall used to park an archived conversation in the middle of an
+        // empty inbox, which read as if it were still waiting on a reply.
+        setSelectedId(mapped.find((c) => !isArchived(c, now))?.id ?? '')
+      }
     }
 
     void loadConversations()
