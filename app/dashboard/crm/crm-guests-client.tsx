@@ -164,6 +164,99 @@ function CrmGuestFilterBar({
   )
 }
 
+type SortKey = 'guest' | 'joined' | 'bookings' | 'lastBooking' | 'avgParty' | 'tags'
+type SortDir = 'asc' | 'desc'
+
+type GuestColumn = {
+  key: SortKey
+  label: string
+  width: string
+  /** Direction a column opens in — the one that answers the question people
+   *  ask of it. Names read A→Z; counts and dates are interesting at the top. */
+  initialDir: SortDir
+  align?: 'right'
+}
+
+const GUEST_COLUMNS: GuestColumn[] = [
+  { key: 'guest', label: 'Guest', width: '26%', initialDir: 'asc' },
+  { key: 'joined', label: 'Joined', width: '12%', initialDir: 'desc' },
+  { key: 'bookings', label: 'Bookings', width: '9%', initialDir: 'desc' },
+  { key: 'lastBooking', label: 'Last booking', width: '14%', initialDir: 'desc' },
+  { key: 'avgParty', label: 'Avg party', width: '11%', initialDir: 'desc' },
+  { key: 'tags', label: 'Tags', width: '28%', initialDir: 'desc' },
+]
+
+type SortableGuest = {
+  displayLabel: string
+  joinedRaw: string | null
+  bookingCount: number
+  lastBookingRaw: string | null
+  avgPartySize: number | null
+  tags: CrmGuestTag[]
+}
+
+/**
+ * Value a column sorts on. Deliberately the raw field rather than the text in
+ * the cell: "Mar 3" and "Never" sort as calendar dates and as nothing at all,
+ * which sorting their labels alphabetically would not give.
+ *
+ * null means the guest has no value for that column.
+ */
+function guestSortValue(guest: SortableGuest, key: SortKey): string | number | null {
+  const time = (raw: string | null) => {
+    if (!raw) return null
+    const ms = Date.parse(raw)
+    return Number.isFinite(ms) ? ms : null
+  }
+  switch (key) {
+    case 'guest':
+      return guest.displayLabel.toLowerCase()
+    case 'joined':
+      return time(guest.joinedRaw)
+    case 'bookings':
+      return guest.bookingCount
+    case 'lastBooking':
+      return time(guest.lastBookingRaw)
+    case 'avgParty':
+      return guest.avgPartySize
+    case 'tags':
+      return guest.tags.length
+  }
+}
+
+function compareGuests(a: SortableGuest, b: SortableGuest, key: SortKey, dir: SortDir): number {
+  const av = guestSortValue(a, key)
+  const bv = guestSortValue(b, key)
+  // Guests missing the value sink to the bottom whichever way the column is
+  // pointed. Reversing a sort should reorder the data, not float a wall of
+  // "Never" and "—" to the top.
+  if (av === null && bv === null) return 0
+  if (av === null) return 1
+  if (bv === null) return -1
+  const sign = dir === 'asc' ? 1 : -1
+  if (typeof av === 'string' && typeof bv === 'string') return av.localeCompare(bv) * sign
+  return ((av as number) - (bv as number)) * sign
+}
+
+function SortArrow({ dir }: { dir: SortDir | null }) {
+  return (
+    <span
+      aria-hidden
+      style={{
+        display: 'inline-flex',
+        flexDirection: 'column',
+        lineHeight: 0.7,
+        fontSize: 7,
+        marginLeft: 1,
+        color: dir ? 'var(--bk-accent)' : 'var(--bk-border-strong)',
+      }}
+    >
+      <span style={{ opacity: dir === 'desc' ? 0.25 : 1 }}>▲</span>
+      <span style={{ opacity: dir === 'asc' ? 0.25 : 1 }}>▼</span>
+    </span>
+  )
+}
+
 type CrmGuestsClientProps = {
   initialCustomers: CrmCustomer[]
   initialBusinessId: string | null
@@ -179,6 +272,9 @@ export function CrmGuestsClient({ initialCustomers, initialBusinessId }: CrmGues
   const [query, setQuery] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(guestParam)
   const [filterTag, setFilterTag] = useState<GuestTagFilter>('All')
+  // Newest first, which is the order the rows already arrived in, so the table
+  // looks unchanged until a column is actually clicked.
+  const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: 'joined', dir: 'desc' })
   const [businessId, setBusinessId] = useState<string | null>(initialBusinessId)
   const customersRef = useRef(initialCustomers)
   // eslint-disable-next-line react-hooks/refs -- latest-ref pattern for silent refetch decisions
@@ -321,8 +417,16 @@ export function CrmGuestsClient({ initialCustomers, initialBusinessId }: CrmGues
           c.phone.toLowerCase().includes(q),
       )
     }
-    return list
-  }, [enriched, query, filterTag])
+    return [...list].sort((a, b) => compareGuests(a, b, sort.key, sort.dir))
+  }, [enriched, query, filterTag, sort])
+
+  const toggleSort = useCallback((column: GuestColumn) => {
+    setSort((prev) =>
+      prev.key === column.key
+        ? { key: prev.key, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
+        : { key: column.key, dir: column.initialDir },
+    )
+  }, [])
 
   const selected = customers.find((c) => c.id === selectedId) ?? null
 
@@ -646,30 +750,48 @@ export function CrmGuestsClient({ initialCustomers, initialBusinessId }: CrmGues
                 >
                   <thead>
                     <tr style={{ borderBottom: '1px solid var(--bk-border)', background: 'var(--bk-surface)' }}>
-                      {[
-                        { col: 'Guest', w: '26%' },
-                        { col: 'Joined', w: '12%' },
-                        { col: 'Bookings', w: '9%' },
-                        { col: 'Last booking', w: '14%' },
-                        { col: 'Avg party', w: '9%' },
-                        { col: 'Tags', w: '30%' },
-                      ].map(({ col, w }) => (
-                        <th
-                          key={col}
-                          style={{
-                            padding: '10px 14px',
-                            textAlign: 'left',
-                            fontSize: 9,
-                            fontWeight: 700,
-                            color: 'var(--bk-muted)',
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.08em',
-                            width: w,
-                          }}
-                        >
-                          {col}
-                        </th>
-                      ))}
+                      {GUEST_COLUMNS.map((column) => {
+                        const active = sort.key === column.key
+                        const dir = active ? sort.dir : null
+                        return (
+                          <th
+                            key={column.key}
+                            // aria-sort is what tells a screen reader the table
+                            // is ordered and which way, which the arrows only
+                            // convey visually.
+                            aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+                            style={{ padding: 0, width: column.width, textAlign: 'left' }}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => toggleSort(column)}
+                              title={`Sort by ${column.label.toLowerCase()}`}
+                              style={{
+                                width: '100%',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 5,
+                                padding: '10px 12px',
+                                border: 'none',
+                                background: 'transparent',
+                                cursor: 'pointer',
+                                fontFamily: 'inherit',
+                                whiteSpace: 'nowrap',
+                                fontSize: 9,
+                                fontWeight: 700,
+                                letterSpacing: '0.08em',
+                                textTransform: 'uppercase',
+                                color: active ? 'var(--bk-head)' : 'var(--bk-muted)',
+                                textAlign: 'left',
+                                transition: 'color 0.15s',
+                              }}
+                            >
+                              {column.label}
+                              <SortArrow dir={dir} />
+                            </button>
+                          </th>
+                        )
+                      })}
                     </tr>
                   </thead>
                   <tbody>
