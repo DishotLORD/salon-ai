@@ -492,6 +492,21 @@ export default function ChatsInboxPage() {
     })
   }, [conversationList])
 
+  // What the room is doing right now, in a sentence. The counts exist in the
+  // list already; the point here is to answer "does anything need me?" without
+  // reading it.
+  const roomSummary = useMemo(() => {
+    const needsYou = conversationList.filter((c) => c.status === 'Human').length
+    const withAi = conversationList.filter((c) => c.status === 'Live').length
+    if (needsYou > 0) {
+      return `${needsYou} waiting on you · ${withAi} with ${conciergeName}`
+    }
+    if (withAi > 0) {
+      return `${conciergeName} is handling ${withAi} ${withAi === 1 ? 'chat' : 'chats'}`
+    }
+    return 'All quiet — nothing needs a reply'
+  }, [conversationList, conciergeName])
+
   const archivedCount = useMemo(
     () => conversationList.filter((c) => isArchived(c, nowMs)).length,
     [conversationList, nowMs],
@@ -1020,15 +1035,42 @@ export default function ChatsInboxPage() {
   return (
     <DashboardOceanNav activeNav="Chats" fillViewport>
       {({ isMobile, openNav }) => (
-        <div
-          style={{
-            height: '100%',
-            display: 'grid',
-            gridTemplateColumns: isMobile ? '1fr' : '300px minmax(0, 1fr) 320px',
-            gap: 16,
-            overflow: 'hidden',
-          }}
-        >
+        <div style={{ height: '100%', display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', gap: 14, overflow: 'hidden' }}>
+          {/* Page header. Every other dashboard page opens with one; chats
+              dropped straight into three panels, which is what made it read as
+              a different product. */}
+          <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+            {/* No eyebrow above the title here: "Inbox" over "Chats" says the
+                same thing twice, and this page fills the viewport, so every row
+                of chrome comes straight out of the conversation list. */}
+            <div style={{ minWidth: 0 }}>
+              <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: t.text, letterSpacing: '-0.03em' }}>
+                Chats
+              </h1>
+              <p style={{ margin: '3px 0 0', fontSize: 12.5, color: t.textMuted }}>{roomSummary}</p>
+            </div>
+            {isMobile && (
+              <motion.button
+                type="button"
+                onClick={openNav}
+                aria-label="Open navigation"
+                whileTap={reduceMotion ? undefined : { scale: 0.98 }}
+                style={{ width: 38, height: 38, borderRadius: 10, border: `1px solid ${t.border}`, background: t.bgSurface, color: t.text, fontSize: 17, cursor: 'pointer', flexShrink: 0 }}
+              >
+                ☰
+              </motion.button>
+            )}
+          </div>
+
+          <div
+            style={{
+              minHeight: 0,
+              display: 'grid',
+              gridTemplateColumns: isMobile ? '1fr' : '300px minmax(0, 1fr) 320px',
+              gap: 16,
+              overflow: 'hidden',
+            }}
+          >
           <motion.section
             initial={{ opacity: 0, scale: 0.97, x: -10 }}
             animate={{ opacity: 1, scale: 1, x: 0 }}
@@ -1043,25 +1085,18 @@ export default function ChatsInboxPage() {
           >
             {/* ── Header ── */}
             <div style={{ padding: '16px 16px 0', borderBottom: `1px solid ${t.border}` }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                <h1 style={{ margin: 0, color: t.text, fontSize: 15, fontWeight: 700 }}>Conversations</h1>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  {conversationList.filter((c) => c.status === 'Live' || c.status === 'Human').length > 0 && (
-                    <span style={{ borderRadius: 6, padding: '2px 8px', background: t.accent, color: '#ffffff', fontSize: 12, fontWeight: 600 }}>
-                      {conversationList.filter((c) => c.status === 'Live' || c.status === 'Human').length} active
-                    </span>
-                  )}
-                  {isMobile && (
-                    <motion.button
-                      type="button"
-                      onClick={openNav}
-                      whileTap={reduceMotion ? undefined : { scale: 0.98 }}
-                      style={{ width: 34, height: 34, borderRadius: 8, border: `1px solid ${t.border}`, background: t.bgSurface, color: t.text, fontSize: 16, cursor: 'pointer' }}
-                    >
-                      ☰
-                    </motion.button>
-                  )}
-                </div>
+              {/* The panel title names the room, which is the one thing the
+                  list itself cannot show. The count moved to the page header
+                  and the accent chip went with it: the segmented control below
+                  is deliberately colourless, and a saturated block right above
+                  it pulled the eye away from the actual choice. */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, marginBottom: 10 }}>
+                <h2 style={{ margin: 0, color: t.text, fontSize: 14, fontWeight: 700 }}>
+                  {showArchive ? 'Archive' : 'Conversations'}
+                </h2>
+                <span style={{ color: t.textSubtle, fontSize: 11, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+                  {filteredList.length}
+                </span>
               </div>
 
               {/* Search */}
@@ -1421,17 +1456,40 @@ export default function ChatsInboxPage() {
                     gap: 12,
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
-                    <span style={{ color: t.text, fontSize: 16, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {selectedConversation.customerName}
-                    </span>
-                    {isGuestOnline(selectedConversation.id) && (
-                      <span style={{ flexShrink: 0, width: 8, height: 8, borderRadius: '50%', background: '#4ade80', boxShadow: '0 0 0 3px rgba(74,222,128,0.2)' }} />
-                    )}
+                  {/* The widest panel had the thinnest header: a name and a
+                      count. An avatar anchors it, and the second line answers
+                      what the name alone could not — who is on it and when the
+                      guest last wrote. */}
+                  <div
+                    style={{
+                      width: 36, height: 36, borderRadius: '50%', flexShrink: 0,
+                      display: 'grid', placeItems: 'center',
+                      background: selectedConversation.status === 'Resolved' ? t.bgSurfaceMuted : t.accent,
+                      color: selectedConversation.status === 'Resolved' ? t.textSubtle : 'var(--t-on-accent)',
+                      fontSize: 12, fontWeight: 700,
+                    }}
+                  >
+                    {getInitials(selectedConversation.customerName)}
                   </div>
-                  <span style={{ flexShrink: 0, color: t.textMuted, fontSize: 12 }}>
-                    {selectedConversation.messages.length} messages
-                  </span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                      <span style={{ color: t.text, fontSize: 16, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {selectedConversation.customerName}
+                      </span>
+                      {isGuestOnline(selectedConversation.id) && (
+                        <span style={{ flexShrink: 0, width: 8, height: 8, borderRadius: '50%', background: '#4ade80', boxShadow: '0 0 0 3px rgba(74,222,128,0.2)' }} />
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2, fontSize: 11.5, color: t.textMuted, minWidth: 0 }}>
+                      <span style={{ color: STATUS_COLOR[selectedConversation.status], fontWeight: 600 }}>
+                        {selectedConversation.status}
+                      </span>
+                      <span aria-hidden>·</span>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {selectedConversation.messages.length} messages · {selectedConversation.time}
+                      </span>
+                    </div>
+                  </div>
                 </header>
 
                 <div
@@ -1942,6 +2000,7 @@ export default function ChatsInboxPage() {
               )}
             </motion.aside>
           ) : null}
+          </div>
         </div>
       )}
     </DashboardOceanNav>
