@@ -47,6 +47,15 @@ export const SETTINGS_CATEGORIES: SettingsCategoryDef[] = [
   { id: 'security', title: 'Security', description: 'Password & 2FA', comingSoon: true },
 ]
 
+/** Serif numeral, so the section reads as an entry in an index rather than a
+ *  labelled button. Zero-padded and tabular so the column never shifts. */
+export const settingsIndexFont = 'var(--font-playfair, Georgia, "Times New Roman", serif)'
+
+/** 0 -> "01". The list is the table of contents; the number is the page. */
+export function settingsIndexLabel(index: number): string {
+  return String(index + 1).padStart(2, '0')
+}
+
 const navTheme = {
   text: 'var(--bk-head)',
   textMuted: 'var(--bk-muted)',
@@ -62,12 +71,14 @@ const navTheme = {
 } as const
 
 function CategoryRow({
+  index,
   title,
   active,
   comingSoon,
   onClick,
   reduceMotion,
 }: {
+  index: number
   title: string
   active: boolean
   comingSoon?: boolean
@@ -90,7 +101,7 @@ function CategoryRow({
         position: 'relative',
         display: 'flex',
         alignItems: 'center',
-        gap: 10,
+        gap: 11,
         width: '100%',
         minHeight: 44,
         textAlign: 'left',
@@ -151,6 +162,27 @@ function CategoryRow({
           }}
         />
       ) : null}
+
+      <span
+        aria-hidden
+        style={{
+          position: 'relative',
+          zIndex: 1,
+          flexShrink: 0,
+          width: 20,
+          fontFamily: settingsIndexFont,
+          fontSize: active ? 15 : 13.5,
+          fontWeight: 500,
+          fontFeatureSettings: '"tnum" 1, "lnum" 1',
+          lineHeight: 1,
+          textAlign: 'center',
+          color: active ? navTheme.accentDark : navTheme.textMuted,
+          opacity: active ? 1 : 0.55,
+          transition: 'color 0.2s, opacity 0.2s',
+        }}
+      >
+        {settingsIndexLabel(index)}
+      </span>
 
       <span style={{ position: 'relative', minWidth: 0, flex: 1, zIndex: 1 }}>
         <motion.span
@@ -223,12 +255,13 @@ export function SettingsCategoryNav({
           boxShadow: 'inset 0 1px 0 var(--t-glass-highlight)',
         }}
       >
-        {SETTINGS_CATEGORIES.map((category) => {
+        {SETTINGS_CATEGORIES.map((category, index) => {
           const isActive = activeId === category.id
           const hasSubItems = isActive && category.subItems && category.subItems.length > 0
           return (
             <div key={category.id}>
               <CategoryRow
+                index={index}
                 title={category.title}
                 active={isActive}
                 comingSoon={category.comingSoon}

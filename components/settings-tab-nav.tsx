@@ -3,7 +3,12 @@
 import { LayoutGroup, motion } from 'framer-motion'
 import { useState } from 'react'
 
-import { SETTINGS_CATEGORIES, type SettingsCategoryId } from '@/components/settings-category-nav'
+import {
+  SETTINGS_CATEGORIES,
+  settingsIndexFont,
+  settingsIndexLabel,
+  type SettingsCategoryId,
+} from '@/components/settings-category-nav'
 
 const navTheme = {
   textMuted: 'var(--bk-muted)',
@@ -16,12 +21,14 @@ const navTheme = {
 } as const
 
 function TabButton({
+  index,
   title,
   active,
   comingSoon,
   onClick,
   reduceMotion,
 }: {
+  index: number
   title: string
   active: boolean
   comingSoon?: boolean
@@ -60,6 +67,21 @@ function TabButton({
         transition: 'color 0.18s, background 0.18s',
       }}
     >
+      <span
+        aria-hidden
+        style={{
+          fontFamily: settingsIndexFont,
+          fontSize: 12,
+          fontWeight: 500,
+          fontFeatureSettings: '"tnum" 1, "lnum" 1',
+          lineHeight: 1,
+          color: active ? navTheme.accentDark : navTheme.textMuted,
+          opacity: active ? 0.9 : 0.5,
+          transition: 'color 0.18s, opacity 0.18s',
+        }}
+      >
+        {settingsIndexLabel(index)}
+      </span>
       {title}
 
       {comingSoon ? (
@@ -123,9 +145,10 @@ export function SettingsTabNav({
           scrollbarWidth: 'none',
         }}
       >
-        {SETTINGS_CATEGORIES.map((category) => (
+        {SETTINGS_CATEGORIES.map((category, index) => (
           <TabButton
             key={category.id}
+            index={index}
             title={category.title}
             active={activeId === category.id}
             comingSoon={category.comingSoon}

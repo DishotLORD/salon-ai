@@ -248,8 +248,130 @@ function IconArchive() {
   )
 }
 
+function IconGear() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="12" cy="12" r="3.1" />
+      <path d="M19.4 15a1.6 1.6 0 0 0 .32 1.77l.06.06a1.9 1.9 0 1 1-2.69 2.69l-.06-.06a1.6 1.6 0 0 0-1.77-.32 1.6 1.6 0 0 0-1 1.47v.17a1.9 1.9 0 0 1-3.8 0V20.7a1.6 1.6 0 0 0-1.05-1.46 1.6 1.6 0 0 0-1.77.32l-.06.06a1.9 1.9 0 1 1-2.69-2.69l.06-.06a1.6 1.6 0 0 0 .32-1.77 1.6 1.6 0 0 0-1.47-1H3.6a1.9 1.9 0 0 1 0-3.8h.09a1.6 1.6 0 0 0 1.46-1.05 1.6 1.6 0 0 0-.32-1.77l-.06-.06a1.9 1.9 0 1 1 2.69-2.69l.06.06a1.6 1.6 0 0 0 1.77.32H9.4a1.6 1.6 0 0 0 1-1.47V3.6a1.9 1.9 0 0 1 3.8 0v.09a1.6 1.6 0 0 0 1 1.47 1.6 1.6 0 0 0 1.77-.32l.06-.06a1.9 1.9 0 1 1 2.69 2.69l-.06.06a1.6 1.6 0 0 0-.32 1.77v.01a1.6 1.6 0 0 0 1.47 1h.17a1.9 1.9 0 0 1 0 3.8H20.7a1.6 1.6 0 0 0-1.46 1z" />
+    </svg>
+  )
+}
+
 /** A chat drops out of the inbox once its last activity is a day old. */
 const ARCHIVE_AFTER_MS = 24 * 60 * 60 * 1000
+
+/* ── Inbox list preferences ─────────────────────────────────────────────────
+   How the list is ordered and how tight the rows sit is a per-host habit: one
+   works the newest chat down, another scans a room alphabetically. The gear in
+   the list header holds those choices and they persist across sessions. */
+
+type ListSort = 'recent' | 'oldest' | 'name'
+type ListPrefs = {
+  sort: ListSort
+  /** Live and Human first, resolved last — the historical order of the All tab. */
+  groupByStatus: boolean
+  /** Drops the message preview line and shortens the row. */
+  compact: boolean
+}
+
+const LIST_PREFS_KEY = 'oc-chats-list-prefs'
+
+const DEFAULT_LIST_PREFS: ListPrefs = {
+  sort: 'recent',
+  groupByStatus: true,
+  compact: false,
+}
+
+const SORT_LABELS: Record<ListSort, string> = {
+  recent: 'Newest activity',
+  oldest: 'Oldest activity',
+  name: 'Guest name (A–Z)',
+}
+
+function SettingsToggle({
+  label,
+  hint,
+  checked,
+  disabled,
+  disabledHint,
+  onChange,
+}: {
+  label: string
+  hint: string
+  checked: boolean
+  disabled?: boolean
+  disabledHint?: string
+  onChange: (value: boolean) => void
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 10,
+        padding: '7px 8px',
+        borderRadius: 8,
+        border: 'none',
+        background: 'transparent',
+        color: t.textMuted,
+        textAlign: 'left',
+        cursor: disabled ? 'default' : 'pointer',
+        opacity: disabled ? 0.5 : 1,
+      }}
+    >
+      <span style={{ display: 'grid', gap: 1, minWidth: 0 }}>
+        <span style={{ fontSize: 12, fontWeight: 500, color: t.text }}>{label}</span>
+        <span style={{ fontSize: 10, color: t.textSubtle }}>{disabled ? (disabledHint ?? hint) : hint}</span>
+      </span>
+      <span
+        aria-hidden
+        style={{
+          flexShrink: 0,
+          width: 28,
+          height: 16,
+          borderRadius: 999,
+          padding: 2,
+          background: checked ? t.accent : t.bgSurfaceMuted,
+          border: `1px solid ${checked ? t.accent : t.border}`,
+          display: 'flex',
+          justifyContent: checked ? 'flex-end' : 'flex-start',
+          transition: 'background 0.15s, border-color 0.15s',
+        }}
+      >
+        <span
+          style={{
+            width: 12,
+            height: 12,
+            borderRadius: '50%',
+            background: checked ? '#ffffff' : t.textSubtle,
+            transition: 'background 0.15s',
+          }}
+        />
+      </span>
+    </button>
+  )
+}
+
+function readListPrefs(): ListPrefs {
+  try {
+    const raw = window.localStorage.getItem(LIST_PREFS_KEY)
+    if (!raw) return DEFAULT_LIST_PREFS
+    const parsed = JSON.parse(raw) as Partial<ListPrefs>
+    return {
+      sort: parsed.sort === 'oldest' || parsed.sort === 'name' ? parsed.sort : DEFAULT_LIST_PREFS.sort,
+      groupByStatus: typeof parsed.groupByStatus === 'boolean' ? parsed.groupByStatus : DEFAULT_LIST_PREFS.groupByStatus,
+      compact: typeof parsed.compact === 'boolean' ? parsed.compact : DEFAULT_LIST_PREFS.compact,
+    }
+  } catch {
+    return DEFAULT_LIST_PREFS
+  }
+}
 
 function isArchived(conversation: Conversation, nowMs: number): boolean {
   // Only finished chats file themselves away. One still open is waiting on
@@ -292,8 +414,55 @@ export default function ChatsInboxPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [hoveredId, setHoveredId] = useState<string | null>(null)
   const [onlineConvIds, setOnlineConvIds] = useState<Set<string>>(new Set())
+  const [listPrefs, setListPrefs] = useState<ListPrefs>(DEFAULT_LIST_PREFS)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [confirmBulkResolve, setConfirmBulkResolve] = useState(false)
+  const [bulkResolving, setBulkResolving] = useState(false)
+  const settingsRef = useRef<HTMLDivElement | null>(null)
   const messagesScrollRef = useRef<HTMLDivElement | null>(null)
   const reduceMotion = useReducedMotion()
+
+  // Stored preferences are read after mount: the server has no localStorage, so
+  // seeding state with them would render one list and hydrate a different one.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot hydration of a client-only store
+    setListPrefs(readListPrefs())
+  }, [])
+
+  const updateListPrefs = useCallback((patch: Partial<ListPrefs>) => {
+    setListPrefs((prev) => {
+      const next = { ...prev, ...patch }
+      try {
+        window.localStorage.setItem(LIST_PREFS_KEY, JSON.stringify(next))
+      } catch { /* storage blocked — the choice still applies to this session */ }
+      return next
+    })
+  }, [])
+
+  // Closing drops a pending confirmation: reopening the menu later and finding
+  // a live "Resolve 12 chats?" button waiting is a trap.
+  const closeSettings = useCallback(() => {
+    setSettingsOpen(false)
+    setConfirmBulkResolve(false)
+  }, [])
+
+  useEffect(() => {
+    if (!settingsOpen) return
+    function onDocClick(e: MouseEvent) {
+      if (settingsRef.current && !settingsRef.current.contains(e.target as Node)) {
+        closeSettings()
+      }
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') closeSettings()
+    }
+    document.addEventListener('mousedown', onDocClick)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDocClick)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [settingsOpen, closeSettings])
 
   const isGuestOnline = useCallback(
     (convId: string) => onlineConvIds.has(convId),
@@ -520,10 +689,23 @@ export default function ChatsInboxPage() {
     if (filterTab === 'Active') list = list.filter((c) => c.status === 'Live')
     else if (filterTab === 'Human') list = list.filter((c) => c.status === 'Human')
     else if (filterTab === 'Closed') list = list.filter((c) => c.status === 'Resolved')
-    else {
-      // "All" — sort active/human first, resolved last
-      list = [...list].sort((a, b) => statusOrder[a.status] - statusOrder[b.status])
+
+    // Status grouping only says anything where statuses mix, so it stays on the
+    // All tab; within a group the chosen order decides.
+    const groupByStatus = listPrefs.groupByStatus && filterTab === 'All'
+    const byPreference = (a: Conversation, b: Conversation) => {
+      if (listPrefs.sort === 'name') return a.customerName.localeCompare(b.customerName)
+      if (listPrefs.sort === 'oldest') return a.lastActivityMs - b.lastActivityMs
+      return b.lastActivityMs - a.lastActivityMs
     }
+    list = [...list].sort((a, b) => {
+      if (groupByStatus) {
+        const byStatus = statusOrder[a.status] - statusOrder[b.status]
+        if (byStatus !== 0) return byStatus
+      }
+      return byPreference(a, b)
+    })
+
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase()
       list = list.filter(
@@ -531,7 +713,19 @@ export default function ChatsInboxPage() {
       )
     }
     return list
-  }, [conversationList, filterTab, searchQuery, showArchive, nowMs])
+  }, [conversationList, filterTab, searchQuery, showArchive, nowMs, listPrefs.sort, listPrefs.groupByStatus])
+
+  /** Everything in the room being viewed, before the tab and the search cut it
+   *  down — the denominator behind "12 of 40" in the settings menu. */
+  const roomTotal = useMemo(
+    () => conversationList.filter((c) => isArchived(c, nowMs) === showArchive).length,
+    [conversationList, showArchive, nowMs],
+  )
+
+  const openInViewCount = useMemo(
+    () => filteredList.filter((c) => c.status !== 'Resolved').length,
+    [filteredList],
+  )
 
   useEffect(() => {
     if (!selectedId) {
@@ -818,6 +1012,25 @@ export default function ChatsInboxPage() {
     }
   }
 
+  /** Closes every open chat currently in view — the end-of-shift sweep. Scoped
+   *  to what the list shows, so a filter or a search is also the selection. */
+  const handleResolveVisible = async () => {
+    const ids = filteredList.filter((c) => c.status !== 'Resolved').map((c) => c.id)
+    if (ids.length === 0) return
+    setBulkResolving(true)
+    const { error } = await supabase.from('conversations').update({ status: 'closed' }).in('id', ids)
+    setBulkResolving(false)
+    if (error) return
+    const resolved = new Set(ids)
+    setConversationList((prev) =>
+      prev.map((c) => (resolved.has(c.id) ? { ...c, status: 'Resolved' } : c)),
+    )
+    if (selectedId && resolved.has(selectedId) && (filterTab === 'Active' || filterTab === 'Human')) {
+      setSelectedId('')
+    }
+    closeSettings()
+  }
+
   const handleTakeOverToggle = async () => {
     if (!selectedId || !selectedConversation) {
       return
@@ -1097,20 +1310,199 @@ export default function ChatsInboxPage() {
             }}
           >
             {/* ── Header ── */}
-            <div style={{ padding: '16px 16px 0', borderBottom: `1px solid ${t.border}` }}>
+            <div style={{ position: 'relative', padding: '16px 16px 0', borderBottom: `1px solid ${t.border}` }}>
               {/* The panel title names the room, which is the one thing the
                   list itself cannot show. The count moved to the page header
                   and the accent chip went with it: the segmented control below
                   is deliberately colourless, and a saturated block right above
-                  it pulled the eye away from the actual choice. */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, marginBottom: 10 }}>
+                  it pulled the eye away from the actual choice. Where the count
+                  sat there is now the gear: a bare number spent the corner on
+                  something the list already shows, and the menu keeps it in its
+                  header anyway. */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 10 }}>
                 <h2 style={{ margin: 0, color: t.text, fontSize: 14, fontWeight: 700 }}>
                   {showArchive ? 'Archive' : 'Conversations'}
                 </h2>
-                <span style={{ color: t.textSubtle, fontSize: 11, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
-                  {filteredList.length}
-                </span>
+                <motion.button
+                  type="button"
+                  onClick={() => (settingsOpen ? closeSettings() : setSettingsOpen(true))}
+                  aria-haspopup="dialog"
+                  aria-expanded={settingsOpen}
+                  aria-label="List settings"
+                  title="List settings"
+                  whileTap={reduceMotion ? undefined : { scale: 0.9 }}
+                  style={{
+                    flexShrink: 0,
+                    width: 24,
+                    height: 24,
+                    display: 'grid',
+                    placeItems: 'center',
+                    borderRadius: 7,
+                    border: `1px solid ${settingsOpen ? t.accentSoftBorder : 'transparent'}`,
+                    background: settingsOpen ? t.accentSoftBg : 'transparent',
+                    color: settingsOpen ? t.accent : t.textSubtle,
+                    cursor: 'pointer',
+                    transition: 'background 0.15s, color 0.15s, border-color 0.15s',
+                  }}
+                >
+                  {/* A gear should turn when you work it. Ninety degrees with a
+                      little overshoot reads as a notch being driven, and it
+                      unwinds on the way back so the closed state is the rest
+                      position rather than wherever the last press left it. */}
+                  <motion.span
+                    style={{ display: 'flex' }}
+                    animate={{ rotate: reduceMotion || !settingsOpen ? 0 : 90 }}
+                    transition={oceanTransition(reduceMotion, {
+                      type: 'spring',
+                      stiffness: 260,
+                      damping: 16,
+                    })}
+                  >
+                    <IconGear />
+                  </motion.span>
+                </motion.button>
               </div>
+
+              {settingsOpen && (
+                <motion.div
+                  ref={settingsRef}
+                  role="dialog"
+                  aria-label="List settings"
+                  initial={reduceMotion ? false : { opacity: 0, y: -4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={oceanTransition(reduceMotion, { duration: 0.14 })}
+                  style={{
+                    position: 'absolute',
+                    top: 44,
+                    right: 16,
+                    zIndex: 30,
+                    width: 236,
+                    padding: 10,
+                    borderRadius: 12,
+                    border: `1px solid ${t.border}`,
+                    background: t.bgApp,
+                    boxShadow: t.shadowLg,
+                    display: 'grid',
+                    gap: 4,
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, padding: '2px 6px 6px' }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: t.textSubtle }}>
+                      Sort
+                    </span>
+                    <span style={{ fontSize: 10, color: t.textSubtle, fontVariantNumeric: 'tabular-nums' }}>
+                      {filteredList.length} of {roomTotal}
+                    </span>
+                  </div>
+
+                  {(Object.keys(SORT_LABELS) as ListSort[]).map((option) => {
+                    const active = listPrefs.sort === option
+                    return (
+                      <button
+                        key={option}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={active}
+                        onClick={() => updateListPrefs({ sort: option })}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 8,
+                          padding: '7px 8px',
+                          borderRadius: 8,
+                          border: 'none',
+                          background: active ? t.accentSoftBg : 'transparent',
+                          color: active ? t.text : t.textMuted,
+                          fontSize: 12,
+                          fontWeight: active ? 600 : 500,
+                          textAlign: 'left',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <span>{SORT_LABELS[option]}</span>
+                        {active && <span style={{ color: t.accent, display: 'flex' }}><IconCheck /></span>}
+                      </button>
+                    )
+                  })}
+
+                  <div style={{ height: 1, background: t.border, margin: '6px 2px' }} />
+
+                  <SettingsToggle
+                    label="Group by status"
+                    hint="Live and human first, resolved last"
+                    checked={listPrefs.groupByStatus}
+                    disabled={filterTab !== 'All'}
+                    disabledHint="Only applies on the All tab"
+                    onChange={(value) => updateListPrefs({ groupByStatus: value })}
+                  />
+                  <SettingsToggle
+                    label="Compact rows"
+                    hint="Hides the message preview"
+                    checked={listPrefs.compact}
+                    onChange={(value) => updateListPrefs({ compact: value })}
+                  />
+
+                  <div style={{ height: 1, background: t.border, margin: '6px 2px' }} />
+
+                  {/* Scoped to the rows on screen, so a filter or a search is
+                      also the selection — and it asks first, because undoing it
+                      means reopening every chat by hand. */}
+                  <button
+                    type="button"
+                    disabled={openInViewCount === 0 || bulkResolving}
+                    onClick={() => {
+                      if (confirmBulkResolve) void handleResolveVisible()
+                      else setConfirmBulkResolve(true)
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      padding: '7px 8px',
+                      borderRadius: 8,
+                      border: confirmBulkResolve ? `1px solid ${t.warningBorder}` : '1px solid transparent',
+                      background: confirmBulkResolve ? t.warningBg : 'transparent',
+                      color: openInViewCount === 0 ? t.textSubtle : confirmBulkResolve ? t.warning : t.textMuted,
+                      fontSize: 12,
+                      fontWeight: confirmBulkResolve ? 600 : 500,
+                      textAlign: 'left',
+                      cursor: openInViewCount === 0 || bulkResolving ? 'default' : 'pointer',
+                      opacity: openInViewCount === 0 ? 0.55 : 1,
+                    }}
+                  >
+                    <IconCheck />
+                    <span>
+                      {bulkResolving
+                        ? 'Resolving…'
+                        : confirmBulkResolve
+                          ? `Resolve ${openInViewCount} — tap to confirm`
+                          : openInViewCount === 0
+                            ? 'Nothing open in view'
+                            : `Resolve all in view (${openInViewCount})`}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      updateListPrefs(DEFAULT_LIST_PREFS)
+                      setConfirmBulkResolve(false)
+                    }}
+                    style={{
+                      justifySelf: 'start',
+                      padding: '4px 8px',
+                      border: 'none',
+                      background: 'transparent',
+                      color: t.textSubtle,
+                      fontSize: 11,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Reset to defaults
+                  </button>
+                </motion.div>
+              )}
 
               {/* Search */}
               <input
@@ -1228,12 +1620,39 @@ export default function ChatsInboxPage() {
                 const isSelected = conversation.id === selectedId
                 const isClosed = conversation.status === 'Resolved'
                 const isHovered = hoveredId === conversation.id
-                // In "All" tab, show a divider before the first Resolved row
+                // In "All" tab, show a divider before the first Resolved row.
+                // Without status grouping the resolved rows sit wherever their
+                // date puts them, and a "Resolved" rule across the middle of
+                // the list would be announcing a section that is not there.
                 const showDivider =
                   filterTab === 'All' &&
+                  listPrefs.groupByStatus &&
                   isClosed &&
                   index > 0 &&
                   filteredList[index - 1].status !== 'Resolved'
+
+                const rowBadges = (
+                  <>
+                    {conversation.customerId && returningCustomerIds.has(conversation.customerId) && (
+                      <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 600, color: t.accentText, borderRadius: 4, padding: '1px 5px', background: t.accentSoftBg, border: `1px solid ${t.accentSoftBorder}` }}>
+                        Returning
+                      </span>
+                    )}
+                    {isClosed ? (
+                      <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 600, color: t.textSubtle, borderRadius: 4, padding: '1px 5px', background: t.bgSurfaceMuted }}>
+                        Closed
+                      </span>
+                    ) : conversation.status === 'Human' ? (
+                      <span style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, fontWeight: 600, color: '#f59e0b', borderRadius: 4, padding: '1px 6px', background: 'rgba(245,158,11,0.12)' }}>
+                        Human
+                      </span>
+                    ) : isGuestOnline(conversation.id) ? (
+                      <span style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, fontWeight: 600, color: '#4ade80' }}>
+                        <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#4ade80', flexShrink: 0 }} />
+                      </span>
+                    ) : null}
+                  </>
+                )
 
                 return (
                   <motion.div
@@ -1257,7 +1676,7 @@ export default function ChatsInboxPage() {
                       onClick={() => setSelectedId(conversation.id)}
                       style={{
                         width: '100%',
-                        height: 52,
+                        height: listPrefs.compact ? 38 : 52,
                         padding: '0 10px',
                         borderRadius: 8,
                         borderLeft: isSelected ? `2px solid ${t.accent}` : '2px solid transparent',
@@ -1281,20 +1700,22 @@ export default function ChatsInboxPage() {
                       {/* Avatar */}
                       <div style={{
                         flexShrink: 0,
-                        width: 30,
-                        height: 30,
+                        width: listPrefs.compact ? 22 : 30,
+                        height: listPrefs.compact ? 22 : 30,
                         borderRadius: '50%',
                         display: 'grid',
                         placeItems: 'center',
                         background: isClosed ? t.bgSurfaceMuted : t.accent,
                         color: isClosed ? t.textSubtle : '#ffffff',
-                        fontSize: 10,
+                        fontSize: listPrefs.compact ? 9 : 10,
                         fontWeight: 700,
                       }}>
                         {getInitials(conversation.customerName)}
                       </div>
 
-                      {/* Content */}
+                      {/* Content. Compact drops the preview line, so the badges
+                          ride up beside the name — losing the preview must not
+                          also lose "this one is waiting on a human". */}
                       <div style={{ flex: 1, minWidth: 0, paddingRight: isHovered ? 28 : 0 }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
                           <span style={{
@@ -1307,38 +1728,24 @@ export default function ChatsInboxPage() {
                           }}>
                             {conversation.customerName}
                           </span>
+                          {listPrefs.compact && rowBadges}
                           <span style={{ flexShrink: 0, fontSize: 10, color: t.textSubtle }}>{conversation.time}</span>
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
-                          <span style={{
-                            fontSize: 11,
-                            color: isClosed ? t.textSubtle : t.textMuted,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                            flex: 1,
-                          }}>
-                            {conversation.preview}
-                          </span>
-                          {conversation.customerId && returningCustomerIds.has(conversation.customerId) && (
-                            <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 600, color: t.accentText, borderRadius: 4, padding: '1px 5px', background: t.accentSoftBg, border: `1px solid ${t.accentSoftBorder}` }}>
-                              Returning
+                        {!listPrefs.compact && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                            <span style={{
+                              fontSize: 11,
+                              color: isClosed ? t.textSubtle : t.textMuted,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                              flex: 1,
+                            }}>
+                              {conversation.preview}
                             </span>
-                          )}
-                          {isClosed ? (
-                            <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 600, color: t.textSubtle, borderRadius: 4, padding: '1px 5px', background: t.bgSurfaceMuted }}>
-                              Closed
-                            </span>
-                          ) : conversation.status === 'Human' ? (
-                            <span style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, fontWeight: 600, color: '#f59e0b', borderRadius: 4, padding: '1px 6px', background: 'rgba(245,158,11,0.12)' }}>
-                              Human
-                            </span>
-                          ) : isGuestOnline(conversation.id) ? (
-                            <span style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, fontWeight: 600, color: '#4ade80' }}>
-                              <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#4ade80', flexShrink: 0 }} />
-                            </span>
-                          ) : null}
-                        </div>
+                            {rowBadges}
+                          </div>
+                        )}
                       </div>
                     </button>
 

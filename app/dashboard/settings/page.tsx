@@ -9,6 +9,8 @@ import { DashboardOceanNav } from '@/components/dashboard-ocean-nav'
 import { AddressAutocompleteField } from '@/components/address-autocomplete-field'
 import {
   SETTINGS_CATEGORIES,
+  settingsIndexFont,
+  settingsIndexLabel,
   type SettingsCategoryId,
 } from '@/components/settings-category-nav'
 import { SettingsTabNav } from '@/components/settings-tab-nav'
@@ -68,10 +70,17 @@ import {
   isDiningZonesSchemaError,
   isOperatingHoursSchemaError,
   isPaymentSettingsSchemaError,
+  isWidgetLauncherColorSchemaError,
   OPERATING_HOURS_MIGRATION_HINT,
   PAYMENT_SETTINGS_MIGRATION_HINT,
+  WIDGET_LAUNCHER_COLOR_MIGRATION_HINT,
 } from '@/lib/supabase-schema'
 import { card, t } from '@/lib/dashboard-theme'
+import {
+  DEFAULT_WIDGET_LAUNCHER_COLOR,
+  parseWidgetLauncherColor,
+} from '@/lib/widget-theme'
+import { ColorSwatchPicker } from '@/components/color-swatch-picker'
 
 const BUSINESS_SELECT_WITH_BOOKING =
   'id, name, email, phone, business_type, address, system_prompt, agent_name, language, menu_pdf_text, operating_hours, booking_settings, notification_settings'
@@ -536,6 +545,8 @@ function SettingsPageInner() {
     typeof window !== 'undefined' ? window.location.origin : '',
   )
   const [widgetCopied, setWidgetCopied] = useState(false)
+  const [widgetLauncherColor, setWidgetLauncherColor] = useState(DEFAULT_WIDGET_LAUNCHER_COLOR)
+  const [widgetLauncherColorSchemaReady, setWidgetLauncherColorSchemaReady] = useState(true)
 
   const [menuItems, setMenuItems] = useState<MenuItem[]>([])
   const [menuLoading, setMenuLoading] = useState(false)
@@ -668,6 +679,24 @@ function SettingsPageInner() {
         )
         setPaymentSettings(parsed)
         setDepositDraft(parsed.deposit_per_guest > 0 ? String(parsed.deposit_per_guest) : '')
+      }
+
+      // Widget launcher brand color (tolerates the column not existing yet).
+      const launcherRes = await supabase
+        .from('businesses')
+        .select('widget_launcher_color')
+        .eq('user_id', userId)
+        .maybeSingle()
+      if (!isMounted) return
+      if (launcherRes.error) {
+        if (isWidgetLauncherColorSchemaError(launcherRes.error.message)) {
+          setWidgetLauncherColorSchemaReady(false)
+        }
+      } else if (launcherRes.data) {
+        const parsed = parseWidgetLauncherColor(
+          (launcherRes.data as { widget_launcher_color?: unknown }).widget_launcher_color,
+        )
+        setWidgetLauncherColor(parsed ?? DEFAULT_WIDGET_LAUNCHER_COLOR)
       }
       setIsLoading(false)
     }
@@ -1087,6 +1116,32 @@ function SettingsPageInner() {
       )
       setIsSaving(false)
       return
+    }
+
+    // Persist the widget FAB brand color when Integrations was saved.
+    if (activeCategory === 'integrations' && widgetLauncherColorSchemaReady) {
+      const color = parseWidgetLauncherColor(widgetLauncherColor) ?? DEFAULT_WIDGET_LAUNCHER_COLOR
+      const bizId =
+        businessRowId ??
+        (('data' in result ? (result.data as { id?: string } | null)?.id : null) ?? null)
+      if (bizId) {
+        const colorRes = await supabase
+          .from('businesses')
+          .update({ widget_launcher_color: color })
+          .eq('id', bizId)
+        if (colorRes.error) {
+          if (isWidgetLauncherColorSchemaError(colorRes.error.message)) {
+            setWidgetLauncherColorSchemaReady(false)
+            setSaveError(WIDGET_LAUNCHER_COLOR_MIGRATION_HINT)
+            setIsSaving(false)
+            return
+          }
+          setSaveError(colorRes.error.message)
+          setIsSaving(false)
+          return
+        }
+        setWidgetLauncherColor(color)
+      }
     }
 
     setHoursSchemaReady(true)
@@ -1953,6 +2008,37 @@ function SettingsPageInner() {
                 Drop this snippet into your website to launch the OceanCore concierge for guests.
               </p>
             </div>
+
+            {!widgetLauncherColorSchemaReady ? (
+              <div style={migrationHintBox}>{WIDGET_LAUNCHER_COLOR_MIGRATION_HINT}</div>
+            ) : (
+              <div
+                style={{
+                  display: 'grid',
+                  gap: 12,
+                  padding: 14,
+                  borderRadius: 12,
+                  border: `1px solid ${s.border}`,
+                  background: s.bg,
+                }}
+              >
+                <div>
+                  <div style={{ color: s.text, fontSize: 14, fontWeight: 600 }}>Button color</div>
+                  <p style={{ margin: '4px 0 0', color: s.textMuted, fontSize: 12.5, lineHeight: 1.45 }}>
+                    Match the chat button to your website. Preview on the right updates live.
+                  </p>
+                </div>
+                <ColorSwatchPicker
+                  value={widgetLauncherColor}
+                  onChange={setWidgetLauncherColor}
+                  border={s.border}
+                  panel={s.panel}
+                  text={s.text}
+                  muted={s.textMuted}
+                />
+              </div>
+            )}
+
             {widgetEmbedSnippet ? (
               <div style={{ display: 'grid', gap: 10 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
@@ -2339,25 +2425,120 @@ function SettingsPageInner() {
                   overflow: 'hidden',
                 }}
               >
+                {/* Panel head. Two lines of text said which section this was
+                    and nothing else; the glyph gives each one a face, and the
+                    hairline underneath sweeps out on every switch so the panel
+                    reads as having been re-dealt rather than re-labelled. */}
                 <div
                   style={{
+                    position: 'relative',
                     padding: isMobile ? '14px 18px' : '16px 22px',
                     borderBottom: `1px solid ${s.border}`,
                   }}
                 >
-                  <motion.div
-                    key={activeCategory}
-                    initial={reduceMotion ? false : { opacity: 0, y: 6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={oceanTransition(reduceMotion, { type: 'spring', stiffness: 360, damping: 32 })}
-                  >
-                    <div style={{ fontSize: 16, fontWeight: 700, color: s.text, lineHeight: 1.25 }}>
-                      {activeCategoryMeta.title}
-                    </div>
-                    <div style={{ marginTop: 3, fontSize: 12, color: s.textMuted, lineHeight: 1.4 }}>
-                      {activeCategoryMeta.description}
-                    </div>
-                  </motion.div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 11 : 13 }}>
+                    {/* The tile is the fixed frame and the numeral swaps inside
+                        it: Settings reads as a numbered index, and the head
+                        carries the page number of the section you opened. */}
+                    <span
+                      style={{
+                        position: 'relative',
+                        flexShrink: 0,
+                        width: isMobile ? 36 : 40,
+                        height: isMobile ? 36 : 40,
+                        borderRadius: 12,
+                        background: s.activeBg,
+                        border: '1px solid rgba(56,189,248,0.28)',
+                        boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.6), 0 1px 3px rgba(15,23,42,0.05)',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      {/* Keyed and swapped outright, not via AnimatePresence, so
+                          no stale numeral is left stacked in the tile. It rises
+                          in like a turned page rather than spinning in. */}
+                      <motion.span
+                        key={activeCategory}
+                        aria-hidden
+                        initial={reduceMotion ? false : { opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={oceanTransition(reduceMotion, { type: 'spring', stiffness: 340, damping: 26 })}
+                        style={{
+                          position: 'absolute',
+                          inset: 0,
+                          display: 'grid',
+                          placeItems: 'center',
+                          fontFamily: settingsIndexFont,
+                          fontSize: isMobile ? 17 : 19,
+                          fontWeight: 600,
+                          fontFeatureSettings: '"tnum" 1, "lnum" 1',
+                          letterSpacing: '0.01em',
+                          lineHeight: 1,
+                          background: 'linear-gradient(160deg, #38bdf8 0%, #0284c7 100%)',
+                          WebkitBackgroundClip: 'text',
+                          backgroundClip: 'text',
+                          WebkitTextFillColor: 'transparent',
+                          color: '#0284c7',
+                        }}
+                      >
+                        {settingsIndexLabel(categoryIndex)}
+                      </motion.span>
+                    </span>
+
+                    <motion.div
+                      key={activeCategory}
+                      initial={reduceMotion ? false : { opacity: 0, x: -8 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={oceanTransition(reduceMotion, { type: 'spring', stiffness: 360, damping: 32, delay: 0.04 })}
+                      style={{ minWidth: 0, flex: 1 }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                        <span style={{ fontSize: 16, fontWeight: 700, color: s.text, lineHeight: 1.25, letterSpacing: '-0.01em' }}>
+                          {activeCategoryMeta.title}
+                        </span>
+                        {activeCategoryMeta.comingSoon ? (
+                          <span
+                            style={{
+                              flexShrink: 0,
+                              fontSize: 9,
+                              fontWeight: 700,
+                              letterSpacing: '0.06em',
+                              textTransform: 'uppercase',
+                              padding: '2px 6px',
+                              borderRadius: 999,
+                              background: 'var(--bk-surface-2)',
+                              color: 'var(--bk-muted)',
+                            }}
+                          >
+                            Soon
+                          </span>
+                        ) : null}
+                      </div>
+                      <div style={{ marginTop: 2, fontSize: 12, color: s.textMuted, lineHeight: 1.4 }}>
+                        {activeCategoryMeta.description}
+                      </div>
+                    </motion.div>
+                  </div>
+
+                  {/* Rides on the border rather than adding a second line under
+                      it: an accent that fades out before the panel edge. */}
+                  <motion.span
+                    key={`${activeCategory}-rule`}
+                    aria-hidden
+                    initial={reduceMotion ? false : { scaleX: 0, opacity: 0 }}
+                    animate={{ scaleX: 1, opacity: 1 }}
+                    transition={oceanTransition(reduceMotion, { duration: 0.5, ease: [0.22, 1, 0.36, 1] })}
+                    style={{
+                      position: 'absolute',
+                      left: 0,
+                      right: 0,
+                      bottom: -1,
+                      height: 2,
+                      transformOrigin: 'left',
+                      borderRadius: 999,
+                      background: 'linear-gradient(90deg, #38bdf8 0%, rgba(56,189,248,0.35) 32%, rgba(56,189,248,0) 72%)',
+                      pointerEvents: 'none',
+                    }}
+                  />
                 </div>
 
                 <div style={{ flex: 1, padding: '24px', overflowY: 'auto' }}>

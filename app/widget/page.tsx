@@ -8,6 +8,8 @@ import { useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import {
   DEFAULT_WIDGET_THEME,
+  launcherColorOverrides,
+  parseWidgetLauncherColor,
   parseWidgetTheme,
   WIDGET_THEME_PALETTES,
   type WidgetTheme,
@@ -143,6 +145,23 @@ function loadSession(businessId: string): string | null {
 
 function clearSession(businessId: string) {
   try { localStorage.removeItem(storageKey(businessId)) } catch { /* noop */ }
+}
+
+// ── Proactive nudge ───────────────────────────────────────────────────────────
+// A one-line teaser above the launcher, shown a beat after every page load while
+// the chat is still closed. Opening or dismissing hides it for this visit only —
+// the next site entry shows it again.
+
+const NUDGE_DELAY_MS = 10000
+
+function buildNudgeText(businessName: string | null, conciergeName: string): string {
+  if (conciergeName && conciergeName !== DEFAULT_CONCIERGE_NAME) {
+    return `Hi! I'm ${conciergeName} — can I help you book a table?`
+  }
+  if (businessName) {
+    return `Hi! Can I help you book a table at ${businessName}?`
+  }
+  return `Hi! Can I help you book a table or answer a question?`
 }
 
 // ── Device-level guest identity ───────────────────────────────────────────────
@@ -410,8 +429,12 @@ function WidgetPageInner() {
   const [businessName, setBusinessName] = useState<string | null>(null)
   const [conciergeName, setConciergeName] = useState<string>(DEFAULT_CONCIERGE_NAME)
   const [widgetTheme, setWidgetTheme] = useState<WidgetTheme>(DEFAULT_WIDGET_THEME)
+  const [launcherColor, setLauncherColor] = useState<string | null>(null)
 
   const [isOpen, setIsOpen] = useState(false)
+  const [showNudge, setShowNudge] = useState(false)
+  /** Once opened or dismissed this visit, do not re-arm until the next page load. */
+  const nudgeSpentRef = useRef(false)
   const [isLoading, setIsLoading] = useState(false)
   const [historyLoading, setHistoryLoading] = useState(false)
   const [draft, setDraft] = useState('')
@@ -428,7 +451,10 @@ function WidgetPageInner() {
   const restoredRef = useRef(false)
   const isMobile = useIsNarrow()
   const reduceMotion = useReducedMotion()
-  const widgetPaletteVars = WIDGET_THEME_PALETTES[widgetTheme] as React.CSSProperties
+  const widgetPaletteVars = {
+    ...WIDGET_THEME_PALETTES[widgetTheme],
+    ...(launcherColor ? launcherColorOverrides(launcherColor) : null),
+  } as React.CSSProperties
 
   // Restore session from localStorage on mount / businessId change
   useEffect(() => {
@@ -586,21 +612,36 @@ function WidgetPageInner() {
       setBusinessName(null)
       setConciergeName(DEFAULT_CONCIERGE_NAME)
       setWidgetTheme(DEFAULT_WIDGET_THEME)
+      setLauncherColor(null)
       return
     }
     let cancelled = false
     void (async () => {
       const themedResult = await supabase
         .from('businesses')
-        .select('name, agent_name, widget_theme')
+        .select('name, agent_name, widget_theme, widget_launcher_color')
         .eq('id', businessId)
         .maybeSingle()
       let data = themedResult.data as {
         name?: unknown
         agent_name?: unknown
         widget_theme?: unknown
+        widget_launcher_color?: unknown
       } | null
       let error = themedResult.error
+      if (error?.message.toLowerCase().includes('widget_launcher_color')) {
+        const withoutColor = await supabase
+          .from('businesses')
+          .select('name, agent_name, widget_theme')
+          .eq('id', businessId)
+          .maybeSingle()
+        data = withoutColor.data as {
+          name?: unknown
+          agent_name?: unknown
+          widget_theme?: unknown
+        } | null
+        error = withoutColor.error
+      }
       if (error?.message.toLowerCase().includes('widget_theme')) {
         const fallback = await supabase
           .from('businesses')
@@ -620,6 +661,7 @@ function WidgetPageInner() {
       setBusinessName(nextName)
       setConciergeName(nextConcierge)
       setWidgetTheme(parseWidgetTheme(data?.widget_theme))
+      setLauncherColor(parseWidgetLauncherColor(data?.widget_launcher_color))
       setMessages((prev) =>
         prev.length === 1 && prev[0].id === 'welcome'
           ? [buildWelcome(nextName, nextConcierge)]
@@ -630,6 +672,25 @@ function WidgetPageInner() {
       cancelled = true
     }
   }, [businessId])
+
+  // Reveal the proactive nudge a beat after load, only while the chat is closed
+  // and this visit has not already opened or dismissed it.
+  useEffect(() => {
+    if (!businessId || isOpen || nudgeSpentRef.current) return
+    const timer = window.setTimeout(() => setShowNudge(true), NUDGE_DELAY_MS)
+    return () => window.clearTimeout(timer)
+  }, [businessId, isOpen])
+
+  const openChat = useCallback(() => {
+    nudgeSpentRef.current = true
+    setShowNudge(false)
+    setIsOpen(true)
+  }, [])
+
+  const closeNudge = useCallback(() => {
+    nudgeSpentRef.current = true
+    setShowNudge(false)
+  }, [])
 
   const handleContactSubmit = async () => {
     const phoneDigits = contactPhone.replace(/\D/g, '')
@@ -900,9 +961,22 @@ function WidgetPageInner() {
           <motion.div
             key="widget-panel"
             initial={{ opacity: 0, y: 18, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 14, scale: 0.96 }}
-            transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+            animate={{
+              opacity: 1,
+              y: 0,
+              scale: 1,
+              transition: reduceMotion
+                ? { duration: 0.01 }
+                : { duration: 0.3, ease: [0.22, 1, 0.36, 1] },
+            }}
+            exit={{
+              opacity: 0,
+              y: 18,
+              scale: 0.95,
+              transition: reduceMotion
+                ? { duration: 0.01 }
+                : { duration: 0.3, ease: [0.64, 0, 0.78, 0] },
+            }}
             style={panelStyle}
           >
             {/* ── Header ── */}
@@ -1572,14 +1646,99 @@ function WidgetPageInner() {
         ) : null}
         </AnimatePresence>
 
+        {/* ── Proactive nudge ── */}
+        <AnimatePresence>
+          {!isOpen && showNudge ? (
+            <motion.div
+              key="widget-nudge"
+              initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 12, scale: 0.94 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 8, scale: 0.96 }}
+              transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+              onClick={openChat}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  openChat()
+                }
+              }}
+              aria-label="Open chat"
+              style={{
+                position: 'fixed',
+                right: isMobile ? 16 : 24,
+                bottom: isMobile ? 88 : 96,
+                maxWidth: isMobile ? 220 : 244,
+                padding: '11px 30px 11px 14px',
+                borderRadius: 16,
+                background: CHAT_SURFACE,
+                color: CHAT_TEXT,
+                border: `1px solid ${CHAT_BORDER}`,
+                boxShadow: SOFT_SHADOW,
+                fontSize: 13.5,
+                lineHeight: 1.4,
+                fontWeight: 500,
+                cursor: 'pointer',
+              }}
+            >
+              {buildNudgeText(businessName, conciergeName)}
+
+              {/* Tail pointing down toward the launcher. */}
+              <span
+                aria-hidden
+                style={{
+                  position: 'absolute',
+                  right: 22,
+                  bottom: -5,
+                  width: 12,
+                  height: 12,
+                  background: CHAT_SURFACE,
+                  borderRight: `1px solid ${CHAT_BORDER}`,
+                  borderBottom: `1px solid ${CHAT_BORDER}`,
+                  transform: 'rotate(45deg)',
+                }}
+              />
+
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  closeNudge()
+                }}
+                aria-label="Dismiss"
+                style={{
+                  position: 'absolute',
+                  top: 6,
+                  right: 6,
+                  width: 20,
+                  height: 20,
+                  display: 'grid',
+                  placeItems: 'center',
+                  border: 'none',
+                  borderRadius: '50%',
+                  background: 'transparent',
+                  color: CHAT_MUTED,
+                  fontSize: 15,
+                  lineHeight: 1,
+                  cursor: 'pointer',
+                }}
+              >
+                ×
+              </button>
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
+
         {/* ── Launcher ── */}
         {!(isMobile && isOpen) && (
           <motion.button
             type="button"
-            onClick={() => setIsOpen((prev) => !prev)}
+            onClick={() => (isOpen ? setIsOpen(false) : openChat())}
             whileHover={reduceMotion ? undefined : { scale: 1.07 }}
             whileTap={reduceMotion ? undefined : { scale: 0.93 }}
             layout
+            transition={reduceMotion ? { duration: 0.01 } : { type: 'spring', stiffness: 420, damping: 28 }}
             aria-label={isOpen ? 'Close chat widget' : 'Open chat widget'}
             style={{
               width: 60,

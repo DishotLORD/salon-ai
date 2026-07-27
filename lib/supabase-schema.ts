@@ -48,3 +48,12 @@ export function isPaymentSettingsSchemaError(message: string | undefined): boole
 
 export const PAYMENT_SETTINGS_MIGRATION_HINT =
   'To save deposit settings, run supabase/migrations/013_payment_deposits.sql in Supabase Dashboard → SQL Editor, then reload this page.'
+
+export function isWidgetLauncherColorSchemaError(message: string | undefined): boolean {
+  if (!message) return false
+  const lower = message.toLowerCase()
+  return lower.includes('widget_launcher_color') && (lower.includes('schema') || lower.includes('column'))
+}
+
+export const WIDGET_LAUNCHER_COLOR_MIGRATION_HINT =
+  'To save the widget button color, run supabase/migrations/020_widget_launcher_color.sql in Supabase Dashboard → SQL Editor, then reload this page.'

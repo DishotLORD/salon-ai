@@ -4,6 +4,9 @@ export type WidgetTheme = (typeof WIDGET_THEMES)[number]
 
 export const DEFAULT_WIDGET_THEME: WidgetTheme = 'ice'
 
+/** Default FAB accent when the restaurant has not set a custom color yet. */
+export const DEFAULT_WIDGET_LAUNCHER_COLOR = '#0ea5e9'
+
 export const WIDGET_THEME_OPTIONS: Array<{
   value: WidgetTheme
   label: string
@@ -25,6 +28,62 @@ export function parseWidgetTheme(value: unknown): WidgetTheme {
   return WIDGET_THEMES.includes(value as WidgetTheme)
     ? (value as WidgetTheme)
     : DEFAULT_WIDGET_THEME
+}
+
+/** Accepts #rgb / #rrggbb (with or without #). Returns normalized #rrggbb or null. */
+export function parseWidgetLauncherColor(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const raw = value.trim()
+  const short = /^#?([0-9a-f]{3})$/i.exec(raw)
+  if (short) {
+    const [r, g, b] = short[1]
+    return `#${r}${r}${g}${g}${b}${b}`.toLowerCase()
+  }
+  const full = /^#?([0-9a-f]{6})$/i.exec(raw)
+  if (full) return `#${full[1].toLowerCase()}`
+  return null
+}
+
+function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+  const parsed = parseWidgetLauncherColor(hex)
+  if (!parsed) return null
+  return {
+    r: parseInt(parsed.slice(1, 3), 16),
+    g: parseInt(parsed.slice(3, 5), 16),
+    b: parseInt(parsed.slice(5, 7), 16),
+  }
+}
+
+function mixHex(hex: string, toward: 'white' | 'black', amount: number): string {
+  const rgb = hexToRgb(hex)
+  if (!rgb) return hex
+  const t = toward === 'white' ? 255 : 0
+  const mix = (c: number) => Math.round(c + (t - c) * amount)
+  const to = (n: number) => n.toString(16).padStart(2, '0')
+  return `#${to(mix(rgb.r))}${to(mix(rgb.g))}${to(mix(rgb.b))}`
+}
+
+function luminance(hex: string): number {
+  const rgb = hexToRgb(hex)
+  if (!rgb) return 0.5
+  const lin = (c: number) => {
+    const s = c / 255
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+  }
+  return 0.2126 * lin(rgb.r) + 0.7152 * lin(rgb.g) + 0.0722 * lin(rgb.b)
+}
+
+/** CSS vars that tint the FAB (and its glow) to a restaurant brand color. */
+export function launcherColorOverrides(hex: string): Record<string, string> {
+  const color = parseWidgetLauncherColor(hex) ?? DEFAULT_WIDGET_LAUNCHER_COLOR
+  const rgb = hexToRgb(color)!
+  const light = mixHex(color, 'white', 0.28)
+  const iconOnLight = luminance(color) > 0.55
+  return {
+    '--widget-launcher-background': `linear-gradient(140deg, ${light}, ${color})`,
+    '--widget-launcher-color': iconOnLight ? '#0f172a' : '#ffffff',
+    '--widget-accent-rgb': `${rgb.r}, ${rgb.g}, ${rgb.b}`,
+  }
 }
 
 export const WIDGET_THEME_PALETTES: Record<WidgetTheme, Record<string, string>> = {
