@@ -1,7 +1,6 @@
 import { redirect } from 'next/navigation'
 
-import { resolveBusinessAccessServer } from '@/lib/business-access-server'
-import { createClient } from '@/lib/supabase-server'
+import { getDashboardContext } from '@/lib/dashboard-context'
 
 import { DashboardClient, type RecentActivity, type ZoneOccupancy } from './dashboard-client'
 
@@ -13,46 +12,62 @@ function truncate(value: string, max = 96): string {
 }
 
 export default async function Dashboard() {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const { supabase, user, access } = await getDashboardContext()
 
   if (!user) {
     redirect('/auth/login')
   }
 
-  const access = await resolveBusinessAccessServer(supabase, user.id)
   if (!access) {
     redirect('/onboarding')
   }
 
-  const { data: business } = await supabase
-    .from('businesses')
-    .select('id, name, agent_name')
-    .eq('id', access.businessId)
-    .maybeSingle()
+  const businessId = access.businessId
+
+  const todayStart = new Date()
+  todayStart.setHours(0, 0, 0, 0)
+  const todayStartISO = todayStart.toISOString()
+  const todayEndISO = new Date(new Date().setHours(23, 59, 59, 999)).toISOString()
+
+  // None of these depend on each other, so they go out together: run as a
+  // waterfall they cost the sum of five round trips before the page can paint.
+  const [
+    { data: business },
+    { count: activeChatsCount, error: conversationsCountError },
+    { data: conversationRows, error: conversationIdsError },
+    { data: zonesData },
+    { data: todayAppts },
+  ] = await Promise.all([
+    supabase.from('businesses').select('id, name, agent_name').eq('id', businessId).maybeSingle(),
+    supabase
+      .from('conversations')
+      .select('*', { count: 'exact', head: true })
+      .eq('business_id', businessId)
+      .or('status.is.null,status.eq.active,status.eq.human'),
+    supabase.from('conversations').select('id, customer_name').eq('business_id', businessId),
+    supabase
+      .from('dining_zones')
+      .select('id, name, max_concurrent_parties, sort_order')
+      .eq('business_id', businessId)
+      .eq('is_active', true)
+      .order('sort_order'),
+    supabase
+      .from('appointments')
+      .select('zone_id, party_size')
+      .eq('business_id', businessId)
+      .in('status', ['pending', 'confirmed', 'seated'])
+      .gte('scheduled_at', todayStartISO)
+      .lte('scheduled_at', todayEndISO),
+  ])
 
   if (!business) {
     redirect('/onboarding')
   }
 
-  const businessId = business.id
   const businessDisplayName = business.name?.trim() || 'your restaurant'
   const conciergeName = business.agent_name?.trim() || 'AI Concierge'
 
-  const { count: activeChatsCount, error: conversationsCountError } = await supabase
-    .from('conversations')
-    .select('*', { count: 'exact', head: true })
-    .eq('business_id', businessId)
-    .or('status.is.null,status.eq.active,status.eq.human')
-
   const activeChats = conversationsCountError ? 0 : (activeChatsCount ?? 0)
-
-  const { data: conversationRows, error: conversationIdsError } = await supabase
-    .from('conversations')
-    .select('id, customer_name')
-    .eq('business_id', businessId)
 
   const conversationsList = !conversationIdsError && conversationRows ? conversationRows : []
   const conversationIds = conversationsList.map((row) => row.id as string)
@@ -64,30 +79,40 @@ export default async function Dashboard() {
     }
   }
 
-  const todayStart = new Date()
-  todayStart.setHours(0, 0, 0, 0)
-  const todayStartISO = todayStart.toISOString()
-
-  let messageCount = 0
   const recentMessages: { id: string; content: string; role: string; created_at: string; conversation_id: string }[] = []
   const idChunkSize = 200
+  const idChunks: string[][] = []
   for (let i = 0; i < conversationIds.length; i += idChunkSize) {
-    const chunk = conversationIds.slice(i, i + idChunkSize)
-    const { count } = await supabase
-      .from('messages')
-      .select('*', { count: 'exact', head: true })
-      .in('conversation_id', chunk)
-      .gte('created_at', todayStartISO)
-    messageCount += count ?? 0
+    idChunks.push(conversationIds.slice(i, i + idChunkSize))
   }
 
-  if (conversationIds.length > 0) {
-    const { data: latest } = await supabase
-      .from('messages')
-      .select('id, content, role, created_at, conversation_id')
-      .in('conversation_id', conversationIds)
-      .order('created_at', { ascending: false })
-      .limit(ACTIVITY_LIMIT)
+  // Today's message count is chunked to keep the `in` filter off the URL length
+  // limit; the chunks are independent, so they go out at once rather than one
+  // round trip per 200 conversations.
+  const [chunkCounts, latestRes] = await Promise.all([
+    Promise.all(
+      idChunks.map((chunk) =>
+        supabase
+          .from('messages')
+          .select('*', { count: 'exact', head: true })
+          .in('conversation_id', chunk)
+          .gte('created_at', todayStartISO),
+      ),
+    ),
+    conversationIds.length > 0
+      ? supabase
+          .from('messages')
+          .select('id, content, role, created_at, conversation_id')
+          .in('conversation_id', conversationIds)
+          .order('created_at', { ascending: false })
+          .limit(ACTIVITY_LIMIT)
+      : null,
+  ])
+
+  const messageCount = chunkCounts.reduce((sum, { count }) => sum + (count ?? 0), 0)
+
+  {
+    const latest = latestRes?.data
     if (latest) {
       for (const row of latest) {
         if (
@@ -124,24 +149,7 @@ export default async function Dashboard() {
     }
   })
 
-  // ── Zone occupancy for today ──────────────────────────────────────────────
-  const todayEndISO = new Date(new Date().setHours(23, 59, 59, 999)).toISOString()
-
-  const { data: zonesData } = await supabase
-    .from('dining_zones')
-    .select('id, name, max_concurrent_parties, sort_order')
-    .eq('business_id', businessId)
-    .eq('is_active', true)
-    .order('sort_order')
-
-  const { data: todayAppts } = await supabase
-    .from('appointments')
-    .select('zone_id, party_size')
-    .eq('business_id', businessId)
-    .in('status', ['pending', 'confirmed', 'seated'])
-    .gte('scheduled_at', todayStartISO)
-    .lte('scheduled_at', todayEndISO)
-
+  // ── Zone occupancy for today (fetched in the opening batch) ───────────────
   const guestsByZone = new Map<string, number>()
   for (const appt of todayAppts ?? []) {
     if (appt.zone_id) {

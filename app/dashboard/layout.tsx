@@ -2,20 +2,14 @@ import type { ReactNode } from 'react'
 import { redirect } from 'next/navigation'
 
 import { DashboardSplash } from '@/components/dashboard-splash'
-import { resolveBusinessAccessServer } from '@/lib/business-access-server'
-import { createClient } from '@/lib/supabase-server'
+import { getDashboardContext } from '@/lib/dashboard-context'
 
 export default async function DashboardLayout({ children }: { children: ReactNode }) {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const { user, access } = await getDashboardContext()
 
   if (!user) {
     redirect('/auth/login')
   }
-
-  const access = await resolveBusinessAccessServer(supabase, user.id)
 
   if (!access) {
     redirect('/onboarding')
