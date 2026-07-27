@@ -465,22 +465,41 @@ function ParticleCanvas() {
   );
 }
 
-/** The accent word with a living wave rolling beneath it. */
+/* One long swash rather than a row of identical humps: the repeating sine read
+   as a scribble under the word, and sliding the whole thing sideways forever
+   kept pulling the eye off the headline. */
+const SWASH = "M2 8.4 C 28 5.2, 56 4.8, 84 6.8 C 110 8.7, 138 10.4, 164 8.6 C 178 7.7, 190 7.4, 198 7.8";
+
+/** The accent word, underscored by a stroke that inks itself in and then
+    catches the light every few seconds. */
 function WaveWord({ children }: { children: React.ReactNode }) {
   return (
     <span style={{ position: "relative", display: "inline-block", fontStyle: "italic", color: "#38bdf8" }}>
       {children}
-      <span aria-hidden className="oc-wave-clip" style={{
-        position: "absolute", left: "0.04em", right: "0.08em", bottom: "-0.07em",
-        height: "0.14em", overflow: "hidden", display: "block", pointerEvents: "none",
-      }}>
-        <svg className="oc-wave" width="200%" height="100%" viewBox="0 0 200 12" preserveAspectRatio="none" style={{ display: "block" }}>
-          <path
-            d="M0 6 Q 12.5 0.5, 25 6 T 50 6 T 75 6 T 100 6 T 125 6 T 150 6 T 175 6 T 200 6"
-            fill="none" stroke="#38bdf8" strokeWidth="2.6" strokeLinecap="round" opacity="0.85"
-          />
-        </svg>
-      </span>
+      <svg
+        aria-hidden
+        viewBox="0 0 200 14"
+        preserveAspectRatio="none"
+        style={{
+          position: "absolute", left: "0.03em", right: "0.06em", bottom: "-0.11em",
+          height: "0.22em", overflow: "visible", pointerEvents: "none", display: "block",
+        }}
+      >
+        <defs>
+          {/* Tapered ends: the stroke fades in and out instead of stopping dead
+              on the first and last letter. */}
+          <linearGradient id="oc-swash" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stopColor="#38bdf8" stopOpacity="0" />
+            <stop offset="0.07" stopColor="#38bdf8" stopOpacity="0.9" />
+            <stop offset="0.5" stopColor="#7dd3fc" stopOpacity="1" />
+            <stop offset="0.9" stopColor="#38bdf8" stopOpacity="0.85" />
+            <stop offset="1" stopColor="#38bdf8" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <path className="oc-swash-glow" d={SWASH} fill="none" stroke="url(#oc-swash)" strokeWidth="7" strokeLinecap="round" />
+        <path className="oc-swash-line" d={SWASH} pathLength={1} fill="none" stroke="url(#oc-swash)" strokeWidth="2.1" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+        <path className="oc-swash-spark" d={SWASH} pathLength={1} fill="none" stroke="#e8f6ff" strokeWidth="2.1" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+      </svg>
     </span>
   );
 }
@@ -655,7 +674,7 @@ export default function Home() {
   };
 
   return (
-    <div style={{ fontFamily: sans, background: "#050d1a", color: "#e8f1ff", lineHeight: 1.5, WebkitFontSmoothing: "antialiased" }}>
+    <div className="oc-dark-page" style={{ fontFamily: sans, background: "#050d1a", color: "#e8f1ff", lineHeight: 1.5, WebkitFontSmoothing: "antialiased" }}>
       <style>{`
         @keyframes floaty{0%,100%{transform:translateY(0);}50%{transform:translateY(-10px);}}
         @keyframes msgin{to{opacity:1;transform:none;}}
@@ -687,10 +706,12 @@ export default function Home() {
         .oc-btn-primary:hover::after{animation:oc-sheen .95s cubic-bezier(.45,0,.2,1);}
         @keyframes oc-sheen{to{transform:translateX(320%) skewX(-18deg);}}
         .oc-btn-primary:hover{transform:translateY(-2px);box-shadow:0 12px 40px -6px rgba(56,189,248,0.35);background:#7dd3fc;}
-        .oc-wave-clip{opacity:0;animation:oc-wave-in .9s cubic-bezier(.22,1,.36,1) 1.05s forwards;}
-        .oc-wave{animation:oc-wave-drift 5.5s linear infinite;}
-        @keyframes oc-wave-in{to{opacity:1;}}
-        @keyframes oc-wave-drift{to{transform:translateX(-50%);}}
+        .oc-swash-line{stroke-dasharray:1;stroke-dashoffset:1;animation:oc-swash-draw 1.15s cubic-bezier(.22,1,.36,1) 1.05s forwards;}
+        .oc-swash-glow{opacity:0;filter:blur(5px);animation:oc-swash-lift .8s ease-out 1.7s forwards;}
+        .oc-swash-spark{stroke-dasharray:.07 .93;stroke-dashoffset:1;opacity:0;animation:oc-swash-spark 5.4s cubic-bezier(.5,0,.5,1) 2.6s infinite;}
+        @keyframes oc-swash-draw{to{stroke-dashoffset:0;}}
+        @keyframes oc-swash-lift{to{opacity:.42;}}
+        @keyframes oc-swash-spark{0%{stroke-dashoffset:1;opacity:0;}8%{opacity:.85;}42%{stroke-dashoffset:0;opacity:0;}100%{stroke-dashoffset:0;opacity:0;}}
         .oc-ray{position:absolute;top:-20%;height:145%;filter:blur(26px);mix-blend-mode:screen;pointer-events:none;
           background:linear-gradient(180deg,rgba(125,211,252,0.15),rgba(56,189,248,0.045) 55%,transparent);}
         .oc-ray.r1{left:16%;width:170px;animation:oc-ray-sway 15s ease-in-out infinite;}
@@ -710,8 +731,9 @@ export default function Home() {
         @media(prefers-reduced-motion:reduce){
           .oc-reveal{opacity:1!important;transform:none!important;}.oc-reveal.in{animation:none!important;}
           .oc-ray,.oc-btn-primary::after{animation:none!important;}
-          .oc-wave{animation:none!important;}
-          .oc-wave-clip{animation:none!important;opacity:1!important;}
+          .oc-swash-line{animation:none!important;stroke-dashoffset:0!important;}
+          .oc-swash-glow{animation:none!important;opacity:.42!important;}
+          .oc-swash-spark{animation:none!important;opacity:0!important;}
         }
       `}</style>
 
