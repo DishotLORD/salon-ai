@@ -30,6 +30,15 @@ input[type="number"] { -moz-appearance: textfield; }
   --t-sidebar-hover-bg: rgba(255,255,255,0.055);
   --t-sidebar-badge-bg: rgba(255,255,255,0.075);
   --t-sidebar-badge-text: rgba(255,255,255,0.6);
+
+  /* Text selection. Both pairs are opaque, so legibility comes from the
+     highlight itself rather than from whatever surface sits under it — a
+     surface that is dark in both themes (the rail, the auth split, the
+     marketing shell) can then keep the dark pair while the app is light. */
+  --t-selection-on-dark-bg: #1d5c92;
+  --t-selection-on-dark-text: #ffffff;
+  --t-selection-on-light-bg: #b8e0fb;
+  --t-selection-on-light-text: #0b2036;
 }
 
 :root,
@@ -76,6 +85,8 @@ input[type="number"] { -moz-appearance: textfield; }
   --t-glass-bg: rgba(14,26,50,0.58);
   --t-glass-border: rgba(125,211,252,0.12);
   --t-glass-highlight: rgba(255,255,255,0.05);
+  --t-selection-bg: var(--t-selection-on-dark-bg);
+  --t-selection-text: var(--t-selection-on-dark-text);
 }
 
 [data-theme="light"] {
@@ -124,6 +135,8 @@ input[type="number"] { -moz-appearance: textfield; }
   --t-glass-bg: #ffffff;
   --t-glass-border: rgba(0,0,0,0.08);
   --t-glass-highlight: rgba(255,255,255,0.55);
+  --t-selection-bg: var(--t-selection-on-light-bg);
+  --t-selection-text: var(--t-selection-on-light-text);
 }
 
 /* =========================================================== */
@@ -453,9 +466,25 @@ body {
 
 /* ─── End split auth ─────────────────────────────────────────── */
 
+/* Selection used to be a 12%-opacity sky wash with near-white ink, which in the
+   light theme put white text on an almost-white field — selected words simply
+   vanished. Each theme now names its own opaque pair. */
 ::selection {
-  background: var(--ocean-sky-muted);
-  color: var(--ocean-text);
+  background: var(--t-selection-bg);
+  color: var(--t-selection-text);
+}
+
+/* The rail, the auth split and the marketing/widget shells are dark whatever
+   the theme says, so they hold on to the dark highlight even while the rest of
+   the app is light. */
+.oc-sidebar::selection,
+.oc-sidebar ::selection,
+.split-auth::selection,
+.split-auth ::selection,
+.oc-dark-page::selection,
+.oc-dark-page ::selection {
+  background: var(--t-selection-on-dark-bg);
+  color: var(--t-selection-on-dark-text);
 }
 
 :focus-visible {

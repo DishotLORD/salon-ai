@@ -871,6 +871,7 @@ function WidgetPageInner() {
 
   return (
     <div
+      className="oc-dark-page"
       style={{
         minHeight: '100vh',
         background: 'var(--ocean-canvas)',
