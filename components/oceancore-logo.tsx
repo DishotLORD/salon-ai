@@ -7,6 +7,11 @@ interface OceanCoreLogoProps {
   className?: string
 }
 
+/* The lockup used to name the verticals it launched with ("Restaurant & Bar
+   AI"), which both dated the brand and hid what the product actually is. It now
+   says the job instead, so it reads the same for any venue. */
+const LOCKUP_TAGLINE = 'AI Concierge'
+
 let _idCounter = 0
 
 function OceanCoreIconMark({
@@ -142,7 +147,7 @@ export function OceanCoreLogo({ variant = 'full', theme = 'dark', className }: O
           marginTop: 11,
           opacity: 0.85,
         }}>
-          Restaurant & Bar AI
+          {LOCKUP_TAGLINE}
         </div>
       </div>
     </div>
@@ -181,7 +186,7 @@ export function OceanCoreLogoCompact({ theme = 'dark', className }: { theme?: Lo
           textTransform: 'uppercase',
           marginTop: 6,
         }}>
-          Restaurant & Bar AI
+          {LOCKUP_TAGLINE}
         </div>
       </div>
     </div>

@@ -167,7 +167,7 @@ function BrandPanel() {
           style={{ fontSize: 12, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#38bdf8' }}
         >
           <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#38bdf8', boxShadow: '0 0 12px #38bdf8', flexShrink: 0 }} />
-          AI Concierge for hospitality
+          Always on
         </div>
         <h1
           style={{
