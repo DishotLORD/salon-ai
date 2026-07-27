@@ -213,6 +213,145 @@ function statusColor(s: ResStatus) {
 const glass = card
 
 // ─── MonthCalendar ────────────────────────────────────────────────────────────
+/**
+ * Compact month picker behind the date label in the top bar.
+ *
+ * Its month is steered independently of the page: browsing to December to
+ * check a date should not move the page there until a day is actually picked.
+ */
+function DatePickerPopover({
+  value,
+  today,
+  onPick,
+  onClose,
+}: {
+  value: Date
+  today: Date
+  onPick: (date: Date) => void
+  onClose: () => void
+}) {
+  const [viewMonth, setViewMonth] = useState(() => new Date(value.getFullYear(), value.getMonth(), 1))
+
+  const year = viewMonth.getFullYear()
+  const month = viewMonth.getMonth()
+
+  const cells = useMemo(() => {
+    const firstDay = new Date(year, month, 1)
+    const lastDate = new Date(year, month + 1, 0).getDate()
+    // Monday-first, matching the month calendar below it.
+    const startPad = (firstDay.getDay() + 6) % 7
+    const list: { date: Date; inMonth: boolean }[] = []
+    for (let i = startPad - 1; i >= 0; i--) list.push({ date: new Date(year, month, -i), inMonth: false })
+    for (let d = 1; d <= lastDate; d++) list.push({ date: new Date(year, month, d), inMonth: true })
+    const tail = list.length % 7
+    if (tail !== 0) for (let d = 1; d <= 7 - tail; d++) list.push({ date: new Date(year, month + 1, d), inMonth: false })
+    return list
+  }, [year, month])
+
+  const shiftMonth = (delta: number) => setViewMonth(new Date(year, month + delta, 1))
+
+  const navBtn: CSSProperties = {
+    width: 26,
+    height: 26,
+    borderRadius: 7,
+    border: bk.border,
+    background: 'var(--bk-card)',
+    color: 'var(--bk-body)',
+    cursor: 'pointer',
+    display: 'grid',
+    placeItems: 'center',
+    fontSize: 13,
+    lineHeight: 1,
+  }
+
+  return (
+    <div
+      role="dialog"
+      aria-label="Choose a date"
+      style={{
+        position: 'absolute',
+        top: 'calc(100% + 6px)',
+        left: 0,
+        zIndex: 60,
+        width: 268,
+        padding: 12,
+        borderRadius: bk.radius,
+        background: 'var(--bk-card)',
+        border: bk.border,
+        boxShadow: 'var(--bk-shadow-pop)',
+        fontFamily: bk.font,
+      }}
+    >
+      {/* month + year navigation */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10 }}>
+        <button type="button" aria-label="Previous month" onClick={() => shiftMonth(-1)} style={navBtn}>‹</button>
+        <span style={{ fontSize: bk.body, fontWeight: 700, color: 'var(--bk-head)', whiteSpace: 'nowrap' }}>
+          {viewMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+        </span>
+        <button type="button" aria-label="Next month" onClick={() => shiftMonth(1)} style={navBtn}>›</button>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2, marginBottom: 4 }}>
+        {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d, i) => (
+          <div key={i} style={{ textAlign: 'center', fontSize: 9.5, fontWeight: 700, color: 'var(--bk-muted)' }}>
+            {d}
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2 }}>
+        {cells.map(({ date, inMonth }) => {
+          const selected = isSameDay(date, value)
+          const isToday = isSameDay(date, today)
+          return (
+            <button
+              key={date.toISOString()}
+              type="button"
+              onClick={() => onPick(date)}
+              aria-current={selected ? 'date' : undefined}
+              style={{
+                height: 30,
+                borderRadius: 8,
+                border: isToday && !selected ? '1px solid var(--bk-accent)' : '1px solid transparent',
+                background: selected ? 'var(--bk-accent)' : 'transparent',
+                color: selected
+                  ? 'var(--bk-inverse-text)'
+                  : inMonth
+                    ? 'var(--bk-head)'
+                    : 'var(--bk-muted)',
+                fontSize: 12,
+                fontWeight: selected || isToday ? 700 : inMonth ? 500 : 400,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              {date.getDate()}
+            </button>
+          )
+        })}
+      </div>
+
+      <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+        <button
+          type="button"
+          onClick={() => onPick(today)}
+          style={{ flex: 1, padding: '7px 0', borderRadius: 8, border: bk.border, background: 'var(--bk-surface)', color: 'var(--bk-head)', fontSize: bk.caption, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+        >
+          Today
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          style={{ flex: 1, padding: '7px 0', borderRadius: 8, border: bk.border, background: 'transparent', color: 'var(--bk-body)', fontSize: bk.caption, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}
+        >
+          Close
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function MonthCalendar({
   displayMonth,
   reservations,
@@ -2073,6 +2212,8 @@ export default function BookingsPage() {
   const reduceMotion = useReducedMotion()
   const rightPanelRef = useRef<HTMLDivElement>(null)
   const filtersRef = useRef<HTMLDivElement>(null)
+  const [datePickerOpen, setDatePickerOpen] = useState(false)
+  const datePickerRef = useRef<HTMLDivElement>(null)
   const realtimeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const [today] = useState(() => {
@@ -2109,6 +2250,17 @@ export default function BookingsPage() {
     () => reservations.filter((r) => isSameDay(r.scheduledAt, effectiveDay)),
     [reservations, effectiveDayIso],
   )
+
+  /** Move the page to a day, keeping monthOffset in step so the calendar and
+   *  the day panel follow. Same sync the arrows do, shared so a picked date
+   *  cannot land the page on a month it is not showing. */
+  function goToDay(next: Date) {
+    setSelectedDay(next)
+    setTableVisibleCount(10)
+    setMonthOffset(
+      (next.getFullYear() - today.getFullYear()) * 12 + (next.getMonth() - today.getMonth()),
+    )
+  }
 
   function navigateDayOffset(offset: number) {
     const next = new Date(effectiveDay)
@@ -2360,6 +2512,24 @@ export default function BookingsPage() {
     document.addEventListener('mousedown', onDocClick)
     return () => document.removeEventListener('mousedown', onDocClick)
   }, [filtersOpen])
+
+  useEffect(() => {
+    if (!datePickerOpen) return
+    function onDocClick(e: MouseEvent) {
+      if (datePickerRef.current && !datePickerRef.current.contains(e.target as Node)) {
+        setDatePickerOpen(false)
+      }
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setDatePickerOpen(false)
+    }
+    document.addEventListener('mousedown', onDocClick)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDocClick)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [datePickerOpen])
 
   useEffect(() => {
     if (!businessId) return
@@ -2917,20 +3087,56 @@ export default function BookingsPage() {
                   Reservations
                 </h1>
 
-                {/* Date navigator */}
-                <div style={{ display: 'flex', alignItems: 'center', background: 'var(--bk-card)', border: bk.border, borderRadius: bk.radiusSm, overflow: 'hidden' }}>
-                  <button type="button" onClick={() => navigateDayOffset(-1)} style={{ width: 30, height: bk.controlH, border: 'none', borderRight: '1px solid var(--bk-border)', background: 'transparent', color: 'var(--bk-body)', cursor: 'pointer', fontSize: 15, display: 'grid', placeItems: 'center' }}>‹</button>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 10px' }}>
-                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                      <rect x="1" y="2.5" width="12" height="10" rx="1.5" stroke="var(--bk-muted)" strokeWidth="1.2"/>
-                      <path d="M1 5.5h12" stroke="var(--bk-muted)" strokeWidth="1.2"/>
-                      <path d="M4.5 1v2M9.5 1v2" stroke="var(--bk-muted)" strokeWidth="1.2" strokeLinecap="round"/>
-                    </svg>
-                    <span style={{ fontSize: bk.body, fontWeight: 600, color: 'var(--bk-head)', whiteSpace: 'nowrap' as const }}>
-                      {effectiveDay.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
-                    </span>
+                {/* Date navigator. The label opens a month picker: stepping a
+                    day at a time is fine for tomorrow and useless for a date
+                    three weeks out. */}
+                <div ref={datePickerRef} style={{ position: 'relative' as const }}>
+                  <div style={{ display: 'flex', alignItems: 'center', background: 'var(--bk-card)', border: bk.border, borderRadius: bk.radiusSm, overflow: 'hidden' }}>
+                    <button type="button" aria-label="Previous day" onClick={() => navigateDayOffset(-1)} style={{ width: 30, height: bk.controlH, border: 'none', borderRight: '1px solid var(--bk-border)', background: 'transparent', color: 'var(--bk-body)', cursor: 'pointer', fontSize: 15, display: 'grid', placeItems: 'center' }}>‹</button>
+                    <button
+                      type="button"
+                      onClick={() => setDatePickerOpen((v) => !v)}
+                      aria-haspopup="dialog"
+                      aria-expanded={datePickerOpen}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        padding: '0 10px',
+                        height: bk.controlH,
+                        border: 'none',
+                        background: datePickerOpen ? 'var(--bk-surface)' : 'transparent',
+                        cursor: 'pointer',
+                        fontFamily: 'inherit',
+                        transition: 'background 0.15s',
+                      }}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                        <rect x="1" y="2.5" width="12" height="10" rx="1.5" stroke="var(--bk-muted)" strokeWidth="1.2"/>
+                        <path d="M1 5.5h12" stroke="var(--bk-muted)" strokeWidth="1.2"/>
+                        <path d="M4.5 1v2M9.5 1v2" stroke="var(--bk-muted)" strokeWidth="1.2" strokeLinecap="round"/>
+                      </svg>
+                      <span style={{ fontSize: bk.body, fontWeight: 600, color: 'var(--bk-head)', whiteSpace: 'nowrap' as const }}>
+                        {effectiveDay.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                      </span>
+                      <span aria-hidden style={{ fontSize: 8, color: 'var(--bk-muted)', transform: datePickerOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.18s' }}>▼</span>
+                    </button>
+                    <button type="button" aria-label="Next day" onClick={() => navigateDayOffset(1)} style={{ width: 30, height: bk.controlH, border: 'none', borderLeft: '1px solid var(--bk-border)', background: 'transparent', color: 'var(--bk-body)', cursor: 'pointer', fontSize: 15, display: 'grid', placeItems: 'center' }}>›</button>
                   </div>
-                  <button type="button" onClick={() => navigateDayOffset(1)} style={{ width: 30, height: bk.controlH, border: 'none', borderLeft: '1px solid var(--bk-border)', background: 'transparent', color: 'var(--bk-body)', cursor: 'pointer', fontSize: 15, display: 'grid', placeItems: 'center' }}>›</button>
+                  {datePickerOpen && (
+                    <DatePickerPopover
+                      // Remount per day so the popover always opens on the
+                      // month being viewed, not the one left from last time.
+                      key={effectiveDayIso}
+                      value={effectiveDay}
+                      today={today}
+                      onPick={(date) => {
+                        goToDay(date)
+                        setDatePickerOpen(false)
+                      }}
+                      onClose={() => setDatePickerOpen(false)}
+                    />
+                  )}
                 </div>
 
                 {/* Today pill */}
