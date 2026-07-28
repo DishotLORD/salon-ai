@@ -121,6 +121,7 @@ const COMPOSER_INPUT_BACKGROUND = 'var(--widget-composer-input-background)'
 const COMPOSER_INPUT_BORDER = 'var(--widget-composer-input-border)'
 const LAUNCHER_BACKGROUND = 'var(--widget-launcher-background)'
 const LAUNCHER_COLOR = 'var(--widget-launcher-color)'
+const LAUNCHER_SHADOW = 'var(--widget-launcher-shadow)'
 const SOFT_SHADOW = 'var(--widget-soft-shadow)'
 const CONTACT_SHADOW = 'var(--widget-contact-shadow)'
 
@@ -214,6 +215,9 @@ function clearSession(businessId: string) {
 // the next site entry shows it again.
 
 const NUDGE_DELAY_MS = 10000
+
+/** Tags every postMessage to widget.js so a host page can tell ours apart. */
+const WIDGET_MESSAGE_SOURCE = 'oceancore-widget'
 
 function buildNudgeText(businessName: string | null, conciergeName: string): string {
   if (conciergeName && conciergeName !== DEFAULT_CONCIERGE_NAME) {
@@ -467,12 +471,18 @@ function ChatBubbleIcon() {
 function WidgetPageInner() {
   const searchParams = useSearchParams()
   const businessId = searchParams.get('business_id')
+  /**
+   * Embedded in a host site by widget.js: the launcher, the nudge and the
+   * preview chrome all live on the host page, so this render is nothing but
+   * the panel filling the frame.
+   */
+  const isEmbed = searchParams.get('embed') === '1'
   const [businessName, setBusinessName] = useState<string | null>(null)
   const [conciergeName, setConciergeName] = useState<string>(DEFAULT_CONCIERGE_NAME)
   const [widgetTheme, setWidgetTheme] = useState<WidgetTheme>(DEFAULT_WIDGET_THEME)
   const [launcherColor, setLauncherColor] = useState<string | null>(null)
 
-  const [isOpen, setIsOpen] = useState(false)
+  const [isOpen, setIsOpen] = useState(isEmbed)
   const [showNudge, setShowNudge] = useState(false)
   /** Once opened or dismissed this visit, do not re-arm until the next page load. */
   const nudgeSpentRef = useRef(false)
@@ -715,12 +725,50 @@ function WidgetPageInner() {
   }, [businessId])
 
   // Reveal the proactive nudge a beat after load, only while the chat is closed
-  // and this visit has not already opened or dismissed it.
+  // and this visit has not already opened or dismissed it. Embedded, the host
+  // page runs its own nudge next to its own launcher.
   useEffect(() => {
-    if (!businessId || isOpen || nudgeSpentRef.current) return
+    if (isEmbed || !businessId || isOpen || nudgeSpentRef.current) return
     const timer = window.setTimeout(() => setShowNudge(true), NUDGE_DELAY_MS)
     return () => window.clearTimeout(timer)
-  }, [businessId, isOpen])
+  }, [isEmbed, businessId, isOpen])
+
+  /**
+   * Talk to widget.js. The host origin is unknown (any restaurant's domain), so
+   * messages go out with '*' — they carry no guest data, only "I am up" and
+   * "the guest closed me", and the host verifies they came from this frame.
+   */
+  const postToHost = useCallback(
+    (type: 'ready' | 'close') => {
+      if (!isEmbed || typeof window === 'undefined' || window.parent === window) return
+      window.parent.postMessage({ source: WIDGET_MESSAGE_SOURCE, type }, '*')
+    },
+    [isEmbed],
+  )
+
+  useEffect(() => {
+    postToHost('ready')
+  }, [postToHost])
+
+  const closeChat = useCallback(() => {
+    if (isEmbed) {
+      // The frame itself is what gets hidden — stay open behind it so the
+      // thread is still there when the guest comes back.
+      postToHost('close')
+      return
+    }
+    setIsOpen(false)
+  }, [isEmbed, postToHost])
+
+  // Escape closes the chat, the way every other overlay on the web does.
+  useEffect(() => {
+    if (!isOpen) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeChat()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [isOpen, closeChat])
 
   const openChat = useCallback(() => {
     nudgeSpentRef.current = true
@@ -969,7 +1017,17 @@ function WidgetPageInner() {
     }
   }
 
-  const panelStyle: React.CSSProperties = isMobile
+  const panelStyle: React.CSSProperties = isEmbed
+    ? {
+        // The frame is the panel: widget.js owns its size, corners and shadow.
+        position: 'absolute',
+        inset: 0,
+        background: CHAT_CANVAS,
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+      }
+    : isMobile
     ? {
         position: 'fixed',
         inset: 0,
@@ -994,28 +1052,38 @@ function WidgetPageInner() {
 
   return (
     <div
-      className="oc-dark-page"
-      style={{
-        minHeight: '100vh',
-        background: 'var(--ocean-canvas)',
-        backgroundColor: 'var(--ocean-deep)',
-        color: 'var(--ocean-text)',
-      }}
+      className={isEmbed ? undefined : 'oc-dark-page'}
+      style={
+        isEmbed
+          ? { position: 'absolute', inset: 0, background: 'transparent' }
+          : {
+              minHeight: '100vh',
+              background: 'var(--ocean-canvas)',
+              backgroundColor: 'var(--ocean-deep)',
+              color: 'var(--ocean-text)',
+            }
+      }
     >
-      <div style={{ padding: 32, color: 'var(--ocean-text-muted)' }}>
-        <h1 style={{ margin: 0, fontSize: 30, color: 'var(--ocean-text)' }}>OceanCore · Widget preview</h1>
-        <p style={{ marginTop: 10, maxWidth: 700 }}>
-          Standalone chat widget. Use the bubble in the bottom-right to open your AI Concierge.
-        </p>
-      </div>
+      {!isEmbed && (
+        <div style={{ padding: 32, color: 'var(--ocean-text-muted)' }}>
+          <h1 style={{ margin: 0, fontSize: 30, color: 'var(--ocean-text)' }}>OceanCore · Widget preview</h1>
+          <p style={{ marginTop: 10, maxWidth: 700 }}>
+            Standalone chat widget. Use the bubble in the bottom-right to open your AI Concierge.
+          </p>
+        </div>
+      )}
 
       <div
         style={{
           ...widgetPaletteVars,
-          position: 'fixed',
-          right: isMobile ? 16 : 24,
-          bottom: isMobile ? 16 : 24,
-          zIndex: 30,
+          ...(isEmbed
+            ? { position: 'absolute', inset: 0 }
+            : {
+                position: 'fixed',
+                right: isMobile ? 16 : 24,
+                bottom: isMobile ? 16 : 24,
+                zIndex: 30,
+              }),
         }}
       >
         <AnimatePresence>
@@ -1186,7 +1254,7 @@ function WidgetPageInner() {
                 )}
                 <motion.button
                   type="button"
-                  onClick={() => setIsOpen(false)}
+                  onClick={closeChat}
                   aria-label="Close chat"
                   title="Close chat"
                   whileHover={reduceMotion ? undefined : { y: -1 }}
@@ -1789,7 +1857,7 @@ function WidgetPageInner() {
 
         {/* ── Proactive nudge ── */}
         <AnimatePresence>
-          {!isOpen && showNudge ? (
+          {!isEmbed && !isOpen && showNudge ? (
             <motion.div
               key="widget-nudge"
               initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 12, scale: 0.94 }}
@@ -1871,8 +1939,8 @@ function WidgetPageInner() {
           ) : null}
         </AnimatePresence>
 
-        {/* ── Launcher ── */}
-        {!(isMobile && isOpen) && (
+        {/* ── Launcher (the host page has its own when embedded) ── */}
+        {!isEmbed && !(isMobile && isOpen) && (
           <motion.button
             type="button"
             onClick={() => (isOpen ? setIsOpen(false) : openChat())}
@@ -1889,7 +1957,7 @@ function WidgetPageInner() {
               cursor: 'pointer',
               background: LAUNCHER_BACKGROUND,
               color: LAUNCHER_COLOR,
-              boxShadow: `0 0 40px rgba(${WIDGET_ACCENT_RGB}, 0.34)`,
+              boxShadow: LAUNCHER_SHADOW,
               display: 'grid',
               placeItems: 'center',
             }}

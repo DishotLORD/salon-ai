@@ -73,16 +73,42 @@ function luminance(hex: string): number {
   return 0.2126 * lin(rgb.r) + 0.7152 * lin(rgb.g) + 0.0722 * lin(rgb.b)
 }
 
+/**
+ * Above this the colour is too pale to draw the panel's hairlines with: at
+ * #ffffff every chip border becomes `rgba(255,255,255,…)` — invisible.
+ */
+const CHROME_TINT_MAX_LUMINANCE = 0.62
+
+/** Above this the FAB needs its own outline to be findable on a white page. */
+const LAUNCHER_RING_MIN_LUMINANCE = 0.6
+
+/** True when a brand colour is so light the launcher needs a drawn edge. */
+export function launcherNeedsRing(hex: string): boolean {
+  const color = parseWidgetLauncherColor(hex)
+  return color ? luminance(color) > LAUNCHER_RING_MIN_LUMINANCE : false
+}
+
 /** CSS vars that tint the FAB (and its glow) to a restaurant brand color. */
 export function launcherColorOverrides(hex: string): Record<string, string> {
   const color = parseWidgetLauncherColor(hex) ?? DEFAULT_WIDGET_LAUNCHER_COLOR
   const rgb = hexToRgb(color)!
   const light = mixHex(color, 'white', 0.28)
-  const iconOnLight = luminance(color) > 0.55
+  const lum = luminance(color)
+  const iconOnLight = lum > 0.55
+  const ring = lum > LAUNCHER_RING_MIN_LUMINANCE
   return {
     '--widget-launcher-background': `linear-gradient(140deg, ${light}, ${color})`,
     '--widget-launcher-color': iconOnLight ? '#0f172a' : '#ffffff',
-    '--widget-accent-rgb': `${rgb.r}, ${rgb.g}, ${rgb.b}`,
+    // A pale launcher would vanish on a white host page, and its own coloured
+    // glow cannot save it — give it a hairline and a neutral shadow instead.
+    '--widget-launcher-shadow': ring
+      ? '0 0 0 1px rgba(15, 23, 42, 0.14), 0 10px 26px rgba(15, 23, 42, 0.2)'
+      : `0 8px 24px rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.45), 0 4px 12px rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.3)`,
+    // The brand colour only takes over the panel's chrome when it can actually
+    // be seen against it; otherwise the theme keeps its own accent.
+    ...(lum > CHROME_TINT_MAX_LUMINANCE
+      ? null
+      : { '--widget-accent-rgb': `${rgb.r}, ${rgb.g}, ${rgb.b}` }),
   }
 }
 
@@ -132,6 +158,7 @@ export const WIDGET_THEME_PALETTES: Record<WidgetTheme, Record<string, string>> 
     '--widget-composer-input-border': 'rgba(21, 69, 101, 0.16)',
     '--widget-launcher-background': 'linear-gradient(140deg, #8fd4ff, #349cf4)',
     '--widget-launcher-color': '#12304f',
+    '--widget-launcher-shadow': '0 8px 24px rgba(52, 156, 244, 0.45), 0 4px 12px rgba(52, 156, 244, 0.3)',
     '--widget-soft-shadow': '0 3px 12px rgba(18, 61, 91, 0.06)',
     '--widget-contact-shadow': '0 12px 32px rgba(18, 61, 91, 0.1), inset 0 1px 0 rgba(255,255,255,0.8)',
   },
@@ -171,6 +198,7 @@ export const WIDGET_THEME_PALETTES: Record<WidgetTheme, Record<string, string>> 
     '--widget-composer-input-border': 'rgba(125, 211, 252, 0.14)',
     '--widget-launcher-background': 'linear-gradient(140deg, #38bdf8, #b48b54)',
     '--widget-launcher-color': '#04121f',
+    '--widget-launcher-shadow': '0 8px 24px rgba(56, 189, 248, 0.4), 0 4px 12px rgba(56, 189, 248, 0.28)',
     '--widget-soft-shadow': 'none',
     '--widget-contact-shadow': '0 12px 32px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255,255,255,0.035)',
   },

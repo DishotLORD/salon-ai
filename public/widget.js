@@ -17,6 +17,13 @@
     return null
   }
 
+  // Pasting the snippet into both the theme header and a page builder is a
+  // classic — mount once, not twice.
+  if (window.__oceancoreWidgetMounted) {
+    return
+  }
+  window.__oceancoreWidgetMounted = true
+
   var script = getWidgetScript()
   if (!script || !script.src) {
     return
@@ -38,14 +45,18 @@
   }
 
   var baseOrigin = scriptUrl.origin
-  var widgetSrc = baseOrigin + '/widget?business_id=' + encodeURIComponent(businessId)
+  var widgetSrc =
+    baseOrigin + '/widget?embed=1&business_id=' + encodeURIComponent(businessId)
 
   var BTN = 56
   var GAP = 12
   var INSET = 24
   var IFRAME_W = 380
-  var IFRAME_H = 500
+  var IFRAME_H = 560
   var NUDGE_DELAY = 10000
+  /** Below this the chat takes the whole screen, the way a phone keyboard expects. */
+  var COMPACT_MAX = 520
+  var MESSAGE_SOURCE = 'oceancore-widget'
 
   var isOpen = false
   var iframeLoaded = false
@@ -53,26 +64,27 @@
   var nudgeVisible = false
   var nudgeTimer = null
   var nudgeSpent = false
+  var scrollLocked = false
+  var prevRootOverflow = ''
+  var frameReady = false
+  var revealTimer = null
 
-  var iframe = document.createElement('iframe')
-  iframe.setAttribute('title', 'OceanCore concierge chat')
-  iframe.setAttribute('frameborder', '0')
-  iframe.style.boxSizing = 'border-box'
-  iframe.style.position = 'fixed'
-  iframe.style.width = IFRAME_W + 'px'
-  iframe.style.height = IFRAME_H + 'px'
-  iframe.style.maxWidth = 'calc(100vw - ' + INSET * 2 + 'px)'
-  iframe.style.maxHeight = 'calc(100vh - ' + (INSET + BTN + GAP + 40) + 'px)'
-  iframe.style.right = INSET + 'px'
-  iframe.style.bottom = INSET + BTN + GAP + 'px'
-  iframe.style.zIndex = '2147483646'
-  iframe.style.border = 'none'
-  iframe.style.borderRadius = '16px'
-  iframe.style.boxShadow = '0 12px 40px rgba(15, 23, 42, 0.25), 0 0 0 1px rgba(0,0,0,0.06)'
-  iframe.style.background = '#fff'
-  iframe.style.display = 'none'
-  iframe.style.opacity = '0'
-  iframe.style.transition = 'opacity 0.2s ease-out'
+  /**
+   * Every declaration goes in as !important. Restaurant sites are full of blanket
+   * rules like `button { background: #900 !important }`, and without the priority
+   * the launcher inherits them — wrong colour, wrong font, sometimes wrong shape.
+   */
+  function css(el, styles) {
+    for (var prop in styles) {
+      if (!Object.prototype.hasOwnProperty.call(styles, prop)) continue
+      var value = styles[prop]
+      if (value === null) {
+        el.style.removeProperty(prop)
+      } else {
+        el.style.setProperty(prop, String(value), 'important')
+      }
+    }
+  }
 
   var prefersReducedMotion = false
   try {
@@ -82,32 +94,69 @@
     prefersReducedMotion = false
   }
 
+  // ── Frame ───────────────────────────────────────────────────────────────────
+
+  var iframe = document.createElement('iframe')
+  iframe.setAttribute('title', 'OceanCore concierge chat')
+  iframe.setAttribute('frameborder', '0')
+  css(iframe, {
+    'box-sizing': 'border-box',
+    position: 'fixed',
+    'z-index': '2147483646',
+    border: 'none',
+    background: '#fff',
+    display: 'none',
+    opacity: '0',
+    transition: 'opacity 0.2s ease-out',
+  })
+
+  // ── Launcher ────────────────────────────────────────────────────────────────
+
   var button = document.createElement('button')
   button.type = 'button'
   button.setAttribute('aria-label', 'Open chat')
   button.setAttribute('aria-expanded', 'false')
-  button.style.boxSizing = 'border-box'
-  button.style.position = 'fixed'
-  button.style.width = BTN + 'px'
-  button.style.height = BTN + 'px'
-  button.style.right = INSET + 'px'
-  button.style.bottom = INSET + 'px'
-  button.style.zIndex = '2147483647'
-  button.style.border = 'none'
-  button.style.borderRadius = '50%'
-  button.style.cursor = 'pointer'
-  button.style.padding = '0'
-  button.style.display = 'flex'
-  button.style.alignItems = 'center'
-  button.style.justifyContent = 'center'
-  button.style.background = 'linear-gradient(140deg, #38bdf8 0%, #0ea5e9 100%)'
-  button.style.boxShadow = '0 8px 24px rgba(14, 165, 233, 0.45), 0 4px 12px rgba(2, 132, 199, 0.35)'
-  button.style.color = '#ffffff'
-  button.style.opacity = prefersReducedMotion ? '1' : '0'
-  button.style.transform = prefersReducedMotion ? 'none' : 'translateY(24px) scale(0.86)'
-  button.style.transition = prefersReducedMotion
-    ? 'box-shadow 0.15s ease'
-    : 'opacity 0.45s cubic-bezier(0.22, 1, 0.36, 1), transform 0.45s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.15s ease'
+  css(button, {
+    'box-sizing': 'border-box',
+    position: 'fixed',
+    width: BTN + 'px',
+    height: BTN + 'px',
+    'min-width': BTN + 'px',
+    'min-height': BTN + 'px',
+    'max-width': BTN + 'px',
+    'max-height': BTN + 'px',
+    right: INSET + 'px',
+    bottom: INSET + 'px',
+    float: 'none',
+    'z-index': '2147483647',
+    margin: '0',
+    padding: '0',
+    border: 'none',
+    outline: 'none',
+    'border-radius': '50%',
+    cursor: 'pointer',
+    display: 'flex',
+    'align-items': 'center',
+    'justify-content': 'center',
+    // Themes love blanket `button` rules — size, case and animation included.
+    appearance: 'none',
+    '-webkit-appearance': 'none',
+    font: '400 16px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+    'text-transform': 'none',
+    'letter-spacing': 'normal',
+    'text-decoration': 'none',
+    animation: 'none',
+    filter: 'none',
+    visibility: 'visible',
+    background: 'linear-gradient(140deg, #38bdf8 0%, #0ea5e9 100%)',
+    'box-shadow': '0 8px 24px rgba(14, 165, 233, 0.45), 0 4px 12px rgba(2, 132, 199, 0.35)',
+    color: '#ffffff',
+    opacity: prefersReducedMotion ? '1' : '0',
+    transform: prefersReducedMotion ? 'none' : 'translateY(24px) scale(0.86)',
+    transition: prefersReducedMotion
+      ? 'box-shadow 0.15s ease'
+      : 'opacity 0.45s cubic-bezier(0.22, 1, 0.36, 1), transform 0.45s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.15s ease',
+  })
 
   var CHAT_PATH =
     'M21 11.5c0 4.14-4.03 7.5-9 7.5-1.06 0-2.08-.15-3.02-.43L4 20l1.18-3.55C4.05 15.13 3 13.42 3 11.5 3 7.36 7.03 4 12 4s9 3.36 9 7.5Z'
@@ -120,6 +169,7 @@
   svg.setAttribute('viewBox', '0 0 24 24')
   svg.setAttribute('fill', 'none')
   svg.setAttribute('aria-hidden', 'true')
+  css(svg, { display: 'block', 'flex-shrink': '0' })
   var path = document.createElementNS(svgNs, 'path')
   path.setAttribute('d', CHAT_PATH)
   path.setAttribute('fill', '#04121f')
@@ -173,73 +223,91 @@
     if (!hex || !hexToRgb(hex)) return
     var light = mixHex(hex, true, 0.28)
     var rgb = hexToRgb(hex)
-    button.style.background = 'linear-gradient(140deg, ' + light + ' 0%, ' + hex + ' 100%)'
-    button.style.color = luminance(hex) > 0.55 ? '#0f172a' : '#ffffff'
-    button.style.boxShadow =
-      '0 8px 24px rgba(' + rgb.r + ', ' + rgb.g + ', ' + rgb.b + ', 0.45), 0 4px 12px rgba(' + rgb.r + ', ' + rgb.g + ', ' + rgb.b + ', 0.3)'
+    var lum = luminance(hex)
+    css(button, {
+      background: 'linear-gradient(140deg, ' + light + ' 0%, ' + hex + ' 100%)',
+      color: lum > 0.55 ? '#0f172a' : '#ffffff',
+      // A pale brand colour glowing in its own hue is invisible on a white
+      // page — such a launcher gets a hairline and a neutral shadow instead.
+      'box-shadow':
+        lum > 0.6
+          ? '0 0 0 1px rgba(15, 23, 42, 0.14), 0 10px 26px rgba(15, 23, 42, 0.2)'
+          : '0 8px 24px rgba(' + rgb.r + ', ' + rgb.g + ', ' + rgb.b + ', 0.45), 0 4px 12px rgba(' + rgb.r + ', ' + rgb.g + ', ' + rgb.b + ', 0.3)',
+    })
     dots.forEach(function (dot) {
       dot.setAttribute('fill', hex)
     })
   }
 
+  // ── Proactive nudge ─────────────────────────────────────────────────────────
+
   var nudge = document.createElement('div')
-  nudge.style.boxSizing = 'border-box'
-  nudge.style.position = 'fixed'
-  nudge.style.right = INSET + 'px'
-  nudge.style.bottom = INSET + BTN + GAP + 'px'
-  nudge.style.zIndex = '2147483646'
-  nudge.style.maxWidth = '244px'
-  nudge.style.padding = '11px 32px 11px 14px'
-  nudge.style.borderRadius = '16px'
-  nudge.style.background = '#ffffff'
-  nudge.style.color = '#0f172a'
-  nudge.style.border = '1px solid rgba(15,23,42,0.08)'
-  nudge.style.boxShadow = '0 12px 30px rgba(15,23,42,0.18)'
-  nudge.style.font = '500 13.5px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif'
-  nudge.style.cursor = 'pointer'
-  nudge.style.display = 'none'
-  nudge.style.opacity = '0'
-  nudge.style.transform = prefersReducedMotion ? 'none' : 'translateY(8px)'
-  nudge.style.transition = prefersReducedMotion
-    ? 'opacity 0.2s ease-out'
-    : 'opacity 0.25s ease-out, transform 0.25s ease-out'
+  css(nudge, {
+    'box-sizing': 'border-box',
+    position: 'fixed',
+    right: INSET + 'px',
+    bottom: INSET + BTN + GAP + 'px',
+    'z-index': '2147483646',
+    'max-width': '244px',
+    margin: '0',
+    padding: '11px 32px 11px 14px',
+    'border-radius': '16px',
+    background: '#ffffff',
+    color: '#0f172a',
+    border: '1px solid rgba(15,23,42,0.08)',
+    'box-shadow': '0 12px 30px rgba(15,23,42,0.18)',
+    font: '500 13.5px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+    'text-align': 'left',
+    cursor: 'pointer',
+    display: 'none',
+    opacity: '0',
+    transform: prefersReducedMotion ? 'none' : 'translateY(8px)',
+    transition: prefersReducedMotion
+      ? 'opacity 0.2s ease-out'
+      : 'opacity 0.25s ease-out, transform 0.25s ease-out',
+  })
 
   var nudgeText = document.createElement('span')
   nudgeText.textContent = 'Hi! Can I help you book a table or answer a question?'
+  css(nudgeText, { font: 'inherit', color: 'inherit' })
   nudge.appendChild(nudgeText)
 
   var tail = document.createElement('span')
-  tail.style.position = 'absolute'
-  tail.style.right = '22px'
-  tail.style.bottom = '-5px'
-  tail.style.width = '12px'
-  tail.style.height = '12px'
-  tail.style.background = '#ffffff'
-  tail.style.borderRight = '1px solid rgba(15,23,42,0.08)'
-  tail.style.borderBottom = '1px solid rgba(15,23,42,0.08)'
-  tail.style.transform = 'rotate(45deg)'
+  css(tail, {
+    position: 'absolute',
+    right: '22px',
+    bottom: '-5px',
+    width: '12px',
+    height: '12px',
+    background: '#ffffff',
+    'border-right': '1px solid rgba(15,23,42,0.08)',
+    'border-bottom': '1px solid rgba(15,23,42,0.08)',
+    transform: 'rotate(45deg)',
+  })
   nudge.appendChild(tail)
 
   var nudgeClose = document.createElement('button')
   nudgeClose.type = 'button'
   nudgeClose.setAttribute('aria-label', 'Dismiss')
-  nudgeClose.textContent = '\u00d7'
-  nudgeClose.style.position = 'absolute'
-  nudgeClose.style.top = '6px'
-  nudgeClose.style.right = '6px'
-  nudgeClose.style.width = '20px'
-  nudgeClose.style.height = '20px'
-  nudgeClose.style.display = 'flex'
-  nudgeClose.style.alignItems = 'center'
-  nudgeClose.style.justifyContent = 'center'
-  nudgeClose.style.padding = '0'
-  nudgeClose.style.border = 'none'
-  nudgeClose.style.borderRadius = '50%'
-  nudgeClose.style.background = 'transparent'
-  nudgeClose.style.color = '#64748b'
-  nudgeClose.style.fontSize = '16px'
-  nudgeClose.style.lineHeight = '1'
-  nudgeClose.style.cursor = 'pointer'
+  nudgeClose.textContent = '×'
+  css(nudgeClose, {
+    position: 'absolute',
+    top: '6px',
+    right: '6px',
+    width: '20px',
+    height: '20px',
+    display: 'flex',
+    'align-items': 'center',
+    'justify-content': 'center',
+    margin: '0',
+    padding: '0',
+    border: 'none',
+    'border-radius': '50%',
+    background: 'transparent',
+    color: '#64748b',
+    font: '400 16px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+    cursor: 'pointer',
+  })
   nudge.appendChild(nudgeClose)
 
   function showNudge() {
@@ -247,10 +315,9 @@
       return
     }
     nudgeVisible = true
-    nudge.style.display = 'block'
+    css(nudge, { display: 'block' })
     window.requestAnimationFrame(function () {
-      nudge.style.opacity = '1'
-      nudge.style.transform = 'none'
+      css(nudge, { opacity: '1', transform: 'none' })
     })
   }
 
@@ -261,15 +328,17 @@
     }
     nudgeSpent = true
     if (!nudgeVisible) {
-      nudge.style.display = 'none'
+      css(nudge, { display: 'none' })
       return
     }
     nudgeVisible = false
-    nudge.style.opacity = '0'
-    nudge.style.transform = prefersReducedMotion ? 'none' : 'translateY(8px)'
+    css(nudge, {
+      opacity: '0',
+      transform: prefersReducedMotion ? 'none' : 'translateY(8px)',
+    })
     window.setTimeout(function () {
       if (!nudgeVisible) {
-        nudge.style.display = 'none'
+        css(nudge, { display: 'none' })
       }
     }, 250)
   }
@@ -281,6 +350,73 @@
     e.stopPropagation()
     hideNudge()
   })
+
+  // ── Open / close ────────────────────────────────────────────────────────────
+
+  function isCompact() {
+    return window.innerWidth <= COMPACT_MAX
+  }
+
+  /**
+   * Docked card on a desktop page, full screen on a phone — where a 380px card
+   * pinned above a floating button leaves no room for the keyboard.
+   */
+  function applyFrameLayout() {
+    var fullscreen = isOpen && isCompact()
+    if (fullscreen) {
+      css(iframe, {
+        top: '0px',
+        left: '0px',
+        right: '0px',
+        bottom: '0px',
+        width: '100%',
+        height: '100%',
+        'max-width': 'none',
+        'max-height': 'none',
+        'border-radius': '0',
+        'box-shadow': 'none',
+      })
+      css(button, { display: 'none' })
+    } else {
+      css(iframe, {
+        top: 'auto',
+        left: 'auto',
+        right: INSET + 'px',
+        bottom: INSET + BTN + GAP + 'px',
+        width: IFRAME_W + 'px',
+        height: IFRAME_H + 'px',
+        'max-width': 'calc(100vw - ' + INSET * 2 + 'px)',
+        'max-height': 'calc(100vh - ' + (INSET + BTN + GAP + 40) + 'px)',
+        'border-radius': '16px',
+        'box-shadow': '0 12px 40px rgba(15, 23, 42, 0.25), 0 0 0 1px rgba(0,0,0,0.06)',
+      })
+      css(button, { display: 'flex' })
+    }
+    lockScroll(fullscreen)
+  }
+
+  /** Keep the host page from scrolling behind a full-screen chat. */
+  function lockScroll(lock) {
+    var root = document.documentElement
+    if (!root) return
+    if (lock && !scrollLocked) {
+      prevRootOverflow = root.style.getPropertyValue('overflow')
+      root.style.setProperty('overflow', 'hidden', 'important')
+      scrollLocked = true
+    } else if (!lock && scrollLocked) {
+      root.style.removeProperty('overflow')
+      if (prevRootOverflow) root.style.setProperty('overflow', prevRootOverflow)
+      scrollLocked = false
+    }
+  }
+
+  function revealFrame() {
+    if (revealTimer) {
+      window.clearTimeout(revealTimer)
+      revealTimer = null
+    }
+    if (isOpen) css(iframe, { opacity: '1' })
+  }
 
   function setOpen(open) {
     if (hideTimer) {
@@ -297,7 +433,7 @@
     path.setAttribute('stroke-width', open ? '2.25' : '0')
     path.setAttribute('stroke-linecap', 'round')
     dots.forEach(function (dot) {
-      dot.style.display = open ? 'none' : 'block'
+      dot.style.setProperty('display', open ? 'none' : 'block', 'important')
     })
     if (open) {
       hideNudge()
@@ -305,16 +441,26 @@
         iframe.src = widgetSrc
         iframeLoaded = true
       }
-      iframe.style.display = 'block'
-      window.requestAnimationFrame(function () {
-        iframe.style.opacity = '1'
-      })
+      css(iframe, { display: 'block' })
+      applyFrameLayout()
+      // Hold the fade until the chat says it is up, so the first open never
+      // flashes an empty white card. Reveal anyway if that word never comes.
+      if (frameReady) {
+        window.requestAnimationFrame(revealFrame)
+      } else if (!revealTimer) {
+        revealTimer = window.setTimeout(revealFrame, 1500)
+      }
+      // Typing should land in the chat, not behind it.
+      window.setTimeout(function () {
+        if (isOpen && iframe.contentWindow) iframe.focus()
+      }, 220)
     } else {
-      iframe.style.opacity = '0'
+      applyFrameLayout()
+      css(iframe, { opacity: '0' })
       hideTimer = window.setTimeout(function () {
         hideTimer = null
         if (!isOpen) {
-          iframe.style.display = 'none'
+          css(iframe, { display: 'none' })
         }
       }, 200)
     }
@@ -325,19 +471,44 @@
   })
 
   button.addEventListener('mouseenter', function () {
-    if (!isOpen) button.style.transform = 'scale(1.05)'
+    if (!isOpen) css(button, { transform: 'scale(1.05)' })
   })
   button.addEventListener('mouseleave', function () {
-    button.style.transform = 'scale(1)'
+    css(button, { transform: 'scale(1)' })
   })
 
+  // The panel's own × (and Escape inside the frame) reach us as a message.
+  window.addEventListener('message', function (event) {
+    if (event.origin !== baseOrigin) return
+    if (!iframe.contentWindow || event.source !== iframe.contentWindow) return
+    var data = event.data
+    if (!data || data.source !== MESSAGE_SOURCE) return
+    if (data.type === 'ready') {
+      frameReady = true
+      revealFrame()
+    } else if (data.type === 'close') {
+      setOpen(false)
+    }
+  })
+
+  // Escape while the host page still holds focus.
+  window.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape' && isOpen) setOpen(false)
+  })
+
+  window.addEventListener('resize', function () {
+    if (isOpen) applyFrameLayout()
+  })
+
+  // ── Mount ───────────────────────────────────────────────────────────────────
+
   function mount() {
+    applyFrameLayout()
     document.body.appendChild(iframe)
     document.body.appendChild(button)
     document.body.appendChild(nudge)
     window.requestAnimationFrame(function () {
-      button.style.opacity = '1'
-      button.style.transform = 'none'
+      css(button, { opacity: '1', transform: 'none' })
     })
     armNudge()
   }
@@ -358,7 +529,7 @@
             return
           }
           if (meta.agentName) {
-            nudgeText.textContent = "Hi! I'm " + meta.agentName + ' \u2014 can I help you book a table?'
+            nudgeText.textContent = "Hi! I'm " + meta.agentName + ' — can I help you book a table?'
           } else if (meta.name) {
             nudgeText.textContent = 'Hi! Can I help you book a table at ' + meta.name + '?'
           }
