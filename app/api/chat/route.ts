@@ -1077,6 +1077,14 @@ async function persistGuest(params: {
   rawEmail?: string | null;
   /** When true, the name is the canonical reservation name and overrides any earlier guess. */
   authoritativeName?: boolean;
+  /**
+   * When true the guest stated this contact during the booking itself, so it
+   * replaces whatever is on file. Without it contacts were write-once: a guest
+   * who mistyped a digit could never correct it, and the venue kept calling the
+   * wrong number forever.
+   */
+  authoritativePhone?: boolean;
+  authoritativeEmail?: boolean;
 }): Promise<string> {
   const { business_id, customer_id, conversation_id } = params;
 
@@ -1150,12 +1158,14 @@ async function persistGuest(params: {
   if (name && (params.authoritativeName || existingNameIsPlaceholder)) {
     customerUpdate.name = name;
   }
-  if (phone && !existing?.phone?.trim()) {
+  if (phone && (params.authoritativePhone || !existing?.phone?.trim())) {
     customerUpdate.phone = phone;
     if (params.rawPhone?.trim())
       customerUpdate.phone_raw = params.rawPhone.trim();
   }
-  if (email && !existing?.email?.trim()) customerUpdate.email = email;
+  if (email && (params.authoritativeEmail || !existing?.email?.trim())) {
+    customerUpdate.email = email;
+  }
 
   if (Object.keys(customerUpdate).length > 0) {
     await supabaseAdmin
@@ -2107,6 +2117,10 @@ async function runCreateReservation(
         ? args.email
         : (msgContact.email ?? null),
     authoritativeName: true,
+    // Passed in the tool call means the guest just stated it — it wins over
+    // whatever this customer record happens to hold.
+    authoritativePhone: typeof args.phone === "string" && !!args.phone.trim(),
+    authoritativeEmail: typeof args.email === "string" && !!args.email.trim(),
   });
 
   const { data: inserted, error } = await supabaseAdmin
@@ -2843,6 +2857,10 @@ async function runBookActivity(
         ? args.email
         : (msgContact.email ?? null),
     authoritativeName: true,
+    // Passed in the tool call means the guest just stated it — it wins over
+    // whatever this customer record happens to hold.
+    authoritativePhone: typeof args.phone === "string" && !!args.phone.trim(),
+    authoritativeEmail: typeof args.email === "string" && !!args.email.trim(),
   });
 
   const partySize =
@@ -3374,6 +3392,10 @@ async function runSaveGuestDetails(
     rawName: typeof args.name === "string" ? args.name : null,
     rawPhone: typeof args.phone === "string" ? args.phone : null,
     rawEmail: typeof args.email === "string" ? args.email : null,
+    // This tool fires when the guest states a contact, including a correction
+    // to one already on file — that is the whole point of the call.
+    authoritativePhone: typeof args.phone === "string" && !!args.phone.trim(),
+    authoritativeEmail: typeof args.email === "string" && !!args.email.trim(),
   });
 
   await persistGuestPreferences({
@@ -4999,6 +5021,19 @@ export async function POST(request: Request) {
           escalated: escalatedCategories,
           usualZoneName: returningGuestUsualZone,
         });
+
+        // Refusals were invisible in the logs: only the call and the successes
+        // were printed, so "the bot asked me to repeat the seating area" left
+        // nothing to read afterwards. Log the reason the tool gave the model.
+        const outcomeResult = outcome.result as { ok?: unknown; error?: unknown; message?: unknown } | null;
+        if (outcomeResult && typeof outcomeResult === "object" && outcomeResult.ok === false) {
+          console.log(
+            "[chat] tool refused:",
+            call.function.name,
+            String(outcomeResult.error ?? "unknown"),
+            String(outcomeResult.message ?? "").slice(0, 200),
+          );
+        }
 
         if (outcome.created) {
           bookingCreated = true;

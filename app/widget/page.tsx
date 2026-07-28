@@ -264,8 +264,21 @@ function nextMessageId(prefix: string): string {
   return `${prefix}-${Date.now()}-${messageSeq}`
 }
 
+/**
+ * Pretty-print North-American numbers, but never rewrite one we cannot parse.
+ * The old mask cut every input to ten digits, so "+1 403 555 0142" reached the
+ * restaurant as "(140) 355-5014" — a wrong number for a real guest.
+ */
 function formatPhone(raw: string): string {
-  const digits = raw.replace(/\D/g, '').slice(0, 10)
+  const international = raw.trimStart().startsWith('+')
+  const digits = raw.replace(/\D/g, '')
+  // E.164 tops out at 15 digits; past that the guest is pasting something else.
+  if (international) return `+${digits.slice(0, 15)}`
+  if (digits.length === 11 && digits.startsWith('1')) {
+    const local = digits.slice(1)
+    return `1 (${local.slice(0, 3)}) ${local.slice(3, 6)}-${local.slice(6)}`
+  }
+  if (digits.length > 10) return digits.slice(0, 15)
   if (digits.length <= 3) return digits
   if (digits.length <= 6) return `(${digits.slice(0, 3)}) ${digits.slice(3)}`
   return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`
