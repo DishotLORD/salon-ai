@@ -86,7 +86,7 @@ const DEFAULT_ADVANCED_FILTERS: AdvancedFilters = {
 function applyAdvancedFilters(list: Reservation[], filters: AdvancedFilters): Reservation[] {
   let out = list
   if (filters.minPartySize != null && filters.minPartySize > 0) {
-    out = out.filter((r) => r.partySize >= filters.minPartySize!)
+    out = out.filter((r) => (r.partySize ?? 0) >= filters.minPartySize!)
   }
   if (filters.source === 'chat') {
     out = out.filter((r) => Boolean(r.conversationId))
@@ -124,11 +124,14 @@ function parseReservation(
 ): Reservation {
   const parts = (row.service_name ?? '').split(' \u00b7 ') // split on " · "
   let guestName = customerName?.trim() || parts[0]?.trim() || 'Guest'
+  const activityId = row.activity_id ?? null
+  // Prefer the DB column; only fall back to explicit "Party of N" / "N guests" /
+  // "N players" segments — never invent a size from digits in "Pool Table 1".
+  const parsedParty = parsePartySizeFromServiceName(row.service_name)
   const partySize =
     row.party_size != null && row.party_size > 0
       ? row.party_size
-      : (parsePartySizeFromServiceName(row.service_name) ??
-          parseInt((parts[1] ?? '').replace(/\D/g, ''), 10)) || 1
+      : parsedParty
   const zoneId = row.zone_id ?? null
   // Prefer the live zones map; fall back to the zone label encoded in
   // service_name ("Name · Party of N · Bar") so the zone still shows when the
@@ -160,7 +163,6 @@ function parseReservation(
   // live resource map, then the name the bot encoded into service_name
   // ("Guest · Pool Table 1"), so the real name shows even before that read
   // lands (or if RLS blocks it) instead of a bare "Activity".
-  const activityId = row.activity_id ?? null
   const activityFromService = activityId ? parts.slice(1).map((p) => p.trim()).find(Boolean) ?? null : null
   const activityName = activityId
     ? activityNameById?.get(activityId) ?? activityFromService ?? 'Activity'
@@ -169,7 +171,9 @@ function parseReservation(
   return {
     id: row.id,
     guestName,
-    partySize,
+    // Dining without a parseable size still defaults to 1 for list math; activity
+    // rows stay null so "Pool Table 1" never becomes "1 guest".
+    partySize: partySize ?? (activityId ? null : 1),
     tableNumber,
     scheduledAt: appointmentInstantFromRaw(row.scheduled_at),
     status: normalizeStatus(row.status),
@@ -393,7 +397,7 @@ function MonthCalendar({
     const rd = r.scheduledAt
     const k = calgaryCalendarDayKey(rd)
     const curr = dayStats.get(k) ?? { count: 0, covers: 0 }
-    dayStats.set(k, { count: curr.count + 1, covers: curr.covers + r.partySize })
+    dayStats.set(k, { count: curr.count + 1, covers: curr.covers + (r.partySize ?? 0) })
   }
   const maxCount = Math.max(1, ...Array.from(dayStats.values()).map((s) => s.count))
 
@@ -826,7 +830,7 @@ function ReservationListView({
                           textAlign: 'center',
                         }}
                       >
-                        {r.partySize}
+                        {r.partySize ?? '—'}
                       </td>
                       <td
                         style={{
@@ -1174,7 +1178,7 @@ function ReservationModal({
       const row = getDayHoursForDate(operatingHours, dateStr)
       const range = timelineRangeFromDayHours(row)
       setGuestName(r.guestName)
-      setPartySize(r.partySize)
+      setPartySize(r.partySize ?? 2)
       setDate(dateStr)
       setTime(
         range
@@ -2796,7 +2800,10 @@ export default function BookingsPage() {
               marginTop: 1,
             }}
           >
-            {r.partySize} {r.partySize === 1 ? 'guest' : 'guests'} ·{' '}
+            {r.partySize != null
+              ? `${r.partySize} ${r.partySize === 1 ? 'guest' : 'guests'}`
+              : '—'}{' '}
+            ·{' '}
             {r.activityName ? (
               <span
                 style={{

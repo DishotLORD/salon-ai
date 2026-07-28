@@ -129,7 +129,7 @@ export function BookingsLightCalendar({
       if (r.status === 'no-show') continue
       map.set(k, {
         count: curr.count + 1,
-        covers: curr.covers + r.partySize,
+        covers: curr.covers + (r.partySize ?? 0),
         cancelledCount: curr.cancelledCount,
         pendingCount: curr.pendingCount + (r.status === 'pending' ? 1 : 0),
         activityCount: curr.activityCount + (r.activityName ? 1 : 0),

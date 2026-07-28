@@ -151,7 +151,9 @@ export function BookingsDayChips({
             >
               {r.guestName}
             </span>
-            <span style={{ color: 'var(--bk-muted)', fontSize: 10 }}>{r.partySize}p</span>
+            <span style={{ color: 'var(--bk-muted)', fontSize: 10 }}>
+              {r.partySize != null ? `${r.partySize}p` : '—'}
+            </span>
             <span
               style={{
                 fontSize: 9,

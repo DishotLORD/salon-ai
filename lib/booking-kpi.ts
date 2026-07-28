@@ -78,7 +78,7 @@ export function computeBookingKpi(
   const cancelledCount = pool.filter((r) => r.status === 'cancelled').length
   const covers = pool
     .filter((r) => r.status !== 'cancelled' && r.status !== 'no-show')
-    .reduce((s, r) => s + r.partySize, 0)
+    .reduce((s, r) => s + (r.partySize ?? 0), 0)
   const pendingCount = pool.filter((r) => r.status === 'pending').length
 
   let subtitle1: string

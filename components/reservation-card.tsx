@@ -14,7 +14,8 @@ export type ResStatus = 'confirmed' | 'seated' | 'pending' | 'cancelled' | 'no-s
 export type Reservation = {
   id: string
   guestName: string
-  partySize: number
+  /** Null for activity bookings without an explicit player/party count. */
+  partySize: number | null
   tableNumber: string
   scheduledAt: Date
   status: ResStatus
@@ -324,7 +325,7 @@ export function ReservationCard({
           {/* Meta: pax + table */}
           <span style={{ display: 'flex', alignItems: 'center', gap: 10, color: t.textMuted, fontSize: 12 }}>
             <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <IconPeople /> {r.partySize}
+              <IconPeople /> {r.partySize != null ? r.partySize : '—'}
             </span>
             {r.tableNumber !== '—' && (
               <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -529,7 +530,9 @@ export function ReservationCard({
             }}>
               <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                 <IconPeople />
-                {r.partySize} {r.partySize === 1 ? 'guest' : 'guests'}
+                {r.partySize != null
+                  ? `${r.partySize} ${r.partySize === 1 ? 'guest' : 'guests'}`
+                  : '—'}
               </span>
               {r.tableNumber !== '—' && (
                 <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>

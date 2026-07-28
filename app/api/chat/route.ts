@@ -33,6 +33,7 @@ import {
   type DiningZone,
 } from "@/lib/dining-zones";
 import type { BookingSettings } from "@/lib/booking-settings";
+import { parsePartySizeFromServiceName } from "@/lib/appointment-service-name";
 import {
   parseNotificationSettings,
   type NotificationSettings,
@@ -317,7 +318,7 @@ const BOOKING_TOOLS = [
     function: {
       name: "get_my_reservation",
       description:
-        "Look up the guest's current active reservation — date, time, party size, seating area, special requests, and deposit status. Call before answering any question about an existing booking, and before cancelling or rescheduling.",
+        "Look up the guest's current active bookings — dining table and/or activity. Returns every active booking (a guest may hold both). Call before answering any question about an existing booking, and before cancelling or rescheduling.",
       parameters: { type: "object", properties: {} },
     },
   },
@@ -326,7 +327,7 @@ const BOOKING_TOOLS = [
     function: {
       name: "reschedule_reservation",
       description:
-        "Update the guest's existing reservation: move it to a new date/time and/or change the party size. To change only the party size, pass the booking's current date and time unchanged.",
+        "Update the guest's existing reservation: move it to a new date/time and/or change the party size. To change only the party size, pass the booking's current date and time unchanged. When the guest has both a table and an activity, pass kind so the correct one is moved.",
       parameters: {
         type: "object",
         properties: {
@@ -337,6 +338,12 @@ const BOOKING_TOOLS = [
             description:
               "New number of guests, only when the guest asked to change it",
           },
+          kind: {
+            type: "string",
+            enum: ["dining", "activity"],
+            description:
+              "Which booking to move when the guest has both a table reservation and an activity. Omit when only one active booking exists.",
+          },
         },
         required: ["new_date", "new_time"],
       },
@@ -346,8 +353,19 @@ const BOOKING_TOOLS = [
     type: "function" as const,
     function: {
       name: "cancel_reservation",
-      description: "Cancel the guest's existing reservation.",
-      parameters: { type: "object", properties: {} },
+      description:
+        "Cancel the guest's existing reservation. When the guest has both a table and an activity, pass kind so the correct one is cancelled.",
+      parameters: {
+        type: "object",
+        properties: {
+          kind: {
+            type: "string",
+            enum: ["dining", "activity"],
+            description:
+              "Which booking to cancel when the guest has both a table reservation and an activity. Omit when only one active booking exists.",
+          },
+        },
+      },
     },
   },
   {
@@ -804,17 +822,6 @@ type GuestHistory = {
   usualPartySize: number | null;
   usualTimeLabel: string | null;
 };
-
-function parsePartySizeFromServiceName(
-  serviceName: string | null,
-): number | null {
-  if (!serviceName) return null;
-  const parts = serviceName.split("·").map((p) => p.trim());
-  const partyPart = parts.find((p) => /^party of/i.test(p)) ?? parts[1];
-  if (!partyPart) return null;
-  const n = parseInt(partyPart.replace(/\D/g, ""), 10);
-  return n >= 1 && n <= 30 ? n : null;
-}
 
 /** service_name is "Guest · Party of N · Zone" — the 3rd segment is the seating zone. */
 function parseZoneFromServiceName(
@@ -1937,9 +1944,10 @@ async function runCreateReservation(
     zoneName: chosenZone?.name ?? null,
   });
 
-  // Prevent duplicates for this conversation — same active-future filter as
-  // get/cancel/reschedule, so past visits and no-shows do not block rebooking.
-  const existingAppt = await findActiveAppointment(ctx);
+  // Prevent duplicate *dining* bookings for this conversation. An activity
+  // booking (pool table, etc.) is a separate commitment and must not block a
+  // table — guests often book both.
+  const existingAppt = await findActiveAppointment(ctx, "dining");
   if (existingAppt) {
     const d = describeAppointment(
       existingAppt,
@@ -1957,7 +1965,7 @@ async function runCreateReservation(
           dining_area: d.zone,
         },
         message:
-          "This chat already has an active reservation (details above). Tell the guest about it and offer to move it (reschedule_reservation) or cancel it — do not create a duplicate.",
+          "This chat already has an active table reservation (details above). Tell the guest about it and offer to move it (reschedule_reservation) or cancel it — do not create a duplicate. An activity booking does not count as a table reservation.",
       },
     };
   }
@@ -2381,7 +2389,7 @@ function toActiveAppointment(row: Record<string, unknown>): ActiveAppointment {
 }
 
 /**
- * Find the guest's current active reservation (by conversation, then by customer).
+ * Find the guest's current active reservation(s) (by conversation, then by customer).
  *
  * Both lookups share a future-time filter with a 3-hour grace window: statuses
  * never auto-transition after the visit, so without the filter a device that
@@ -2389,13 +2397,29 @@ function toActiveAppointment(row: Record<string, unknown>): ActiveAppointment {
  * and create_reservation would refuse every new booking with already_booked.
  * The grace window keeps a currently-seated guest's booking findable mid-visit
  * ("is my deposit paid?") while excluding genuinely past reservations.
+ *
+ * Guests may hold one dining reservation AND one activity booking at once —
+ * those are separate physical commitments. Pass `kind` to target one of them.
  */
-async function findActiveAppointment(
+type AppointmentKind = "dining" | "activity";
+
+function matchesAppointmentKind(
+  appt: ActiveAppointment,
+  kind: AppointmentKind,
+): boolean {
+  return kind === "activity"
+    ? appt.activity_id != null
+    : appt.activity_id == null;
+}
+
+async function findActiveAppointments(
   ctx: ToolContext,
-): Promise<ActiveAppointment | null> {
+): Promise<ActiveAppointment[]> {
   const activeSinceIso = new Date(
     Date.now() - 3 * 60 * 60 * 1000,
   ).toISOString();
+  const byId = new Map<string, ActiveAppointment>();
+
   const { data: byConv } = await supabaseAdmin
     .from("appointments")
     .select(ACTIVE_APPT_SELECT)
@@ -2403,24 +2427,119 @@ async function findActiveAppointment(
     .in("status", ["pending", "confirmed", "seated"])
     .gte("scheduled_at", activeSinceIso)
     .order("scheduled_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-  if (byConv?.id) return toActiveAppointment(byConv as Record<string, unknown>);
+    .limit(8);
+  for (const row of byConv ?? []) {
+    const appt = toActiveAppointment(row as Record<string, unknown>);
+    byId.set(appt.id, appt);
+  }
 
-  const { data: byCustomer } = await supabaseAdmin
-    .from("appointments")
-    .select(ACTIVE_APPT_SELECT)
-    .eq("business_id", ctx.business_id)
-    .eq("customer_id", ctx.customer_id)
-    .in("status", ["pending", "confirmed", "seated"])
-    .gte("scheduled_at", activeSinceIso)
-    .order("scheduled_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-  if (byCustomer?.id)
-    return toActiveAppointment(byCustomer as Record<string, unknown>);
+  if (ctx.customer_id) {
+    const { data: byCustomer } = await supabaseAdmin
+      .from("appointments")
+      .select(ACTIVE_APPT_SELECT)
+      .eq("business_id", ctx.business_id)
+      .eq("customer_id", ctx.customer_id)
+      .in("status", ["pending", "confirmed", "seated"])
+      .gte("scheduled_at", activeSinceIso)
+      .order("scheduled_at", { ascending: true })
+      .limit(8);
+    for (const row of byCustomer ?? []) {
+      const appt = toActiveAppointment(row as Record<string, unknown>);
+      byId.set(appt.id, appt);
+    }
+  }
 
-  return null;
+  return [...byId.values()].sort((a, b) =>
+    a.scheduled_at.localeCompare(b.scheduled_at),
+  );
+}
+
+async function findActiveAppointment(
+  ctx: ToolContext,
+  kind?: AppointmentKind,
+): Promise<ActiveAppointment | null> {
+  const all = await findActiveAppointments(ctx);
+  const filtered = kind
+    ? all.filter((a) => matchesAppointmentKind(a, kind))
+    : all;
+  return filtered[0] ?? null;
+}
+
+function parseBookingKindArg(args: Record<string, unknown>): AppointmentKind | null {
+  return args.kind === "dining" || args.kind === "activity" ? args.kind : null;
+}
+
+/** Pick the appointment to cancel/reschedule; ask when dining + activity both exist. */
+async function resolveAppointmentForChange(
+  ctx: ToolContext,
+  kind: AppointmentKind | null,
+): Promise<{ appt: ActiveAppointment } | { result: Record<string, unknown> }> {
+  const all = await findActiveAppointments(ctx);
+  if (all.length === 0) {
+    return {
+      result: {
+        ok: false,
+        error: "not_found",
+        message: "No active reservation found for this guest.",
+      },
+    };
+  }
+
+  if (kind) {
+    const appt = all.find((a) => matchesAppointmentKind(a, kind)) ?? null;
+    if (!appt) {
+      return {
+        result: {
+          ok: false,
+          error: "not_found",
+          message:
+            kind === "dining"
+              ? "No active table reservation found. The guest may only have an activity booking."
+              : "No active activity booking found. The guest may only have a table reservation.",
+        },
+      };
+    }
+    return { appt };
+  }
+
+  if (all.length === 1) return { appt: all[0] };
+
+  const dining = all.find((a) => matchesAppointmentKind(a, "dining"));
+  const activity = all.find((a) => matchesAppointmentKind(a, "activity"));
+  if (dining && activity) {
+    const dDining = describeAppointment(
+      dining,
+      ctx.bookingCtx.zones,
+      ctx.bookingCtx.activities,
+    );
+    const dActivity = describeAppointment(
+      activity,
+      ctx.bookingCtx.zones,
+      ctx.bookingCtx.activities,
+    );
+    return {
+      result: {
+        ok: false,
+        error: "ambiguous_booking",
+        dining: {
+          date: dDining.date,
+          time: dDining.time,
+          party_size: dDining.partySize,
+          dining_area: dDining.zone,
+        },
+        activity: {
+          date: dActivity.date,
+          time: dActivity.time,
+          resource: dActivity.activity,
+          party_size: dActivity.partySize,
+        },
+        message:
+          "This guest has both a table reservation and an activity. Ask which one to change, then call again with kind \"dining\" or \"activity\".",
+      },
+    };
+  }
+
+  return { appt: all[0] };
 }
 
 /** service_name is "Guest · Party of N · Zone" — the 1st segment is the guest's name. */
@@ -2685,6 +2804,30 @@ async function runBookActivity(
     };
   }
 
+  // One activity booking per chat — a table reservation does not count.
+  const existingActivity = await findActiveAppointment(ctx, "activity");
+  if (existingActivity) {
+    const d = describeAppointment(
+      existingActivity,
+      ctx.bookingCtx.zones,
+      ctx.bookingCtx.activities,
+    );
+    return {
+      result: {
+        ok: false,
+        error: "already_booked",
+        existing_reservation: {
+          date: d.date,
+          time: d.time,
+          resource: d.activity,
+          party_size: d.partySize,
+        },
+        message:
+          "This chat already has an active activity booking (details above). Offer to move it (reschedule_reservation) or cancel it — do not book a second activity. A dining table reservation does not count as an activity booking.",
+      },
+    };
+  }
+
   const msgContact = extractContactFromMessages(ctx.chatMessages);
   const targetCustomerId = await persistGuest({
     business_id: ctx.business_id,
@@ -2771,9 +2914,12 @@ async function runBookActivity(
     result: {
       ok: true,
       booked: true,
-      resource: resource.name,
+      guest_name: guestName,
+      party_size: partySize,
       date: dateKey,
       time: wallClock!.slice(11, 16),
+      dining_area: null,
+      resource: resource.name,
       duration_minutes: resource.duration_minutes,
       message: `Booked ${resource.name} on ${dateKey} at ${wallClock!.slice(11, 16)} for ${resource.duration_minutes} minutes. Confirm this back to the guest.`,
     },
@@ -2781,8 +2927,8 @@ async function runBookActivity(
 }
 
 async function runGetMyReservation(ctx: ToolContext): Promise<ToolOutcome> {
-  const appt = await findActiveAppointment(ctx);
-  if (!appt) {
+  const all = await findActiveAppointments(ctx);
+  if (all.length === 0) {
     return {
       result: {
         ok: false,
@@ -2793,55 +2939,72 @@ async function runGetMyReservation(ctx: ToolContext): Promise<ToolOutcome> {
     };
   }
 
-  const d = describeAppointment(
-    appt,
-    ctx.bookingCtx.zones,
-    ctx.bookingCtx.activities,
-  );
-  // Guest-friendly status wording — "pending" is internal and reads like doubt.
-  const statusLabel =
-    appt.status === "pending"
-      ? "reserved"
-      : appt.status === "seated"
-        ? "seated now"
-        : appt.status;
-  const result: Record<string, unknown> = {
-    ok: true,
-    date: d.date,
-    time: d.time,
-    party_size: d.partySize,
-    dining_area: d.zone,
-    status: statusLabel,
-    special_requests: appt.notes,
-  };
+  const reservations = [];
+  for (const appt of all) {
+    const d = describeAppointment(
+      appt,
+      ctx.bookingCtx.zones,
+      ctx.bookingCtx.activities,
+    );
+    const statusLabel =
+      appt.status === "pending"
+        ? "reserved"
+        : appt.status === "seated"
+          ? "seated now"
+          : appt.status;
+    const entry: Record<string, unknown> = {
+      kind: appt.activity_id ? "activity" : "dining",
+      date: d.date,
+      time: d.time,
+      party_size: d.partySize,
+      dining_area: d.zone,
+      resource: d.activity,
+      status: statusLabel,
+      special_requests: appt.notes,
+    };
 
-  // Deposit info is optional schema — tolerate the columns not existing yet.
-  const { data: dep, error: depErr } = await supabaseAdmin
-    .from("appointments")
-    .select("deposit_status, deposit_amount_cents")
-    .eq("id", appt.id)
-    .maybeSingle();
-  if (!depErr && dep?.deposit_status) {
-    result.deposit_status = dep.deposit_status;
-    if (dep.deposit_amount_cents != null) {
-      result.deposit_amount = `$${(Number(dep.deposit_amount_cents) / 100).toFixed(2)} CAD`;
+    const { data: dep, error: depErr } = await supabaseAdmin
+      .from("appointments")
+      .select("deposit_status, deposit_amount_cents")
+      .eq("id", appt.id)
+      .maybeSingle();
+    if (!depErr && dep?.deposit_status) {
+      entry.deposit_status = dep.deposit_status;
+      if (dep.deposit_amount_cents != null) {
+        entry.deposit_amount = `$${(Number(dep.deposit_amount_cents) / 100).toFixed(2)} CAD`;
+      }
     }
+    reservations.push(entry);
   }
 
-  return { result };
+  // Back-compat top-level fields mirror the earliest booking; prefer
+  // `reservations` when both dining and activity exist.
+  const primary = reservations[0];
+  return {
+    result: {
+      ok: true,
+      ...primary,
+      reservations,
+      message:
+        reservations.length > 1
+          ? "This guest has more than one active booking. Relay each one (table vs activity) clearly."
+          : undefined,
+    },
+  };
 }
 
-async function runCancelReservation(ctx: ToolContext): Promise<ToolOutcome> {
-  const appt = await findActiveAppointment(ctx);
-  if (!appt) {
-    return {
-      result: {
-        ok: false,
-        error: "not_found",
-        message: "No active reservation found to cancel.",
-      },
-    };
+async function runCancelReservation(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): Promise<ToolOutcome> {
+  const resolved = await resolveAppointmentForChange(
+    ctx,
+    parseBookingKindArg(args),
+  );
+  if (!("appt" in resolved)) {
+    return { result: resolved.result };
   }
+  const appt = resolved.appt;
   const { error } = await supabaseAdmin
     .from("appointments")
     .update({ status: "cancelled" })
@@ -2895,10 +3058,12 @@ async function runCancelReservation(ctx: ToolContext): Promise<ToolOutcome> {
     result: {
       ok: true,
       cancelled_reservation: {
+        kind: appt.activity_id ? "activity" : "dining",
         date: d.date,
         time: d.time,
         party_size: d.partySize,
         dining_area: d.zone,
+        resource: d.activity,
       },
       message:
         "Confirm the cancellation to the guest, repeating the exact date and time that were cancelled.",
@@ -2910,16 +3075,14 @@ async function runRescheduleReservation(
   args: Record<string, unknown>,
   ctx: ToolContext,
 ): Promise<ToolOutcome> {
-  const appt = await findActiveAppointment(ctx);
-  if (!appt) {
-    return {
-      result: {
-        ok: false,
-        error: "not_found",
-        message: "No active reservation found to move.",
-      },
-    };
+  const resolved = await resolveAppointmentForChange(
+    ctx,
+    parseBookingKindArg(args),
+  );
+  if (!("appt" in resolved)) {
+    return { result: resolved.result };
   }
+  const appt = resolved.appt;
 
   let wallClock = buildWallClock(args.new_date, args.new_time);
   if (!wallClock) {
@@ -2955,7 +3118,7 @@ async function runRescheduleReservation(
       ? Math.round(args.new_party_size)
       : null;
   const partySize = requestedPartySize ?? currentPartySize;
-  if (requestedPartySize != null) {
+  if (requestedPartySize != null && !appt.activity_id) {
     const partyError = partySizeZoneError(partySize, ctx.bookingCtx.zones);
     if (partyError) return { result: partyError };
   }
@@ -3080,35 +3243,46 @@ async function runRescheduleReservation(
     };
   }
 
-  const assignedZone = pickZoneForSlot(
-    wallClock,
-    ctx.bookingCtx.zones,
-    partySize,
-    ctx.bookingCtx.operatingHours,
-    ctx.bookingCtx.existingBookings,
-    ctx.bookingCtx.bookingSettings,
-    preferredZoneId,
-    ctx.nowParts,
-  );
-  const durationMinutes =
-    assignedZone?.turnover_minutes ??
-    ctx.bookingCtx.bookingSettings.default_duration_minutes;
-
-  // Keep service_name ("Guest · Party of N · Zone") in sync — guest history and
-  // the dashboard both parse party size and zone out of it.
-  const zoneLabel =
-    assignedZone?.name ?? zoneNameById(preferredZoneId, ctx.bookingCtx.zones);
   const guestName = parseGuestNameFromServiceName(appt.service_name);
+  let zoneLabel: string | null = null;
   const update: Record<string, unknown> = {
     scheduled_at: wallClockInCalgaryToUtcDate(wallClock).toISOString(),
-    duration_minutes: durationMinutes,
-    zone_id: assignedZone?.id ?? preferredZoneId,
     party_size: partySize,
   };
-  if (guestName) {
-    const svcParts = [guestName, `Party of ${partySize}`];
-    if (zoneLabel) svcParts.push(zoneLabel);
-    update.service_name = svcParts.join(" · ").slice(0, 500);
+
+  if (appt.activity_id) {
+    const resource = ctx.bookingCtx.activities.find(
+      (a) => a.id === appt.activity_id,
+    );
+    update.duration_minutes = resource?.duration_minutes ?? 60;
+    if (guestName && resource) {
+      const svcParts = [guestName, resource.name];
+      if (partySize) svcParts.push(`${partySize} players`);
+      update.service_name = svcParts.join(" · ").slice(0, 500);
+    }
+  } else {
+    const assignedZone = pickZoneForSlot(
+      wallClock,
+      ctx.bookingCtx.zones,
+      partySize,
+      ctx.bookingCtx.operatingHours,
+      ctx.bookingCtx.existingBookings,
+      ctx.bookingCtx.bookingSettings,
+      preferredZoneId,
+      ctx.nowParts,
+    );
+    update.duration_minutes =
+      assignedZone?.turnover_minutes ??
+      ctx.bookingCtx.bookingSettings.default_duration_minutes;
+    update.zone_id = assignedZone?.id ?? preferredZoneId;
+    zoneLabel =
+      assignedZone?.name ??
+      zoneNameById(preferredZoneId, ctx.bookingCtx.zones);
+    if (guestName) {
+      const svcParts = [guestName, `Party of ${partySize}`];
+      if (zoneLabel) svcParts.push(zoneLabel);
+      update.service_name = svcParts.join(" · ").slice(0, 500);
+    }
   }
 
   const { error } = await supabaseAdmin
@@ -3138,6 +3312,10 @@ async function runRescheduleReservation(
     ctx.bookingCtx.zones,
     ctx.bookingCtx.activities,
   );
+  const activityName = appt.activity_id
+    ? (ctx.bookingCtx.activities.find((a) => a.id === appt.activity_id)
+        ?.name ?? previous.activity)
+    : null;
   if (ctx.notifSettings.email_on_reservation) {
     queueBookingChangeOwnerEmail(ctx.ownerEmail, ctx.ownerName, {
       kind: "rescheduled",
@@ -3145,7 +3323,7 @@ async function runRescheduleReservation(
       partySize,
       date: wallClock.slice(0, 10),
       time: wallClock.slice(11, 16),
-      zone: zoneLabel,
+      zone: zoneLabel ?? activityName,
       previousDate: previous.date,
       previousTime: previous.time,
     });
@@ -3163,7 +3341,7 @@ async function runRescheduleReservation(
           partySize,
           date: wallClock.slice(0, 10),
           time: wallClock.slice(11, 16),
-          zone: zoneLabel,
+          zone: zoneLabel ?? activityName,
           notes: appt.notes,
           variant: "updated",
         },
@@ -3175,10 +3353,12 @@ async function runRescheduleReservation(
     rescheduled: true,
     result: {
       ok: true,
+      kind: appt.activity_id ? "activity" : "dining",
       date: wallClock.slice(0, 10),
       time: wallClock.slice(11, 16),
       party_size: partySize,
       dining_area: zoneLabel,
+      resource: activityName,
     },
   };
 }
@@ -3577,7 +3757,7 @@ async function executeTool(
     case "reschedule_reservation":
       return runRescheduleReservation(args, ctx);
     case "cancel_reservation":
-      return runCancelReservation(ctx);
+      return runCancelReservation(args, ctx);
     case "save_guest_details":
       return runSaveGuestDetails(args, ctx);
     case "join_waitlist":
@@ -4747,14 +4927,17 @@ export async function POST(request: Request) {
     let bookingCreated = false;
     let bookingCancelled = false;
     let bookingRescheduled = false;
-    let bookingDetails: {
+    type BookingDetailsPayload = {
       guest_name: string;
-      party_size: number;
+      party_size: number | null;
       date: string;
       time: string;
       dining_area: string | null;
+      resource?: string | null;
       duration_minutes?: number;
-    } | null = null;
+    };
+    let bookingDetails: BookingDetailsPayload | BookingDetailsPayload[] | null =
+      null;
     let assistantText = "";
     /** Tappable time suggestions for the widget, from the latest tool result. */
     let suggestedTimes: string[] = [];
@@ -4819,14 +5002,23 @@ export async function POST(request: Request) {
 
         if (outcome.created) {
           bookingCreated = true;
-          bookingDetails = outcome.result as {
-            guest_name: string;
-            party_size: number;
-            date: string;
-            time: string;
-            dining_area: string | null;
-            duration_minutes?: number;
+          const created = outcome.result as BookingDetailsPayload;
+          const card: BookingDetailsPayload = {
+            guest_name: created.guest_name,
+            party_size: created.party_size ?? null,
+            date: created.date,
+            time: created.time,
+            dining_area: created.dining_area ?? null,
+            resource: created.resource ?? null,
+            duration_minutes: created.duration_minutes,
           };
+          if (!bookingDetails) {
+            bookingDetails = card;
+          } else if (Array.isArray(bookingDetails)) {
+            bookingDetails.push(card);
+          } else {
+            bookingDetails = [bookingDetails, card];
+          }
         }
         if (outcome.cancelled) bookingCancelled = true;
         if (outcome.rescheduled) bookingRescheduled = true;
