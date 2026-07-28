@@ -1,7 +1,6 @@
 'use client'
 
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
-import Image from 'next/image'
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 
@@ -17,10 +16,11 @@ import {
 
 type BookingCard = {
   guestName: string
-  partySize: number
+  partySize: number | null
   date: string
   time: string
   zone: string | null
+  resource?: string | null
   /** Raw values for the calendar link. */
   rawDate?: string
   rawTime?: string
@@ -55,9 +55,21 @@ function googleCalendarUrl(card: BookingCard, businessName: string | null): stri
   }
   const end = `${endDateDigits}T${pad(Math.floor((endMin % 1440) / 60))}${pad(endMin % 60)}00`
   const title = businessName
-    ? `Table for ${card.partySize} — ${businessName}`
-    : `Restaurant reservation — table for ${card.partySize}`
-  const details = card.zone ? `Seating: ${card.zone}` : ''
+    ? card.resource
+      ? `${card.resource} — ${businessName}`
+      : card.partySize != null
+        ? `Table for ${card.partySize} — ${businessName}`
+        : `Reservation — ${businessName}`
+    : card.resource
+      ? `Reservation — ${card.resource}`
+      : card.partySize != null
+        ? `Restaurant reservation — table for ${card.partySize}`
+        : 'Restaurant reservation'
+  const details = card.zone
+    ? `Seating: ${card.zone}`
+    : card.resource
+      ? `Activity: ${card.resource}`
+      : ''
   const params = new URLSearchParams({
     action: 'TEMPLATE',
     text: title,
@@ -86,11 +98,13 @@ const WIDGET_ACCENT_TEXT = 'var(--widget-accent-text)'
 const WIDGET_ACCENT_SOFT = 'var(--widget-accent-soft)'
 const WIDGET_ACCENT_RGB = 'var(--widget-accent-rgb)'
 const HEADER_BACKGROUND = 'var(--widget-header-background)'
-const HEADER_BORDER = 'var(--widget-header-border)'
+const HEADER_GLOW = 'var(--widget-header-glow)'
+const HEADER_TEXT = 'var(--widget-header-text)'
+const HEADER_MUTED = 'var(--widget-header-muted)'
 const HEADER_SHADOW = 'var(--widget-header-shadow)'
 const HEADER_BUTTON_BACKGROUND = 'var(--widget-header-button-background)'
+const HEADER_BUTTON_BORDER = 'var(--widget-header-button-border)'
 const HEADER_BUTTON_TEXT = 'var(--widget-header-button-text)'
-const HEADER_ONLINE_BORDER = 'var(--widget-header-online-border)'
 const MESSAGE_AI_BACKGROUND = 'var(--widget-message-ai)'
 const MESSAGE_CUSTOMER_BACKGROUND = 'var(--widget-message-customer)'
 const CUSTOMER_TEXT = 'var(--widget-customer-text)'
@@ -109,6 +123,53 @@ const LAUNCHER_BACKGROUND = 'var(--widget-launcher-background)'
 const LAUNCHER_COLOR = 'var(--widget-launcher-color)'
 const SOFT_SHADOW = 'var(--widget-soft-shadow)'
 const CONTACT_SHADOW = 'var(--widget-contact-shadow)'
+
+/**
+ * Bubbles drifting up through the header's deep end. Hand-placed rather than
+ * random so the rhythm stays the same on every open.
+ */
+const HEADER_BUBBLES = [
+  { left: '47%', size: 7, delay: 0, duration: 9, peak: 0.45 },
+  { left: '63%', size: 5, delay: 2.6, duration: 11, peak: 0.3 },
+  { left: '77%', size: 6, delay: 5.2, duration: 10, peak: 0.38 },
+]
+
+/**
+ * One pill language for every tappable prompt in the thread — the quick-start
+ * chips and the time slots the concierge offers read as the same control.
+ */
+const CHIP_STYLE: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  borderRadius: 999,
+  padding: '9px 15px',
+  border: `1px solid rgba(${WIDGET_ACCENT_RGB}, 0.24)`,
+  background: WIDGET_ACCENT_SOFT,
+  color: WIDGET_ACCENT_TEXT,
+  fontSize: 12.5,
+  fontWeight: 600,
+  lineHeight: 1,
+  letterSpacing: '0.005em',
+  cursor: 'pointer',
+  boxShadow: SOFT_SHADOW,
+}
+
+/** Shared look for the two header controls, so they stay the same pill. */
+const HEADER_BUTTON_STYLE: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  height: 30,
+  border: `1px solid ${HEADER_BUTTON_BORDER}`,
+  borderRadius: 999,
+  background: HEADER_BUTTON_BACKGROUND,
+  color: HEADER_BUTTON_TEXT,
+  fontSize: 11.5,
+  fontWeight: 600,
+  letterSpacing: '0.01em',
+  lineHeight: 1,
+  cursor: 'pointer',
+}
 
 const buildWelcome = (businessName: string | null, conciergeName: string): WidgetMessage => ({
   id: 'welcome',
@@ -259,38 +320,6 @@ function useIsNarrow(maxWidth = 520): boolean {
 
 // ─── Presentational bits ────────────────────────────────────────────────────
 
-function ConciergeAvatar({ size = 32 }: { name: string; size?: number }) {
-  return (
-    <div
-      aria-hidden
-      style={{
-        position: 'relative',
-        width: size,
-        height: size,
-        borderRadius: '50%',
-        flexShrink: 0,
-        overflow: 'hidden',
-        background: 'radial-gradient(circle at 45% 30%, #153653 0%, #061018 72%)',
-        border: `${Math.max(1, size * 0.035)}px solid rgba(125, 211, 252, 0.42)`,
-        boxShadow: `0 3px 12px rgba(${WIDGET_ACCENT_RGB}, 0.26), inset 0 1px 0 rgba(255,255,255,0.12)`,
-      }}
-    >
-      <Image
-        src="/avatars/oceancore-concierge.png"
-        alt=""
-        fill
-        sizes={`${size}px`}
-        preload={size >= 40}
-        style={{
-          objectFit: 'contain',
-          transform: 'scale(1.16) translateY(2%)',
-          filter: 'saturate(0.96) contrast(1.04)',
-        }}
-      />
-    </div>
-  )
-}
-
 function TypingDots({ conciergeName }: { conciergeName: string }) {
   return (
     <motion.div
@@ -300,7 +329,6 @@ function TypingDots({ conciergeName }: { conciergeName: string }) {
       style={{ display: 'flex', alignItems: 'flex-end', gap: 8, marginBottom: 12 }}
       aria-label={`${conciergeName} is typing`}
     >
-      <ConciergeAvatar name={conciergeName} size={24} />
       <div
         style={{
           borderRadius: '16px 16px 16px 5px',
@@ -819,14 +847,26 @@ function WidgetPageInner() {
         skipped?: boolean
         reason?: string
         booking_created?: boolean
-        booking_details?: {
-          guest_name: string
-          party_size: number
-          date: string
-          time: string
-          dining_area: string | null
-          duration_minutes?: number
-        } | null
+        booking_details?:
+          | {
+              guest_name: string
+              party_size: number | null
+              date: string
+              time: string
+              dining_area: string | null
+              resource?: string | null
+              duration_minutes?: number
+            }
+          | Array<{
+              guest_name: string
+              party_size: number | null
+              date: string
+              time: string
+              dining_area: string | null
+              resource?: string | null
+              duration_minutes?: number
+            }>
+          | null
         suggested_times?: string[]
       }
 
@@ -866,30 +906,39 @@ function WidgetPageInner() {
           { id: nextMessageId('ai'), sender: 'ai', text: aiText, suggestions },
         ]
         if (data.booking_created && data.booking_details) {
-          const d = data.booking_details
-          // Format date: 2026-06-19 → Fri, Jun 19
-          const dateObj = new Date(`${d.date}T12:00:00`)
-          const formattedDate = dateObj.toLocaleDateString('en-US', {
-            weekday: 'short', month: 'short', day: 'numeric',
-          })
-          // Format time: 19:30 → 7:30pm
-          const [h, m] = d.time.split(':').map(Number)
-          const formattedTime = `${h > 12 ? h - 12 : h || 12}:${String(m).padStart(2, '0')}${h >= 12 ? 'pm' : 'am'}`
-          next.push({
-            id: nextMessageId('booking-card'),
-            sender: 'ai',
-            text: '',
-            bookingCard: {
-              guestName: d.guest_name,
-              partySize: d.party_size,
-              date: formattedDate,
-              time: formattedTime,
-              zone: d.dining_area ?? null,
-              rawDate: d.date,
-              rawTime: d.time,
-              durationMinutes: d.duration_minutes,
-            },
-          })
+          const detailsList = Array.isArray(data.booking_details)
+            ? data.booking_details
+            : [data.booking_details]
+          for (const d of detailsList) {
+            if (!d?.date || !d?.time) continue
+            // Format date: 2026-06-19 → Fri, Jun 19
+            const dateObj = new Date(`${d.date}T12:00:00`)
+            const formattedDate = dateObj.toLocaleDateString('en-US', {
+              weekday: 'short', month: 'short', day: 'numeric',
+            })
+            // Format time: 19:30 → 7:30pm
+            const [h, m] = d.time.split(':').map(Number)
+            const formattedTime = `${h > 12 ? h - 12 : h || 12}:${String(m).padStart(2, '0')}${h >= 12 ? 'pm' : 'am'}`
+            next.push({
+              id: nextMessageId('booking-card'),
+              sender: 'ai',
+              text: '',
+              bookingCard: {
+                guestName: d.guest_name,
+                partySize:
+                  typeof d.party_size === 'number' && d.party_size > 0
+                    ? d.party_size
+                    : null,
+                date: formattedDate,
+                time: formattedTime,
+                zone: d.dining_area ?? null,
+                resource: d.resource ?? null,
+                rawDate: d.date,
+                rawTime: d.time,
+                durationMinutes: d.duration_minutes,
+              },
+            })
+          }
         }
         return next
       })
@@ -982,43 +1031,70 @@ function WidgetPageInner() {
             {/* ── Header ── */}
             <header
               style={{
-                padding: '14px 16px',
+                position: 'relative',
+                overflow: 'hidden',
+                padding: '14px 14px 26px 18px',
+                paddingTop: isMobile ? 'max(14px, env(safe-area-inset-top))' : 14,
                 background: HEADER_BACKGROUND,
-                borderBottom: `1px solid ${HEADER_BORDER}`,
                 display: 'flex',
                 alignItems: 'center',
-                gap: 12,
+                gap: 10,
                 boxShadow: HEADER_SHADOW,
               }}
             >
-              <div style={{ position: 'relative', flexShrink: 0 }}>
-                <ConciergeAvatar name={conciergeName} size={40} />
-                <motion.span
-                  animate={reduceMotion ? undefined : { boxShadow: [
-                    '0 0 0 0 rgba(74,222,128,0.5)',
-                    '0 0 0 5px rgba(74,222,128,0)',
-                  ] }}
-                  transition={{ duration: 1.8, repeat: Infinity, ease: 'easeOut' }}
-                  style={{
-                    position: 'absolute',
-                    bottom: 0,
-                    right: 0,
-                    width: 11,
-                    height: 11,
-                    borderRadius: '50%',
-                    background: 'var(--ocean-success)',
-                    border: `2px solid ${HEADER_ONLINE_BORDER}`,
-                  }}
-                />
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
+              {/* A slow tide of light drifting across the deep end. */}
+              <motion.span
+                aria-hidden
+                animate={reduceMotion ? undefined : { x: [-14, 26, -14], y: [0, 9, 0], opacity: [0.55, 0.9, 0.55] }}
+                transition={{ duration: 16, repeat: Infinity, ease: 'easeInOut' }}
+                style={{
+                  position: 'absolute',
+                  top: -96,
+                  right: -30,
+                  width: 210,
+                  height: 210,
+                  borderRadius: '50%',
+                  background: `radial-gradient(circle, ${HEADER_GLOW} 0%, rgba(255,255,255,0) 70%)`,
+                  pointerEvents: 'none',
+                }}
+              />
+
+              {!reduceMotion &&
+                HEADER_BUBBLES.map((bubble) => (
+                  <motion.span
+                    key={bubble.left}
+                    aria-hidden
+                    animate={{ y: [0, -44], opacity: [0, bubble.peak, 0] }}
+                    transition={{
+                      duration: bubble.duration,
+                      delay: bubble.delay,
+                      repeat: Infinity,
+                      ease: 'easeOut',
+                    }}
+                    style={{
+                      position: 'absolute',
+                      bottom: 8,
+                      left: bubble.left,
+                      width: bubble.size,
+                      height: bubble.size,
+                      borderRadius: '50%',
+                      border: '1px solid rgba(255, 255, 255, 0.9)',
+                      background: 'rgba(255, 255, 255, 0.12)',
+                      pointerEvents: 'none',
+                    }}
+                  />
+                ))}
+
+              <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
                 <p
+                  title={headerTitle}
                   style={{
                     margin: 0,
-                    fontSize: 16,
-                    fontWeight: 750,
-                    color: CHAT_TEXT,
-                    letterSpacing: '-0.015em',
+                    fontSize: 15.5,
+                    fontWeight: 700,
+                    color: HEADER_TEXT,
+                    letterSpacing: '-0.012em',
+                    lineHeight: 1.25,
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap',
@@ -1026,51 +1102,114 @@ function WidgetPageInner() {
                 >
                   {headerTitle}
                 </p>
-                <p style={{ margin: '2px 0 0', fontSize: 11.5, color: CHAT_MUTED, fontWeight: 500 }}>
-                  {conciergeName} · Replies instantly
+                <p
+                  style={{
+                    margin: '3px 0 0',
+                    fontSize: 11.5,
+                    lineHeight: 1.2,
+                    color: HEADER_MUTED,
+                    fontWeight: 500,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    minWidth: 0,
+                  }}
+                >
+                  <motion.span
+                    aria-hidden
+                    animate={
+                      reduceMotion
+                        ? undefined
+                        : {
+                            boxShadow: [
+                              '0 0 0 0 rgba(74, 222, 128, 0.55)',
+                              '0 0 0 6px rgba(74, 222, 128, 0)',
+                            ],
+                          }
+                    }
+                    transition={{ duration: 2.1, repeat: Infinity, ease: 'easeOut' }}
+                    style={{
+                      width: 6,
+                      height: 6,
+                      borderRadius: '50%',
+                      background: 'var(--ocean-success)',
+                      flexShrink: 0,
+                    }}
+                  />
+                  {/* The status line doubles as a presence indicator. */}
+                  <motion.span
+                    key={isLoading ? 'typing' : 'idle'}
+                    initial={reduceMotion ? false : { opacity: 0, y: 3 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.18 }}
+                    style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                  >
+                    {isLoading
+                      ? `${conciergeName} is typing…`
+                      : `${conciergeName} · Replies instantly`}
+                  </motion.span>
                 </p>
               </div>
-              <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+              <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
                 {conversationId && (
-                  <button
+                  <motion.button
                     type="button"
                     onClick={handleNewChat}
                     title="Start a new chat"
-                    style={{
-                      border: `1px solid rgba(${WIDGET_ACCENT_RGB}, 0.28)`,
-                      borderRadius: 10,
-                      height: 30,
-                      padding: '0 10px',
-                      cursor: 'pointer',
-                      background: HEADER_BUTTON_BACKGROUND,
-                      color: HEADER_BUTTON_TEXT,
-                      fontSize: 11,
-                      fontWeight: 600,
-                      letterSpacing: '0.02em',
-                    }}
+                    whileHover={reduceMotion ? undefined : { y: -1 }}
+                    whileTap={reduceMotion ? undefined : { scale: 0.95 }}
+                    style={{ ...HEADER_BUTTON_STYLE, padding: '0 11px', gap: 5 }}
                   >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden>
+                      <path
+                        d="M12 5v14M5 12h14"
+                        stroke="currentColor"
+                        strokeWidth="2.4"
+                        strokeLinecap="round"
+                      />
+                    </svg>
                     New chat
-                  </button>
+                  </motion.button>
                 )}
-                <button
+                <motion.button
                   type="button"
                   onClick={() => setIsOpen(false)}
                   aria-label="Close chat"
-                  style={{
-                    border: `1px solid rgba(${WIDGET_ACCENT_RGB}, 0.28)`,
-                    borderRadius: 10,
-                    width: 30,
-                    height: 30,
-                    cursor: 'pointer',
-                    background: HEADER_BUTTON_BACKGROUND,
-                    color: HEADER_BUTTON_TEXT,
-                    fontSize: 16,
-                    lineHeight: 1,
-                  }}
+                  title="Close chat"
+                  whileHover={reduceMotion ? undefined : { y: -1 }}
+                  whileTap={reduceMotion ? undefined : { scale: 0.95 }}
+                  style={{ ...HEADER_BUTTON_STYLE, width: 30, padding: 0 }}
                 >
-                  ×
-                </button>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden>
+                    <path
+                      d="M6 6l12 12M18 6L6 18"
+                      stroke="currentColor"
+                      strokeWidth="2.4"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                </motion.button>
               </div>
+
+              {/* Waterline: the chat surface laps up against the header. Twice
+                  the panel's width and shifted by exactly half, so the swell
+                  loops without a seam. */}
+              <svg
+                aria-hidden
+                viewBox="0 0 744 16"
+                preserveAspectRatio="none"
+                style={{ position: 'absolute', left: 0, bottom: -1, width: '200%', height: 16, display: 'block' }}
+              >
+                <motion.g
+                  animate={reduceMotion ? undefined : { x: [0, -372] }}
+                  transition={{ duration: 22, repeat: Infinity, ease: 'linear' }}
+                >
+                  <path
+                    d="M0 9 Q 23.25 3 46.5 9 T 93 9 T 139.5 9 T 186 9 T 232.5 9 T 279 9 T 325.5 9 T 372 9 T 418.5 9 T 465 9 T 511.5 9 T 558 9 T 604.5 9 T 651 9 T 697.5 9 T 744 9 L744 16 L0 16 Z"
+                    fill={CHAT_CANVAS}
+                  />
+                </motion.g>
+              </svg>
             </header>
 
             {/* ── Messages ── */}
@@ -1156,9 +1295,17 @@ function WidgetPageInner() {
                         <div style={{ padding: '11px 14px 13px' }}>
                           {[
                             { label: 'Guest', value: c.guestName },
-                            { label: 'Party', value: `${c.partySize} ${c.partySize === 1 ? 'guest' : 'guests'}` },
+                            ...(c.partySize != null
+                              ? [{
+                                  label: 'Party',
+                                  value: `${c.partySize} ${c.partySize === 1 ? 'guest' : 'guests'}`,
+                                }]
+                              : []),
                             { label: 'When', value: `${c.date} · ${c.time}` },
                             ...(c.zone ? [{ label: 'Area', value: c.zone }] : []),
+                            ...(c.resource && !c.zone
+                              ? [{ label: 'Activity', value: c.resource }]
+                              : []),
                           ].map((row) => (
                             <div
                               key={row.label}
@@ -1227,7 +1374,6 @@ function WidgetPageInner() {
                         width: '100%',
                       }}
                     >
-                      {!isCustomer && <ConciergeAvatar name={conciergeName} size={28} />}
                       <div
                         style={{
                           maxWidth: isCustomer ? '76%' : '82%',
@@ -1255,31 +1401,19 @@ function WidgetPageInner() {
                         initial={reduceMotion ? false : { opacity: 0, y: 6 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 0.15, duration: 0.2 }}
-                        style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '7px 0 0 36px' }}
+                        style={{ display: 'flex', flexWrap: 'wrap', gap: 7, margin: '8px 0 0' }}
                       >
                         {message.suggestions!.map((suggestion, suggestionIndex) => (
                           <motion.button
                             key={suggestion}
                             type="button"
-                            initial={reduceMotion ? false : { opacity: 0, y: 5 }}
-                            animate={{ opacity: 1, y: 0 }}
+                            initial={reduceMotion ? false : { opacity: 0, y: 6, scale: 0.96 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
                             transition={{ delay: 0.12 + suggestionIndex * 0.05, duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
                             whileHover={reduceMotion ? undefined : { y: -1, scale: 1.03 }}
                             whileTap={reduceMotion ? undefined : { scale: 0.96 }}
                             onClick={() => void handleSend(suggestion)}
-                            style={{
-                              border: `1.5px solid rgba(${WIDGET_ACCENT_RGB}, 0.45)`,
-                              borderRadius: 11,
-                              padding: '8px 13px',
-                              background: CHAT_SURFACE,
-                              color: WIDGET_ACCENT_TEXT,
-                              fontSize: 12.5,
-                              fontWeight: 700,
-                              letterSpacing: '0.01em',
-                              cursor: 'pointer',
-                              boxShadow: SOFT_SHADOW,
-                              fontVariantNumeric: 'tabular-nums',
-                            }}
+                            style={{ ...CHIP_STYLE, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}
                           >
                             {suggestion}
                           </motion.button>
@@ -1300,25 +1434,19 @@ function WidgetPageInner() {
                   initial={reduceMotion ? false : { opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.25, duration: 0.25 }}
-                  style={{ display: 'flex', flexWrap: 'wrap', gap: 7, margin: '4px 0 8px 32px' }}
+                  style={{ display: 'flex', flexWrap: 'wrap', gap: 7, margin: '6px 0 8px' }}
                 >
-                  {QUICK_CHIPS.map((chip) => (
+                  {QUICK_CHIPS.map((chip, chipIndex) => (
                     <motion.button
                       key={chip}
                       type="button"
-                      whileHover={reduceMotion ? undefined : { y: -1, scale: 1.02 }}
-                      whileTap={reduceMotion ? undefined : { scale: 0.97 }}
+                      initial={reduceMotion ? false : { opacity: 0, y: 6, scale: 0.96 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      transition={{ delay: reduceMotion ? 0 : 0.3 + chipIndex * 0.06, duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                      whileHover={reduceMotion ? undefined : { y: -1, scale: 1.03 }}
+                      whileTap={reduceMotion ? undefined : { scale: 0.96 }}
                       onClick={() => void handleSend(chip)}
-                      style={{
-                        border: `1px solid rgba(${WIDGET_ACCENT_RGB}, 0.28)`,
-                        borderRadius: 999,
-                        padding: '7px 13px',
-                        background: WIDGET_ACCENT_SOFT,
-                        color: WIDGET_ACCENT_TEXT,
-                        fontSize: 12.5,
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                      }}
+                      style={CHIP_STYLE}
                     >
                       {chip}
                     </motion.button>
@@ -1339,7 +1467,7 @@ function WidgetPageInner() {
                     style={{
                       position: 'relative',
                       overflow: 'hidden',
-                      margin: '3px 0 10px 32px',
+                      margin: '3px 0 10px',
                       padding: '13px',
                       borderRadius: 17,
                       border: `1px solid rgba(${WIDGET_ACCENT_RGB}, 0.26)`,

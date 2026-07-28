@@ -88,33 +88,39 @@ export function launcherColorOverrides(hex: string): Record<string, string> {
 
 export const WIDGET_THEME_PALETTES: Record<WidgetTheme, Record<string, string>> = {
   ice: {
-    // Tinted toward the brand hue — never pure white, so bubbles and cards
-    // keep definition without heavier borders.
-    '--widget-canvas': '#fafcfe',
+    // Tinted toward the brand hue so white cards — bubbles, the composer, the
+    // booking summary — read as raised without needing heavy borders.
+    '--widget-canvas': '#f3f8fd',
     '--widget-surface': '#ffffff',
     '--widget-text': '#122a49',
-    '--widget-muted': '#617a99',
-    '--widget-subtle': '#7e95af',
+    // Deepened from the old #617a99/#7e95af so secondary lines clear 4.5:1 on
+    // both the white bubbles and the tinted header.
+    '--widget-muted': '#4f6b8b',
+    '--widget-subtle': '#6b829d',
     '--widget-border': 'rgba(58, 123, 171, 0.16)',
     '--widget-accent': '#349cf4',
     '--widget-accent-strong': '#146fca',
-    '--widget-accent-text': '#146fca',
-    '--widget-accent-soft': '#e4f4ff',
+    // Deep enough to clear 4.5:1 on the soft accent fill the chips use.
+    '--widget-accent-text': '#0f63bd',
+    '--widget-accent-soft': '#e6f2ff',
     '--widget-accent-rgb': '52, 156, 244',
-    // Radial highlight over the diagonal wash gives the header glass depth
-    // without an actual blur.
-    '--widget-header-background':
-      'radial-gradient(130% 180% at 88% -30%, rgba(255,255,255,0.95) 0%, rgba(255,255,255,0) 55%), linear-gradient(135deg, #ecf7ff 0%, #d9edfc 55%, #bfe1f8 100%)',
-    '--widget-header-border': 'rgba(52, 156, 244, 0.3)',
-    '--widget-header-shadow': '0 7px 20px rgba(34, 112, 170, 0.12)',
-    '--widget-header-button-background': 'rgba(255,255,255,0.74)',
-    '--widget-header-button-text': '#477395',
-    '--widget-header-online-border': '#ffffff',
-    '--widget-message-ai': '#eef3f9',
-    '--widget-message-customer': 'linear-gradient(135deg, #e2f1ff 0%, #d3e9fc 100%)',
-    '--widget-customer-text': '#122a49',
-    '--widget-message-ai-border': 'rgba(30, 74, 115, 0.06)',
-    '--widget-message-customer-border': 'rgba(52, 156, 244, 0.14)',
+    // The header is the one saturated surface in the light theme — deep water
+    // above the waterline, everything below it reads as air.
+    '--widget-header-background': 'linear-gradient(135deg, #1d78cf 0%, #145fae 52%, #0d4685 100%)',
+    '--widget-header-glow': 'rgba(255, 255, 255, 0.34)',
+    '--widget-header-text': '#ffffff',
+    '--widget-header-muted': 'rgba(226, 240, 255, 0.82)',
+    '--widget-header-shadow': '0 6px 18px rgba(13, 70, 133, 0.18)',
+    '--widget-header-button-background': 'rgba(255, 255, 255, 0.15)',
+    '--widget-header-button-border': 'rgba(255, 255, 255, 0.32)',
+    '--widget-header-button-text': '#ffffff',
+    // The guest's own messages carry the accent, the concierge answers on
+    // white — the thread reads at a glance instead of two pale blues.
+    '--widget-message-ai': '#ffffff',
+    '--widget-message-customer': 'linear-gradient(135deg, #1f74cc 0%, #1259ab 100%)',
+    '--widget-customer-text': '#ffffff',
+    '--widget-message-ai-border': 'rgba(30, 74, 115, 0.1)',
+    '--widget-message-customer-border': 'transparent',
     '--widget-booking-background': 'linear-gradient(150deg, #ffffff 0%, #effbf6 100%)',
     '--widget-contact-background': 'linear-gradient(145deg, #ffffff 0%, #eef8ff 100%)',
     '--widget-contact-tabs-background': '#edf8ff',
@@ -141,12 +147,14 @@ export const WIDGET_THEME_PALETTES: Record<WidgetTheme, Record<string, string>> 
     '--widget-accent-text': '#7dd3fc',
     '--widget-accent-soft': 'rgba(125, 211, 252, 0.12)',
     '--widget-accent-rgb': '56, 189, 248',
-    '--widget-header-background': 'linear-gradient(150deg, #0e1624 0%, #0c1a2e 60%, #0d2a45 100%)',
-    '--widget-header-border': 'rgba(125, 211, 252, 0.14)',
+    '--widget-header-background': 'linear-gradient(135deg, #103356 0%, #0c1f36 55%, #0a2b46 100%)',
+    '--widget-header-glow': 'rgba(56, 189, 248, 0.22)',
+    '--widget-header-text': '#e8f1ff',
+    '--widget-header-muted': 'rgba(174, 199, 228, 0.85)',
     '--widget-header-shadow': 'none',
-    '--widget-header-button-background': 'rgba(125,211,252,0.06)',
-    '--widget-header-button-text': '#94a8c4',
-    '--widget-header-online-border': '#0e1624',
+    '--widget-header-button-background': 'rgba(125, 211, 252, 0.1)',
+    '--widget-header-button-border': 'rgba(125, 211, 252, 0.26)',
+    '--widget-header-button-text': '#d5e6fb',
     '--widget-message-ai': '#102338',
     '--widget-message-customer': 'linear-gradient(135deg, #38bdf8 0%, #0ea5e9 100%)',
     '--widget-customer-text': '#04121f',
