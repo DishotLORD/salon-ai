@@ -2,9 +2,10 @@
 
 import { AnimatePresence, motion } from 'framer-motion'
 import Link from 'next/link'
+import { AuthBrandVideo } from '@/components/auth-brand-video'
 import { BrandTransitionLink } from '@/components/brand-transition-link'
 import { OceanCoreLogoCompact } from '@/components/oceancore-logo'
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 
 import { WELCOME_SPLASH_FLAG } from '@/components/dashboard-splash'
 import { defaultSystemPrompt } from '@/lib/default-system-prompt'
@@ -237,27 +238,6 @@ function SummaryRow({ label, value }: { label: string; value: string }) {
 // ─── Brand panel (signup variant) ─────────────────────────────
 
 function SignupBrandPanel() {
-  const videoRef = useRef<HTMLVideoElement>(null)
-
-  useEffect(() => {
-    const video = videoRef.current
-    if (!video) return
-    const tryPlay = () => {
-      video.play().catch(() => {
-        const resume = () => { video.play().catch(() => {}); window.removeEventListener('pointerdown', resume) }
-        window.addEventListener('pointerdown', resume, { once: true })
-      })
-    }
-    tryPlay()
-    video.addEventListener('canplay', tryPlay)
-    const onVisible = () => { if (document.visibilityState === 'visible') tryPlay() }
-    document.addEventListener('visibilitychange', onVisible)
-    return () => {
-      video.removeEventListener('canplay', tryPlay)
-      document.removeEventListener('visibilitychange', onVisible)
-    }
-  }, [])
-
   const features = [
     'Guided setup in under five minutes',
     'No credit card required to begin',
@@ -276,13 +256,7 @@ function SignupBrandPanel() {
           background: 'radial-gradient(130% 100% at 25% 18%, #0f476b 0%, #0a3150 34%, #061d31 64%, #03101e 100%)',
         }}
       />
-      <video
-        ref={videoRef}
-        autoPlay muted loop playsInline preload="auto"
-        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: -2 }}
-      >
-        <source src="https://ffophqyrencnuxpkwlqk.supabase.co/storage/v1/object/public/media/ocean.mp4" type="video/mp4" />
-      </video>
+      <AuthBrandVideo />
       <div
         aria-hidden
         style={{
