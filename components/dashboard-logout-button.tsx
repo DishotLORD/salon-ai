@@ -3,8 +3,8 @@
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { useCallback, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useRouter } from 'next/navigation'
 
+import { LOGIN_PATH } from '@/lib/auth-routes'
 import { supabase } from '@/lib/supabase'
 import { modalContent, modalOverlay } from '@/lib/ocean-motion'
 
@@ -19,7 +19,6 @@ export function DashboardLogoutButton({
   open?: boolean
   onOpenChange?: (v: boolean) => void
 } = {}) {
-  const router = useRouter()
   const [internalOpen, setInternalOpen] = useState(false)
   const open = controlledOpen ?? internalOpen
   const setOpen = useCallback(
@@ -53,10 +52,15 @@ export function DashboardLogoutButton({
     setIsSigningOut(true)
     try {
       await supabase.auth.signOut()
-      router.push('/auth/login')
-    } finally {
-      setIsSigningOut(false)
+    } catch {
+      // Network died mid-sign-out: the local session is gone either way, and
+      // the reload below lands on the login page. Never strand the owner in a
+      // dashboard they believe they have left.
     }
+    // A full document load, not router.push: it drops React's client-side
+    // router cache — which still holds the rendered dashboard — and `replace`
+    // leaves no history entry to go Back to.
+    window.location.replace(LOGIN_PATH)
   }
 
   const transition = reduceMotion ? { duration: 0.01 } : undefined

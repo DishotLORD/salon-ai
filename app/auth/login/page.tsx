@@ -4,9 +4,11 @@ import { AnimatePresence, motion } from 'framer-motion'
 import Link from 'next/link'
 import { BrandTransitionLink } from '@/components/brand-transition-link'
 import { OceanCoreLogoCompact } from '@/components/oceancore-logo'
+import { useSearchParams } from 'next/navigation'
 import { Suspense, useEffect, useRef, useState } from 'react'
 
 import { WELCOME_SPLASH_FLAG } from '@/components/dashboard-splash'
+import { NEXT_PARAM, safeNextPath } from '@/lib/auth-routes'
 import { supabase } from '@/lib/supabase'
 
 function cn(...values: Array<string | false | null | undefined>) {
@@ -236,6 +238,9 @@ function BrandPanel() {
 }
 
 function LoginContent() {
+  const searchParams = useSearchParams()
+  /** Where the proxy turned this visitor away from, if anywhere. */
+  const nextPath = safeNextPath(searchParams.get(NEXT_PARAM))
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [emailFocused, setEmailFocused] = useState(false)
@@ -257,9 +262,11 @@ function LoginContent() {
     }
     try { sessionStorage.setItem(WELCOME_SPLASH_FLAG, '1') } catch { /* storage blocked */ }
     const userId = data.user?.id
-    if (!userId) { window.location.replace('/dashboard'); return }
+    if (!userId) { window.location.replace(nextPath); return }
     const { data: business } = await supabase.from('businesses').select('id').eq('user_id', userId).maybeSingle()
-    window.location.replace(business ? '/dashboard' : '/onboarding')
+    // Back where they were headed — but an account with no business has to
+    // finish onboarding first, whatever page it was aiming at.
+    window.location.replace(business ? nextPath : '/onboarding')
   }
 
   const handleGoogleSignIn = async () => {
@@ -268,7 +275,9 @@ function LoginContent() {
     setLoading(true)
     const { error: oauthError } = await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: `${window.location.origin}/auth/callback` },
+      options: {
+        redirectTo: `${window.location.origin}/auth/callback?${NEXT_PARAM}=${encodeURIComponent(nextPath)}`,
+      },
     })
     if (oauthError) { setError(oauthError.message); setLoading(false) }
   }
