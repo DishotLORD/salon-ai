@@ -72,6 +72,7 @@ import {
 } from "@/lib/payment-settings";
 import { defaultSystemPrompt } from "@/lib/default-system-prompt";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { absoluteUrl } from "@/lib/site-url";
 import { appBaseUrl, getStripe } from "@/lib/stripe";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { verifyBusinessOwner } from "@/lib/verify-business-owner";
@@ -4181,9 +4182,10 @@ function queueBookingChangeOwnerEmail(
         : "Reservation rescheduled";
       const headerBg = isCancel ? "#7c2d12" : "#0c1a2e";
       const accent = isCancel ? "#fdba74" : "#38bdf8";
-      const dashboardUrl = process.env.NEXT_PUBLIC_APP_URL
-        ? `${process.env.NEXT_PUBLIC_APP_URL}/dashboard/bookings`
-        : "https://app.oceancore.co/dashboard/bookings";
+      // absoluteUrl reads Vercel's own domain vars, so a deploy that never set
+      // NEXT_PUBLIC_APP_URL still links the owner to their real dashboard
+      // instead of a guessed hostname.
+      const dashboardUrl = absoluteUrl("/dashboard/bookings");
 
       const fmtDate = (dateKey: string) =>
         new Date(`${dateKey}T12:00:00`).toLocaleDateString("en-US", {
@@ -4291,9 +4293,10 @@ function queueReservationBookedEmail(
       const zoneLabel = escapeHtml(details.zone ?? "Main dining");
       const guestNameHtml = escapeHtml(details.guestName);
       const notesHtml = details.notes ? escapeHtml(details.notes) : null;
-      const dashboardUrl = process.env.NEXT_PUBLIC_APP_URL
-        ? `${process.env.NEXT_PUBLIC_APP_URL}/dashboard/bookings`
-        : "https://app.oceancore.co/dashboard/bookings";
+      // absoluteUrl reads Vercel's own domain vars, so a deploy that never set
+      // NEXT_PUBLIC_APP_URL still links the owner to their real dashboard
+      // instead of a guessed hostname.
+      const dashboardUrl = absoluteUrl("/dashboard/bookings");
 
       // Format date: 2026-06-16 → Mon, Jun 16 2026
       const dateObj = new Date(`${details.date}T12:00:00`);

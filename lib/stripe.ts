@@ -1,5 +1,7 @@
 import Stripe from 'stripe'
 
+import { siteUrl } from '@/lib/site-url'
+
 let cached: Stripe | null = null
 
 export function isStripeConfigured(): boolean {
@@ -14,13 +16,11 @@ export function getStripe(): Stripe | null {
   return cached
 }
 
-/** Absolute base URL for redirect targets (payment success/cancel pages). */
+/**
+ * Absolute base URL for redirect targets (payment success/cancel pages).
+ * Kept as a name of its own because payment code reads better for it; the
+ * resolution itself lives in one place now.
+ */
 export function appBaseUrl(request?: Request): string {
-  const env = process.env.NEXT_PUBLIC_APP_URL?.trim() || process.env.APP_URL?.trim()
-  if (env) return env.replace(/\/$/, '')
-  if (request) {
-    const origin = new URL(request.url).origin
-    if (origin) return origin
-  }
-  return 'http://localhost:3000'
+  return siteUrl(request)
 }

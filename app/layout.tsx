@@ -1,8 +1,9 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono, Inter, Montserrat, Playfair_Display, Plus_Jakarta_Sans } from "next/font/google";
 
 import { AppProviders } from "@/components/app-providers";
 import { SessionGuard } from "@/components/session-guard";
+import { siteUrl } from "@/lib/site-url";
 
 import "./globals.css";
 
@@ -40,10 +41,68 @@ const plusJakarta = Plus_Jakarta_Sans({
   weight: ["400", "500", "600", "700", "800"],
 });
 
+const TITLE = "OceanCore — AI Concierge for Restaurants & Bars";
+const DESCRIPTION =
+  "Handle reservations, guest questions, and revenue growth automatically with OceanCore — a 24/7 AI concierge for restaurants and bars.";
+
+/**
+ * metadataBase is what turns every relative URL below — the OG image, the
+ * canonical tag — into the absolute one crawlers and link unfurlers require.
+ * Without it Next warns at build time and falls back to localhost, which is how
+ * a shared link ends up with no preview card at all.
+ */
 export const metadata: Metadata = {
-  title: "OceanCore — AI Concierge for Restaurants & Bars",
-  description:
-    "Handle reservations, guest questions, and revenue growth automatically with OceanCore — a 24/7 AI concierge for restaurants and bars.",
+  metadataBase: new URL(siteUrl()),
+  title: {
+    default: TITLE,
+    // Sub-pages set a short title and inherit the brand tail.
+    template: "%s — OceanCore",
+  },
+  description: DESCRIPTION,
+  applicationName: "OceanCore",
+  keywords: [
+    "restaurant reservation software",
+    "AI concierge",
+    "restaurant AI chatbot",
+    "table booking system",
+    "guest CRM",
+    "restaurant automation",
+  ],
+  authors: [{ name: "OceanCore" }],
+  creator: "OceanCore",
+  alternates: { canonical: "/" },
+  openGraph: {
+    type: "website",
+    siteName: "OceanCore",
+    title: TITLE,
+    description: DESCRIPTION,
+    url: "/",
+    locale: "en_CA",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: TITLE,
+    description: DESCRIPTION,
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: { index: true, follow: true, "max-image-preview": "large" },
+  },
+  formatDetection: { telephone: false, address: false },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  // The dashboard is used one-handed on a phone; pinch-zoom stays available.
+  maximumScale: 5,
+  // Colours the iOS/Android browser chrome to match whichever theme is active,
+  // so the status bar stops looking like it belongs to a different app.
+  themeColor: [
+    { media: "(prefers-color-scheme: dark)", color: "#050d1a" },
+    { media: "(prefers-color-scheme: light)", color: "#f0f4f8" },
+  ],
 };
 
 export default function RootLayout({
