@@ -22,8 +22,23 @@ import {
  * and writing the rotated cookies onto the outgoing response is what lets an
  * owner reload, or come back tomorrow, and still be signed in.
  */
+/**
+ * Scratch pages that exist to eyeball a component locally. The page components
+ * call notFound() too, but the root loading.tsx makes every response a streamed
+ * one, and a streamed 404 is documented to arrive with status 200 — a soft 404.
+ * Refused here, before a byte is streamed, the status is the real thing.
+ */
+const DEV_ONLY_PREFIXES = ['/loader-preview']
+
 export async function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl
+
+  if (
+    process.env.NODE_ENV === 'production' &&
+    DEV_ONLY_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`))
+  ) {
+    return new NextResponse(null, { status: 404 })
+  }
 
   // The embedded widget and its endpoints are opened by restaurant guests who
   // never have a session. Skipping them keeps a Supabase Auth round trip off
