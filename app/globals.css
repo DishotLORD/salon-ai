@@ -889,3 +889,163 @@ body {
   background: linear-gradient(180deg, var(--t-glass-highlight), transparent 28%);
 }
 
+
+/* ===========================================================
+   Sidebar rail — brand plate, section structure, item craft
+   =========================================================== */
+
+/*
+ * The lockup sat in bare padding and read as decoration rather than as the
+ * thing that names the product. This gives it a zone of its own.
+ */
+.oc-brand {
+  position: relative;
+  display: block;
+  padding: 26px 20px 24px;
+  text-decoration: none;
+  isolation: isolate;
+}
+
+/* Aurora behind the mark. Sized and placed to sit under the shell, not the
+   wordmark — a bloom centred on the whole lockup washes the type out. */
+.oc-brand-bloom {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  width: 118px;
+  height: 84px;
+  z-index: -1;
+  pointer-events: none;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 34% 46%,
+    rgba(96, 184, 255, 0.30) 0%,
+    rgba(96, 184, 255, 0.10) 38%,
+    rgba(96, 184, 255, 0) 70%
+  );
+  filter: blur(6px);
+  opacity: 0.85;
+  transition: opacity 0.45s ease, transform 0.45s ease;
+}
+
+.oc-brand:hover .oc-brand-bloom {
+  opacity: 1;
+  transform: scale(1.09);
+}
+
+.oc-brand-lockup {
+  display: block;
+  transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.oc-brand:hover .oc-brand-lockup {
+  transform: translateX(2px);
+}
+
+.oc-brand:focus-visible {
+  outline: 2px solid var(--t-accent);
+  outline-offset: -4px;
+  border-radius: 14px;
+}
+
+/* Bright in the middle, gone at both edges: depth, not a second rule. The
+   captions below still do the structural separating. */
+.oc-brand::after {
+  content: "";
+  position: absolute;
+  left: 20px;
+  right: 20px;
+  bottom: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    rgba(125, 211, 252, 0) 0%,
+    rgba(125, 211, 252, 0.26) 45%,
+    rgba(125, 211, 252, 0) 100%
+  );
+}
+
+/*
+ * Section captions get a hairline running from the label to the right edge.
+ * An old editorial trick: it groups what follows without adding weight, which
+ * a box or a full rule both would.
+ */
+.oc-side-caption {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--t-sidebar-caption);
+}
+
+.oc-side-caption::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.09) 0%,
+    rgba(255, 255, 255, 0) 100%
+  );
+}
+
+/* The icon leads the movement on hover — 1px is enough to feel like the row
+   answered without anything appearing to shift. */
+.oc-side-link:hover .oc-side-icon {
+  transform: translateX(1px);
+}
+
+.oc-side-icon {
+  transition: color 0.18s ease, transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+    filter 0.22s ease;
+}
+
+/* The active icon carries the accent already; a soft bloom under it makes the
+   current page findable in a glance rather than by reading. */
+.oc-side-link[data-active="true"] .oc-side-icon {
+  filter: drop-shadow(0 0 7px rgba(96, 184, 255, 0.55));
+}
+
+/* A single sheen when a row becomes active. It plays once — a loop here would
+   be a distraction sitting permanently in the corner of the eye. */
+.oc-side-link[data-active="true"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  overflow: hidden;
+  background: linear-gradient(
+    100deg,
+    transparent 20%,
+    rgba(255, 255, 255, 0.13) 50%,
+    transparent 80%
+  );
+  background-size: 220% 100%;
+  animation: oc-side-sheen 0.9s cubic-bezier(0.4, 0, 0.2, 1) 1 forwards;
+}
+
+@keyframes oc-side-sheen {
+  from {
+    background-position: 180% 0;
+  }
+  to {
+    background-position: -80% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oc-brand-bloom,
+  .oc-brand-lockup,
+  .oc-side-icon {
+    transition: none;
+  }
+  .oc-brand:hover .oc-brand-bloom,
+  .oc-brand:hover .oc-brand-lockup,
+  .oc-side-link:hover .oc-side-icon {
+    transform: none;
+  }
+  .oc-side-link[data-active="true"]::after {
+    animation: none;
+    background: none;
+  }
+}
