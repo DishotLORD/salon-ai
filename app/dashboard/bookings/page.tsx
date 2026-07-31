@@ -8,6 +8,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { resolveBusinessAccess } from '@/lib/business-access'
 import { BookingsDayChips, BookingsDayEmptyStrip } from '@/components/bookings-day-chips'
 import { WaitlistPanel } from '@/components/waitlist-panel'
+import { toStatusKind } from '@/lib/appointment-status'
+import { reservationCsvFilename, reservationsToCsv } from '@/lib/guest-csv'
 import { BookingsLightCalendar } from '@/components/bookings-light-calendar'
 import { BookingsDayTimeline } from '@/components/bookings-day-timeline'
 import { DashboardOceanNav } from '@/components/dashboard-ocean-nav'
@@ -105,13 +107,10 @@ type ModalMode = 'add' | 'edit'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function normalizeStatus(raw: string | null | undefined): ResStatus {
-  const s = (raw ?? '').toLowerCase()
-  if (s === 'confirmed') return 'confirmed'
-  if (s === 'seated') return 'seated'
-  if (s === 'no-show' || s === 'noshow') return 'no-show'
-  if (s === 'completed') return 'seated'
-  if (s === 'cancelled' || s === 'canceled') return 'cancelled'
-  return 'pending'
+  const kind = toStatusKind(raw)
+  // The table has no separate "completed" chip; a finished booking reads as
+  // seated, which is what it looked like on the floor.
+  return kind === 'completed' ? 'seated' : kind
 }
 
 // service_name encoding: "Guest Name · Party of N · Table T · Notes: special text"
@@ -2617,6 +2616,25 @@ export default function BookingsPage() {
     if (error) {
       setReservations(previous)
       setUpdateError("Couldn't update reservation. Please try again.")
+      return
+    }
+
+    /*
+     * A table given back is a table someone on the waitlist may be waiting for —
+     * and the concierge promised that guest we would reach out. This client
+     * cannot read another guest's queue row or send mail, so it asks the server
+     * to. Deliberately not awaited and never surfaced as an error: the status
+     * change itself succeeded, and a failed courtesy email must not make the
+     * cancellation look like it failed.
+     */
+    if (status === 'cancelled' || status === 'no-show') {
+      void fetch('/api/waitlist/slot-freed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ appointment_id: id }),
+      }).catch(() => {
+        /* offline — staff still see the freed slot in the waitlist panel */
+      })
     }
   }
 
@@ -3580,9 +3598,63 @@ export default function BookingsPage() {
                           )
                         })}
                       </div>
-                      {tableSearchHint && (
-                        <span style={{ fontSize: bk.micro, color: 'var(--bk-muted)', fontWeight: 500 }}>{tableSearchHint}</span>
-                      )}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' as const }}>
+                        {tableSearchHint && (
+                          <span style={{ fontSize: bk.micro, color: 'var(--bk-muted)', fontWeight: 500 }}>{tableSearchHint}</span>
+                        )}
+                        {/* Exports what the filters currently show — the whole
+                            point of narrowing to "tonight" or "cancelled" is that
+                            the file matches. Their reservations are their data;
+                            reading them off the screen was the only way out. */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const blob = new Blob([reservationsToCsv(filteredTableReservations)], {
+                              type: 'text/csv;charset=utf-8',
+                            })
+                            const url = URL.createObjectURL(blob)
+                            const link = document.createElement('a')
+                            link.href = url
+                            link.download = reservationCsvFilename()
+                            link.click()
+                            // Revoking immediately can cancel the download in Safari.
+                            setTimeout(() => URL.revokeObjectURL(url), 1000)
+                          }}
+                          disabled={loading || filteredTableReservations.length === 0}
+                          title={
+                            filteredTableReservations.length === 0
+                              ? 'Nothing to export'
+                              : `Download ${filteredTableReservations.length} reservations as a CSV`
+                          }
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 6,
+                            padding: '5px 11px',
+                            borderRadius: 999,
+                            border: bk.border,
+                            background: 'var(--bk-card)',
+                            color:
+                              loading || filteredTableReservations.length === 0
+                                ? 'var(--bk-muted)'
+                                : 'var(--bk-body)',
+                            fontSize: bk.caption,
+                            fontWeight: 600,
+                            whiteSpace: 'nowrap' as const,
+                            cursor:
+                              loading || filteredTableReservations.length === 0
+                                ? 'not-allowed'
+                                : 'pointer',
+                          }}
+                        >
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                            <path d="M7 10l5 5 5-5" />
+                            <path d="M12 15V3" />
+                          </svg>
+                          Export CSV
+                        </button>
+                      </div>
                     </div>
                   </div>
 

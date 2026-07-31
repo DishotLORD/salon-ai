@@ -5,6 +5,8 @@ import { getDashboardContext } from '@/lib/dashboard-context'
 import { DashboardClient, type RecentActivity, type ZoneOccupancy } from './dashboard-client'
 
 const ACTIVITY_LIMIT = 4
+/** Enough of today's traffic for a stable median without reading a whole service. */
+const RESPONSE_SAMPLE_LIMIT = 500
 
 function truncate(value: string, max = 96): string {
   const trimmed = value.trim().replace(/\s+/g, ' ')
@@ -24,10 +26,25 @@ export default async function Dashboard() {
 
   const businessId = access.businessId
 
-  const todayStart = new Date()
+  // One clock reading for the whole page, so every window below lines up.
+  const now = new Date()
+  const todayStart = new Date(now)
   todayStart.setHours(0, 0, 0, 0)
   const todayStartISO = todayStart.toISOString()
-  const todayEndISO = new Date(new Date().setHours(23, 59, 59, 999)).toISOString()
+  const todayEnd = new Date(now)
+  todayEnd.setHours(23, 59, 59, 999)
+  const todayEndISO = todayEnd.toISOString()
+
+  // The stat cards used to carry hardcoded deltas ("+18%", "-0.6s"). A restaurant
+  // owner reads those as measurements. These are the windows the real ones come
+  // from — the same clock time yesterday, so a half-finished day is compared
+  // against half a day.
+  const yesterdayStart = new Date(todayStart)
+  yesterdayStart.setDate(yesterdayStart.getDate() - 1)
+  const yesterdayStartISO = yesterdayStart.toISOString()
+  const yesterdaySameTime = new Date(now)
+  yesterdaySameTime.setDate(yesterdaySameTime.getDate() - 1)
+  const yesterdaySameTimeISO = yesterdaySameTime.toISOString()
 
   // None of these depend on each other, so they go out together: run as a
   // waterfall they cost the sum of five round trips before the page can paint.
@@ -38,7 +55,11 @@ export default async function Dashboard() {
     { data: zonesData },
     { data: todayAppts },
   ] = await Promise.all([
-    supabase.from('businesses').select('id, name, agent_name').eq('id', businessId).maybeSingle(),
+    supabase
+      .from('businesses')
+      .select('id, name, agent_name, operating_hours, menu_pdf_text')
+      .eq('id', businessId)
+      .maybeSingle(),
     supabase
       .from('conversations')
       .select('*', { count: 'exact', head: true })
@@ -89,7 +110,7 @@ export default async function Dashboard() {
   // Today's message count is chunked to keep the `in` filter off the URL length
   // limit; the chunks are independent, so they go out at once rather than one
   // round trip per 200 conversations.
-  const [chunkCounts, latestRes] = await Promise.all([
+  const [chunkCounts, latestRes, yesterdayCounts, todayMessagesRes] = await Promise.all([
     Promise.all(
       idChunks.map((chunk) =>
         supabase
@@ -107,9 +128,62 @@ export default async function Dashboard() {
           .order('created_at', { ascending: false })
           .limit(ACTIVITY_LIMIT)
       : null,
+    Promise.all(
+      idChunks.map((chunk) =>
+        supabase
+          .from('messages')
+          .select('*', { count: 'exact', head: true })
+          .in('conversation_id', chunk)
+          .gte('created_at', yesterdayStartISO)
+          .lt('created_at', yesterdaySameTimeISO),
+      ),
+    ),
+    // Capped: a busy Saturday can run to thousands of messages, and the median
+    // is stable long before that. Oldest-first so the pairing below reads in order.
+    conversationIds.length > 0
+      ? supabase
+          .from('messages')
+          .select('role, created_at, conversation_id')
+          .in('conversation_id', conversationIds)
+          .gte('created_at', todayStartISO)
+          .order('created_at', { ascending: true })
+          .limit(RESPONSE_SAMPLE_LIMIT)
+      : null,
   ])
 
   const messageCount = chunkCounts.reduce((sum, { count }) => sum + (count ?? 0), 0)
+  const messageCountYesterday = yesterdayCounts.reduce((sum, { count }) => sum + (count ?? 0), 0)
+
+  /*
+   * How long a guest waits for the concierge, today. Measured as the gap from a
+   * guest message to the next assistant message in the same conversation, and
+   * reported as the median — one stalled thread should not move the number the
+   * way a mean would.
+   */
+  const responseGaps: number[] = []
+  {
+    const awaiting = new Map<string, number>()
+    for (const row of todayMessagesRes?.data ?? []) {
+      const conversationId = String(row.conversation_id ?? '')
+      const at = new Date(String(row.created_at ?? '')).getTime()
+      if (!conversationId || !Number.isFinite(at)) continue
+      if (row.role === 'assistant') {
+        const askedAt = awaiting.get(conversationId)
+        if (askedAt !== undefined) {
+          responseGaps.push((at - askedAt) / 1000)
+          awaiting.delete(conversationId)
+        }
+      } else if (!awaiting.has(conversationId)) {
+        // Only the first of a burst counts: a guest sending three lines in a row
+        // is one wait, not three.
+        awaiting.set(conversationId, at)
+      }
+    }
+  }
+  const medianResponseSeconds =
+    responseGaps.length > 0
+      ? [...responseGaps].sort((a, b) => a - b)[Math.floor(responseGaps.length / 2)]
+      : null
 
   {
     const latest = latestRes?.data
@@ -164,6 +238,47 @@ export default async function Dashboard() {
     guestsToday: guestsByZone.get(String(z.id)) ?? 0,
   }))
 
+  /*
+   * What a newly signed-up owner still has to do. Onboarding collects the venue's
+   * identity and nothing else, so someone can finish it, land here on an empty
+   * dashboard, and never learn that the widget is not on their website yet —
+   * which is the one step without which none of this does anything.
+   *
+   * Every signal is derived from data already fetched above, so the checklist
+   * costs no extra round trip and cannot go stale.
+   */
+  const setupSteps = [
+    {
+      id: 'widget',
+      title: 'Put the concierge on your website',
+      description: 'One line of code. Until it is live, no guest can reach it.',
+      href: '/dashboard/settings?tab=widget',
+      done: conversationsList.length > 0,
+    },
+    {
+      id: 'hours',
+      title: 'Set your opening hours',
+      description: 'The concierge will not offer a table outside them.',
+      href: '/dashboard/settings?category=restaurant',
+      done: business.operating_hours != null,
+    },
+    {
+      id: 'menu',
+      title: 'Add your menu',
+      description: 'So it can answer what is on it, and what is in a dish.',
+      href: '/dashboard/settings?tab=menu',
+      done:
+        typeof business.menu_pdf_text === 'string' && business.menu_pdf_text.trim().length > 0,
+    },
+    {
+      id: 'seating',
+      title: 'Describe your seating',
+      description: 'Dining areas and how many parties each can hold at once.',
+      href: '/dashboard/settings?category=reservations',
+      done: zoneOccupancy.length > 0,
+    },
+  ]
+
   return (
     <DashboardClient
       businessDisplayName={businessDisplayName}
@@ -171,8 +286,11 @@ export default async function Dashboard() {
       businessId={businessId}
       activeChats={activeChats}
       messageCount={messageCount}
+      messageCountYesterday={messageCountYesterday}
+      medianResponseSeconds={medianResponseSeconds}
       recentActivity={recentActivity}
       zoneOccupancy={zoneOccupancy}
+      setupSteps={setupSteps}
     />
   )
 }
