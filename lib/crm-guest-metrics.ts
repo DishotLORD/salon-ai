@@ -1,3 +1,4 @@
+import { isNoShowStatus } from '@/lib/appointment-status'
 import { parsePartySizeFromServiceName } from '@/lib/appointment-service-name'
 import type { CrmCustomer, CrmCustomerBase } from '@/lib/crm-customer'
 import { deriveGuestTags, formatGuestDisplayDate } from '@/lib/guest-display'
@@ -16,10 +17,6 @@ export type CustomerBookingMetrics = {
   hasNoShow: boolean
 }
 
-function isNoShowStatus(status: string | null | undefined): boolean {
-  const s = (status ?? '').toLowerCase()
-  return s === 'no-show' || s === 'noshow'
-}
 
 /** All appointments linked to a customer_id (any status). */
 export function buildCustomerMetricsMap(
