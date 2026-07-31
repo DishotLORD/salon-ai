@@ -908,29 +908,34 @@ body {
 
 /* Aurora behind the mark. Sized and placed to sit under the shell, not the
    wordmark — a bloom centred on the whole lockup washes the type out. */
+/*
+ * Much quieter than it started. The first attempt used a broad glow to make the
+ * logo stand out and it did not work: light behind line art only lifts the
+ * background. The tile does that job now, so this is reduced to the spill a
+ * bright object would actually throw onto the surface behind it — remove it and
+ * the tile looks pasted on.
+ */
 .oc-brand-bloom {
   position: absolute;
-  left: 6px;
-  top: 6px;
-  width: 118px;
-  height: 84px;
+  left: 8px;
+  top: 16px;
+  width: 62px;
+  height: 62px;
   z-index: -1;
   pointer-events: none;
   border-radius: 50%;
   background: radial-gradient(
-    circle at 34% 46%,
-    rgba(96, 184, 255, 0.30) 0%,
-    rgba(96, 184, 255, 0.10) 38%,
-    rgba(96, 184, 255, 0) 70%
+    circle,
+    rgba(56, 189, 248, 0.22) 0%,
+    rgba(56, 189, 248, 0.07) 45%,
+    rgba(56, 189, 248, 0) 72%
   );
-  filter: blur(6px);
-  opacity: 0.85;
-  transition: opacity 0.45s ease, transform 0.45s ease;
+  filter: blur(9px);
+  transition: opacity 0.4s ease, transform 0.4s ease;
 }
 
 .oc-brand:hover .oc-brand-bloom {
-  opacity: 1;
-  transform: scale(1.09);
+  transform: scale(1.14);
 }
 
 .oc-brand-lockup {
@@ -939,7 +944,7 @@ body {
 }
 
 .oc-brand:hover .oc-brand-lockup {
-  transform: translateX(2px);
+  transform: translateY(-1px);
 }
 
 .oc-brand:focus-visible {
