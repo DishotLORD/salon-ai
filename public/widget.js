@@ -57,6 +57,15 @@
   /** Below this the chat takes the whole screen, the way a phone keyboard expects. */
   var COMPACT_MAX = 520
   var MESSAGE_SOURCE = 'oceancore-widget'
+  /**
+   * How long a dismissed greeting stays dismissed. It used to live in a variable,
+   * so a guest who closed it got it again on the very next page — and a
+   * restaurant site is four or five pages before anyone even reaches the menu.
+   */
+  var NUDGE_MUTE_MS = 7 * 24 * 60 * 60 * 1000
+  var NUDGE_STORE_KEY = 'oceancore-nudge-muted-' + businessId
+  /** Per-tab, so navigating the site keeps an open chat open — and a new visit does not. */
+  var OPEN_STORE_KEY = 'oceancore-chat-open-' + businessId
 
   var isOpen = false
   var iframeLoaded = false
@@ -68,6 +77,47 @@
   var prevRootOverflow = ''
   var frameReady = false
   var revealTimer = null
+  /** Replies that landed while the panel was hidden. */
+  var unreadCount = 0
+  var previewShown = false
+
+  // ── Storage (private browsing throws on every access) ────────────────────────
+
+  function readStore(store, key) {
+    try {
+      return window[store] ? window[store].getItem(key) : null
+    } catch {
+      return null
+    }
+  }
+
+  function writeStore(store, key, value) {
+    try {
+      if (window[store]) window[store].setItem(key, value)
+    } catch {
+      /* full or blocked — the widget still works, it just forgets */
+    }
+  }
+
+  function clearStore(store, key) {
+    try {
+      if (window[store]) window[store].removeItem(key)
+    } catch {
+      /* noop */
+    }
+  }
+
+  function nudgeMuted() {
+    var raw = readStore('localStorage', NUDGE_STORE_KEY)
+    if (!raw) return false
+    var at = parseInt(raw, 10)
+    if (!at || isNaN(at)) return false
+    if (Date.now() - at > NUDGE_MUTE_MS) {
+      clearStore('localStorage', NUDGE_STORE_KEY)
+      return false
+    }
+    return true
+  }
 
   /**
    * Every declaration goes in as !important. Restaurant sites are full of blanket
@@ -186,6 +236,49 @@
     dots.push(dot)
   })
   button.appendChild(svg)
+
+  // ── Unread badge ────────────────────────────────────────────────────────────
+  // A guest who asks a question and closes the bubble had no way of knowing the
+  // answer had arrived. This is the count every messaging widget has, for the
+  // same reason: without it the reply is written to nobody.
+
+  var badge = document.createElement('span')
+  badge.setAttribute('aria-hidden', 'true')
+  css(badge, {
+    'box-sizing': 'border-box',
+    position: 'absolute',
+    top: '-3px',
+    right: '-3px',
+    'min-width': '21px',
+    height: '21px',
+    padding: '0 6px',
+    'border-radius': '999px',
+    background: '#ef4444',
+    color: '#ffffff',
+    border: '2px solid #ffffff',
+    font: '700 11px/17px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+    'text-align': 'center',
+    'letter-spacing': 'normal',
+    display: 'none',
+    'pointer-events': 'none',
+    'box-shadow': '0 2px 6px rgba(15,23,42,0.3)',
+  })
+  // The launcher is `position: fixed`, so the badge anchors to it directly.
+  button.style.setProperty('position', 'fixed', 'important')
+  button.appendChild(badge)
+
+  function renderBadge() {
+    if (unreadCount > 0 && !isOpen) {
+      badge.textContent = unreadCount > 9 ? '9+' : String(unreadCount)
+      css(badge, { display: 'block' })
+      button.setAttribute(
+        'aria-label',
+        unreadCount === 1 ? 'Open chat, 1 new message' : 'Open chat, ' + unreadCount + ' new messages',
+      )
+    } else {
+      css(badge, { display: 'none' })
+    }
+  }
 
   function hexToRgb(hex) {
     var m = /^#?([0-9a-f]{6})$/i.exec(hex || '')
@@ -310,9 +403,18 @@
   })
   nudge.appendChild(nudgeClose)
 
-  function showNudge() {
-    if (isOpen || nudgeVisible || nudgeSpent) {
+  /** Raise the bubble. `text` overrides the greeting — that is the reply preview. */
+  function showNudge(text) {
+    if (isOpen || nudgeVisible) {
       return
+    }
+    // The greeting is spent once per visit; a reply preview is news and shows
+    // regardless.
+    if (!text && nudgeSpent) {
+      return
+    }
+    if (text) {
+      nudgeText.textContent = text
     }
     nudgeVisible = true
     css(nudge, { display: 'block' })
@@ -321,12 +423,21 @@
     })
   }
 
-  function hideNudge() {
+  /**
+   * `remember` writes the dismissal to storage. Set when the guest closes the
+   * bubble themselves — that is the only signal that the greeting is unwanted, as
+   * opposed to merely superseded by them opening the chat.
+   */
+  function hideNudge(remember) {
     if (nudgeTimer) {
       window.clearTimeout(nudgeTimer)
       nudgeTimer = null
     }
     nudgeSpent = true
+    previewShown = false
+    if (remember) {
+      writeStore('localStorage', NUDGE_STORE_KEY, String(Date.now()))
+    }
     if (!nudgeVisible) {
       css(nudge, { display: 'none' })
       return
@@ -348,7 +459,7 @@
   })
   nudgeClose.addEventListener('click', function (e) {
     e.stopPropagation()
-    hideNudge()
+    hideNudge(true)
   })
 
   // ── Open / close ────────────────────────────────────────────────────────────
@@ -418,6 +529,19 @@
     if (isOpen) css(iframe, { opacity: '1' })
   }
 
+  /** Tell the panel whether the guest can actually see it, so it can count replies. */
+  function tellFrameVisibility(visible) {
+    if (!iframe.contentWindow) return
+    try {
+      iframe.contentWindow.postMessage(
+        { source: MESSAGE_SOURCE, type: 'visibility', visible: visible },
+        baseOrigin,
+      )
+    } catch {
+      /* frame not ready yet — setOpen tells it again once it says hello */
+    }
+  }
+
   function setOpen(open) {
     if (hideTimer) {
       window.clearTimeout(hideTimer)
@@ -437,6 +561,9 @@
     })
     if (open) {
       hideNudge()
+      unreadCount = 0
+      renderBadge()
+      writeStore('sessionStorage', OPEN_STORE_KEY, '1')
       if (!iframeLoaded) {
         iframe.src = widgetSrc
         iframeLoaded = true
@@ -450,13 +577,17 @@
       } else if (!revealTimer) {
         revealTimer = window.setTimeout(revealFrame, 1500)
       }
+      tellFrameVisibility(true)
       // Typing should land in the chat, not behind it.
       window.setTimeout(function () {
         if (isOpen && iframe.contentWindow) iframe.focus()
       }, 220)
     } else {
+      clearStore('sessionStorage', OPEN_STORE_KEY)
       applyFrameLayout()
       css(iframe, { opacity: '0' })
+      tellFrameVisibility(false)
+      renderBadge()
       hideTimer = window.setTimeout(function () {
         hideTimer = null
         if (!isOpen) {
@@ -486,8 +617,22 @@
     if (data.type === 'ready') {
       frameReady = true
       revealFrame()
+      // The frame may have booted while hidden — a restored session opens it
+      // behind the scenes — so state it plainly rather than assuming.
+      tellFrameVisibility(isOpen)
     } else if (data.type === 'close') {
       setOpen(false)
+    } else if (data.type === 'unread') {
+      unreadCount = typeof data.count === 'number' && data.count > 0 ? data.count : 0
+      renderBadge()
+      // Show the reply itself once, the way a phone shows the first line of a
+      // text. Repeating it for every message would turn the corner of the page
+      // into a feed.
+      if (unreadCount > 0 && !isOpen && !previewShown && typeof data.preview === 'string' && data.preview) {
+        previewShown = true
+        nudgeSpent = false
+        showNudge(data.preview)
+      }
     }
   })
 
@@ -511,13 +656,29 @@
       css(button, { opacity: '1', transform: 'none' })
     })
     armNudge()
+
+    /*
+     * A restaurant site is several pages deep — menu, hours, about — and the chat
+     * used to slam shut on every one of them, mid-conversation. Reopen it if it
+     * was open when the guest followed a link. Per-tab, so a fresh visit still
+     * starts with just the launcher.
+     */
+    if (readStore('sessionStorage', OPEN_STORE_KEY) === '1') {
+      setOpen(true)
+    }
   }
 
   function armNudge() {
-    if (nudgeSpent) {
-      return
+    // Dismissed within the last week: skip the greeting entirely. Brand colour
+    // and copy are still fetched below, because the launcher needs them.
+    if (nudgeMuted()) {
+      nudgeSpent = true
     }
-    nudgeTimer = window.setTimeout(showNudge, NUDGE_DELAY)
+    if (!nudgeSpent) {
+      nudgeTimer = window.setTimeout(function () {
+        showNudge()
+      }, NUDGE_DELAY)
+    }
     // Personalize the copy + tint the FAB to the restaurant brand when available.
     try {
       fetch(baseOrigin + '/api/widget/meta?id=' + encodeURIComponent(businessId))
@@ -528,10 +689,14 @@
           if (!meta) {
             return
           }
-          if (meta.agentName) {
-            nudgeText.textContent = "Hi! I'm " + meta.agentName + ' — can I help you book a table?'
-          } else if (meta.name) {
-            nudgeText.textContent = 'Hi! Can I help you book a table at ' + meta.name + '?'
+          // Never overwrite a reply the guest is being shown; this request can
+          // land seconds after the bubble is already carrying real news.
+          if (!previewShown) {
+            if (meta.agentName) {
+              nudgeText.textContent = "Hi! I'm " + meta.agentName + ' — can I help you book a table?'
+            } else if (meta.name) {
+              nudgeText.textContent = 'Hi! Can I help you book a table at ' + meta.name + '?'
+            }
           }
           if (meta.launcherColor) {
             applyLauncherColor(meta.launcherColor)
