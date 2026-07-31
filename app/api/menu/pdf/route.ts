@@ -3,10 +3,21 @@ import { pathToFileURL } from 'url'
 import { NextResponse } from 'next/server'
 import OpenAI from 'openai'
 
-export const maxDuration = 120 // 2 minutes for OCR of large PDFs
-
+import { MENU_PDF_MAX_BYTES, MENU_PDF_MAX_MB } from '@/lib/menu-pdf-limits'
+import { checkRateLimit } from '@/lib/rate-limit'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { verifyBusinessOwner } from '@/lib/verify-business-owner'
+
+export const maxDuration = 120 // 2 minutes for OCR of large PDFs
+
+
+/**
+ * OCR renders ten pages at 2.5× and sends them to GPT-4o Vision with a
+ * 16k-token budget. That is the single most expensive request this product can
+ * make, and re-uploading the same menu a few times in a row is a normal thing
+ * for someone to do while fiddling with settings. Capped per venue.
+ */
+const OCR_LIMIT_PER_HOUR = 12
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const pdfParse = require('pdf-parse') as (buf: Buffer) => Promise<{ text: string; numpages: number }>
@@ -123,7 +134,18 @@ async function verifyOwner(business_id: string): Promise<true | NextResponse> {
 
 // ── POST /api/menu/pdf ────────────────────────────────────────────────────────
 export async function POST(request: Request) {
-  const formData = await request.formData()
+  // A malformed multipart body threw straight out of the handler, so a truncated
+  // upload came back as a 500 with a stack trace instead of "try again".
+  let formData: FormData
+  try {
+    formData = await request.formData()
+  } catch {
+    return NextResponse.json(
+      { error: 'Could not read the upload. Please choose the file again.' },
+      { status: 400 },
+    )
+  }
+
   const business_id = formData.get('business_id')
   const file = formData.get('file')
   const forceOcr = formData.get('force_ocr') === '1' || formData.get('force_ocr') === 'true'
@@ -133,10 +155,35 @@ export async function POST(request: Request) {
   if (!(file instanceof Blob))
     return NextResponse.json({ error: 'file required' }, { status: 400 })
 
+  if (file.size > MENU_PDF_MAX_BYTES) {
+    const mb = (file.size / (1024 * 1024)).toFixed(1)
+    return NextResponse.json(
+      {
+        error: `That PDF is ${mb} MB — the limit is ${MENU_PDF_MAX_MB} MB. Export it at a lower resolution, or upload the food and drink menus separately.`,
+      },
+      { status: 413 },
+    )
+  }
+  if (file.size === 0) {
+    return NextResponse.json({ error: 'That file is empty.' }, { status: 400 })
+  }
+
   const check = await verifyOwner(business_id)
   if (check instanceof NextResponse) return check
 
   const buffer = Buffer.from(await file.arrayBuffer())
+
+  /*
+   * Trust the bytes, not the name or the browser's guess at a MIME type. A .docx
+   * renamed to .pdf used to get all the way through pdf-parse and Vision before
+   * failing with something unhelpful about rendering.
+   */
+  if (buffer.subarray(0, 5).toString('latin1') !== '%PDF-') {
+    return NextResponse.json(
+      { error: 'That does not look like a PDF. Export the menu as a PDF and try again.' },
+      { status: 415 },
+    )
+  }
 
   // Try text extraction first (fast, free)
   let text = ''
@@ -155,8 +202,34 @@ export async function POST(request: Request) {
   const parseIncomplete = () => parsedPdfLikelyIncomplete(text, pageCount)
   const shouldOcr = !text || forceOcr || parseIncomplete()
 
-  // Scanned PDFs, empty text layer, or "titles only" extraction → vision OCR
+  /*
+   * OCR is the expensive path, so it gets a budget. Spending it out is not
+   * necessarily an error: if the free text layer produced something usable we
+   * quietly hand that back instead. It is only fatal when there is nothing else.
+   */
+  let ocrAllowed = true
   if (shouldOcr) {
+    const ocrBudget = await checkRateLimit(`menu-ocr:${business_id}`, OCR_LIMIT_PER_HOUR, 3_600_000)
+    if (!ocrBudget.allowed) {
+      if (!text) {
+        return NextResponse.json(
+          {
+            error:
+              'This menu needs image reading, and that has been used heavily in the last hour. Try again shortly, or paste the menu text into Settings → Menu.',
+          },
+          {
+            status: 429,
+            headers: { 'Retry-After': String(ocrBudget.retryAfterSec ?? 600) },
+          },
+        )
+      }
+      console.warn('[pdf] OCR budget spent for', business_id, '— keeping the text-layer extraction')
+      ocrAllowed = false
+    }
+  }
+
+  // Scanned PDFs, empty text layer, or "titles only" extraction → vision OCR
+  if (shouldOcr && ocrAllowed) {
     const textBeforeOcr = text
     try {
       const ocrText = await ocrPdf(buffer)

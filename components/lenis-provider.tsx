@@ -1,16 +1,26 @@
 'use client'
 
 import { startTransition, useLayoutEffect, useState, type ReactNode } from 'react'
-import gsap from 'gsap'
-import { ScrollTrigger } from 'gsap/ScrollTrigger'
 import { usePathname } from 'next/navigation'
 
 import { LenisReadyContext } from '@/components/lenis-context'
 import { createLenis, destroyLenis } from '@/lib/lenis'
 
-gsap.registerPlugin(ScrollTrigger)
-
-let tickerFn: ((time: number) => void) | null = null
+/*
+ * This used to drive Lenis from `gsap.ticker` and wire up ScrollTrigger with a
+ * scrollerProxy — about 106 KB of GSAP on every page load, marketing and
+ * dashboard alike. Nothing ever used it: the only component that built GSAP
+ * animations was `ocean-landing-page.tsx`, which was replaced by `app/page.tsx`
+ * long ago and is not rendered anywhere. The live landing page reveals sections
+ * with an IntersectionObserver and CSS.
+ *
+ * So the ticker is a plain requestAnimationFrame loop now. Same smooth scroll,
+ * one fewer animation engine on the wire.
+ *
+ * If GSAP ScrollTrigger is ever genuinely needed, re-register it here and give
+ * it back the scrollerProxy — Lenis translates the document, so ScrollTrigger
+ * cannot read scroll position without one.
+ */
 
 // Lenis smooth scrolling is reserved for the marketing pages. App surfaces
 // (dashboard, onboarding, widget, login) have nested scroll containers and
@@ -52,44 +62,20 @@ export function LenisProvider({ children }: { children: ReactNode }) {
       return
     }
 
-    lenis.on('scroll', ScrollTrigger.update)
-
-    tickerFn = (time: number) => {
-      lenis.raf(time * 1000)
+    // rAF hands milliseconds, which is exactly what lenis.raf wants — the old
+    // gsap.ticker passed seconds, hence the `* 1000` that used to live here.
+    let frame = 0
+    const tick = (time: number) => {
+      lenis.raf(time)
+      frame = requestAnimationFrame(tick)
     }
-    gsap.ticker.add(tickerFn)
-    gsap.ticker.lagSmoothing(0)
-
-    ScrollTrigger.scrollerProxy(document.documentElement, {
-      scrollTop(value) {
-        if (typeof value === 'number') {
-          lenis.scrollTo(value, { immediate: true })
-        }
-        return lenis.scroll
-      },
-      getBoundingClientRect() {
-        return {
-          top: 0,
-          left: 0,
-          width: window.innerWidth,
-          height: window.innerHeight,
-          right: window.innerWidth,
-          bottom: window.innerHeight,
-        }
-      },
-      pinType: document.documentElement.style.transform ? 'transform' : 'fixed',
-    })
+    frame = requestAnimationFrame(tick)
 
     startTransition(() => setReady((n) => n + 1))
-    requestAnimationFrame(() => ScrollTrigger.refresh())
 
     return () => {
-      if (tickerFn) {
-        gsap.ticker.remove(tickerFn)
-        tickerFn = null
-      }
+      cancelAnimationFrame(frame)
       destroyLenis()
-      ScrollTrigger.refresh()
     }
   }, [enabled])
 

@@ -103,7 +103,7 @@ export function OceanCoreLogo({ variant = 'full', theme = 'dark', className }: O
         </div>
         {/* Wordmark with subtle gradient */}
         <span style={{
-          fontFamily: '"Space Grotesk", sans-serif',
+          fontFamily: 'var(--font-space-grotesk), "Space Grotesk", system-ui, sans-serif',
           fontSize: 17,
           fontWeight: 700,
           lineHeight: 1,
@@ -133,14 +133,14 @@ export function OceanCoreLogo({ variant = 'full', theme = 'dark', className }: O
       </div>
       <div>
         <div style={{
-          font: '700 46px/1 "Space Grotesk", sans-serif',
+          font: '700 46px/1 var(--font-space-grotesk), "Space Grotesk", system-ui, sans-serif',
           color: wordmarkColor,
           letterSpacing: '-0.028em',
         }}>
           OceanCore
         </div>
         <div style={{
-          font: '600 12.5px/1 "Space Grotesk", sans-serif',
+          font: '600 12.5px/1 var(--font-space-grotesk), "Space Grotesk", system-ui, sans-serif',
           color: accent,
           letterSpacing: '0.14em',
           textTransform: 'uppercase',
@@ -173,14 +173,14 @@ export function OceanCoreLogoCompact({ theme = 'dark', className }: { theme?: Lo
       </div>
       <div>
         <div style={{
-          font: '700 22px/1 "Space Grotesk", sans-serif',
+          font: '700 22px/1 var(--font-space-grotesk), "Space Grotesk", system-ui, sans-serif',
           color: wordmarkColor,
           letterSpacing: '-0.02em',
         }}>
           OceanCore
         </div>
         <div style={{
-          font: '600 8.3px/1 "Space Grotesk", sans-serif',
+          font: '600 8.3px/1 var(--font-space-grotesk), "Space Grotesk", system-ui, sans-serif',
           color: accent,
           letterSpacing: '0.12em',
           textTransform: 'uppercase',
