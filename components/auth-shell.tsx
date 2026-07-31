@@ -6,6 +6,7 @@ import type { ReactNode } from 'react'
 import { AuthBrandVideo } from '@/components/auth-brand-video'
 import { BrandTransitionLink } from '@/components/brand-transition-link'
 import { OceanCoreLogoCompact } from '@/components/oceancore-logo'
+import { fs, radius } from '@/lib/marketing-scale'
 
 /**
  * The furniture every sign-in surface shares: the video brand panel on the
@@ -84,7 +85,7 @@ export function AuthField({
   return (
     <motion.div
       className="relative mb-[14px]"
-      style={{ borderRadius: 13, borderWidth: 1, borderStyle: 'solid' }}
+      style={{ borderRadius: radius.sm, borderWidth: 1, borderStyle: 'solid' }}
       animate={{
         borderColor: focused ? 'rgba(56,189,248,0.55)' : 'rgba(255,255,255,0.10)',
         background: focused ? 'rgba(56,189,248,0.05)' : 'rgba(255,255,255,0.035)',
@@ -112,7 +113,7 @@ export function AuthField({
         onBlur={onBlur}
         autoComplete={autoComplete}
         className="w-full border-none bg-transparent text-[15px] text-[#f2f7fc] outline-none"
-        style={{ padding: '23px 44px 9px 43px', borderRadius: 13, caretColor: '#38bdf8' }}
+        style={{ padding: '23px 44px 9px 43px', borderRadius: radius.sm, caretColor: '#38bdf8' }}
       />
       <label
         htmlFor={id}
@@ -120,7 +121,7 @@ export function AuthField({
         style={{
           left: 43,
           top: active ? 7 : 16,
-          fontSize: active ? 10 : 14.5,
+          fontSize: active ? fs.micro : fs.body,
           fontWeight: active ? 600 : 400,
           letterSpacing: active ? '0.12em' : 0,
           textTransform: active ? 'uppercase' : 'none',
@@ -178,11 +179,11 @@ export function AuthSubmitButton({
       style={{
         height: 50,
         marginTop: 4,
-        borderRadius: 13,
+        borderRadius: radius.sm,
         border: 'none',
         background: 'linear-gradient(135deg, #38bdf8 0%, #0ea5e9 100%)',
         color: '#04121f',
-        fontSize: 15,
+        fontSize: fs.bodyLg,
         fontWeight: 700,
         letterSpacing: '0.01em',
         cursor: inactive ? 'not-allowed' : 'pointer',
@@ -279,7 +280,7 @@ export function AuthBrandPanel({
         <div
           className="mb-[22px] inline-flex items-center gap-2"
           style={{
-            fontSize: 12,
+            fontSize: fs.caption,
             fontWeight: 600,
             letterSpacing: '0.14em',
             textTransform: 'uppercase',
@@ -317,7 +318,7 @@ export function AuthBrandPanel({
             </>
           )}
         </h1>
-        <p style={{ fontSize: 16, lineHeight: 1.6, color: 'rgba(242,247,252,0.80)', maxWidth: 400 }}>
+        <p style={{ fontSize: fs.lead, lineHeight: 1.6, color: 'rgba(242,247,252,0.80)', maxWidth: 400 }}>
           {blurb}
         </p>
 
@@ -329,7 +330,7 @@ export function AuthBrandPanel({
                 style={{
                   width: 26,
                   height: 26,
-                  borderRadius: 8,
+                  borderRadius: radius.xs,
                   background: 'rgba(56,189,248,0.14)',
                   border: '1px solid rgba(56,189,248,0.28)',
                   color: '#38bdf8',
@@ -348,7 +349,7 @@ export function AuthBrandPanel({
                   <path d="M20 6 9 17l-5-5" />
                 </svg>
               </span>
-              <span style={{ fontSize: 14.5, fontWeight: 500, color: 'rgba(242,247,252,0.82)' }}>
+              <span style={{ fontSize: fs.body, fontWeight: 500, color: 'rgba(242,247,252,0.82)' }}>
                 {feat}
               </span>
             </div>
@@ -365,7 +366,7 @@ export function AuthBrandPanel({
           style={{
             width: 40,
             height: 40,
-            borderRadius: 11,
+            borderRadius: radius.sm,
             background: 'rgba(56,189,248,0.12)',
             border: '1px solid rgba(56,189,248,0.30)',
           }}
@@ -375,7 +376,7 @@ export function AuthBrandPanel({
             style={{ width: 9, height: 9, borderRadius: '50%', background: '#4ade80' }}
           />
         </div>
-        <p style={{ fontSize: 13, lineHeight: 1.45, color: 'rgba(242,247,252,0.62)' }}>
+        <p style={{ fontSize: fs.small, lineHeight: 1.45, color: 'rgba(242,247,252,0.62)' }}>
           <strong style={{ color: '#f2f7fc', fontWeight: 700 }}>Real people, on call 24/7.</strong>{' '}
           Our team helps you launch and answers whenever you need it.
         </p>
