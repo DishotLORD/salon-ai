@@ -89,71 +89,32 @@ export function OceanCoreLogo({ variant = 'full', theme = 'dark', className }: O
   }
 
   if (variant === 'sidebar') {
-    /*
-     * The mark sits in a tile rather than floating in the rail.
-     *
-     * A soft glow behind line art does not make a logo stand out — it just
-     * makes the background lighter. What reads as a brand is containment: a
-     * contoured mark in open space is an icon, the same mark in a filled shape
-     * is a logo. So the shell goes on the accent gradient the primary buttons
-     * already use, in white, at a size clearly above the 20px nav icons below
-     * it. Nothing else in the rail is a solid block of accent colour, which is
-     * exactly why the eye lands here first.
-     *
-     * The highlight along the top edge and the shadow beneath are the ordinary
-     * app-icon treatment: they give the tile a light source and lift it off the
-     * sidebar instead of letting it read as a flat sticker.
-     */
     return (
-      <div className={className} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <div
-          style={{
-            position: 'relative',
-            flexShrink: 0,
-            width: 38,
-            height: 38,
-            borderRadius: 12,
-            display: 'grid',
-            placeItems: 'center',
-            background: 'linear-gradient(150deg, #4cc4fb 0%, #38bdf8 42%, #0284c7 100%)',
-            boxShadow:
-              '0 6px 16px -4px rgba(56,189,248,0.55), 0 2px 5px -1px rgba(2,132,199,0.45), inset 0 1px 0 rgba(255,255,255,0.42)',
-          }}
-        >
-          <OceanCoreIconMark color="#f2fbff" size={25} />
+      <div className={className} style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
+        {/* Glow halo behind the icon */}
+        <div style={{ position: 'relative', flexShrink: 0 }}>
+          <div style={{
+            position: 'absolute',
+            inset: -10,
+            background: 'radial-gradient(circle, rgba(96,184,255,0.28) 0%, transparent 70%)',
+            pointerEvents: 'none',
+          }} />
+          <OceanCoreIconMark color={accent} size={28} glow glowId="glow-oc-sidebar" />
         </div>
-
-        <div style={{ display: 'grid', gap: 3 }}>
-          <span
-            style={{
-              fontFamily: 'var(--font-space-grotesk), "Space Grotesk", system-ui, sans-serif',
-              fontSize: 18,
-              fontWeight: 700,
-              lineHeight: 1,
-              letterSpacing: '-0.02em',
-              background: 'linear-gradient(135deg, #ffffff 35%, #a8d8ff 100%)',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent',
-              backgroundClip: 'text',
-            }}
-          >
-            OceanCore
-          </span>
-          {/* The same descriptor the marketing lockup carries. Two lines of
-              type read as a considered mark; one word reads as a label. */}
-          <span
-            style={{
-              fontSize: 8.5,
-              fontWeight: 700,
-              letterSpacing: '0.19em',
-              textTransform: 'uppercase',
-              color: 'rgba(125,211,252,0.72)',
-              lineHeight: 1,
-            }}
-          >
-            AI Concierge
-          </span>
-        </div>
+        {/* Wordmark with subtle gradient */}
+        <span style={{
+          fontFamily: '"Space Grotesk", sans-serif',
+          fontSize: 17,
+          fontWeight: 700,
+          lineHeight: 1,
+          letterSpacing: '-0.015em',
+          background: 'linear-gradient(135deg, #ffffff 40%, #a8d8ff 100%)',
+          WebkitBackgroundClip: 'text',
+          WebkitTextFillColor: 'transparent',
+          backgroundClip: 'text',
+        }}>
+          OceanCore
+        </span>
       </div>
     )
   }
@@ -172,14 +133,14 @@ export function OceanCoreLogo({ variant = 'full', theme = 'dark', className }: O
       </div>
       <div>
         <div style={{
-          font: '700 46px/1 var(--font-space-grotesk), "Space Grotesk", system-ui, sans-serif',
+          font: '700 46px/1 "Space Grotesk", sans-serif',
           color: wordmarkColor,
           letterSpacing: '-0.028em',
         }}>
           OceanCore
         </div>
         <div style={{
-          font: '600 12.5px/1 var(--font-space-grotesk), "Space Grotesk", system-ui, sans-serif',
+          font: '600 12.5px/1 "Space Grotesk", sans-serif',
           color: accent,
           letterSpacing: '0.14em',
           textTransform: 'uppercase',
@@ -212,14 +173,14 @@ export function OceanCoreLogoCompact({ theme = 'dark', className }: { theme?: Lo
       </div>
       <div>
         <div style={{
-          font: '700 22px/1 var(--font-space-grotesk), "Space Grotesk", system-ui, sans-serif',
+          font: '700 22px/1 "Space Grotesk", sans-serif',
           color: wordmarkColor,
           letterSpacing: '-0.02em',
         }}>
           OceanCore
         </div>
         <div style={{
-          font: '600 8.3px/1 var(--font-space-grotesk), "Space Grotesk", system-ui, sans-serif',
+          font: '600 8.3px/1 "Space Grotesk", sans-serif',
           color: accent,
           letterSpacing: '0.12em',
           textTransform: 'uppercase',

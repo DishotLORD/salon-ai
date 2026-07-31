@@ -150,26 +150,12 @@ const navGroups: NavGroup[] = [
   },
 ]
 
-/**
- * The brand plate at the top of the rail.
- *
- * The lockup used to sit in bare padding, which is why it read as decoration
- * rather than as the thing that names the product — nothing framed it and
- * nothing separated it from the first nav item. It gets its own zone now: an
- * aurora bloom behind the mark, and a divider underneath that is bright where
- * the eye lands and fades out towards both edges, so it reads as depth rather
- * than as a second horizontal rule competing with the section captions.
- *
- * The bloom breathes on hover. Everything here is inert under
- * prefers-reduced-motion; see .oc-brand in globals.css.
- */
 function AnimatedWaveLogo() {
   return (
-    <Link href="/dashboard" className="oc-brand" aria-label="OceanCore dashboard">
-      <span className="oc-brand-bloom" aria-hidden="true" />
-      <span className="oc-brand-lockup">
+    <Link href="/dashboard" style={{ textDecoration: 'none' }}>
+      <div style={{ padding: '24px 20px 22px' }}>
         <OceanCoreLogo variant="sidebar" theme="dark" />
-      </span>
+      </div>
     </Link>
   )
 }
