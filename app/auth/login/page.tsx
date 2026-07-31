@@ -17,6 +17,7 @@ import {
 import { WELCOME_SPLASH_FLAG } from '@/components/dashboard-splash'
 import { NEXT_PARAM, safeNextPath } from '@/lib/auth-routes'
 import { supabase } from '@/lib/supabase'
+import { fs, radius } from '@/lib/marketing-scale'
 
 function cn(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(' ')
@@ -88,19 +89,19 @@ function LoginContent() {
       <AuthFormPanel>
           {/* Head */}
           <div style={{ marginBottom: 28 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#38bdf8', marginBottom: 10 }}>
+            <div style={{ fontSize: fs.caption, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#38bdf8', marginBottom: 10 }}>
               Welcome back
             </div>
             <h2
               style={{
                 fontFamily: 'var(--font-playfair), Georgia, serif',
-                fontSize: 30, fontWeight: 600, letterSpacing: '-0.01em', lineHeight: 1.12,
+                fontSize: fs.formTitle, fontWeight: 600, letterSpacing: '-0.01em', lineHeight: 1.12,
                 color: '#f2f7fc',
               }}
             >
               Sign in to OceanCore
             </h2>
-            <p style={{ marginTop: 9, fontSize: 14.5, lineHeight: 1.5, color: 'rgba(242,247,252,0.62)' }}>
+            <p style={{ marginTop: 9, fontSize: fs.body, lineHeight: 1.5, color: 'rgba(242,247,252,0.62)' }}>
               Step back into your command deck and keep service moving.
             </p>
           </div>
@@ -115,9 +116,9 @@ function LoginContent() {
               loading && 'pointer-events-none opacity-70',
             )}
             style={{
-              height: 50, borderRadius: 13, border: '1px solid rgba(255,255,255,0.10)',
+              height: 50, borderRadius: radius.sm, border: '1px solid rgba(255,255,255,0.10)',
               background: 'rgba(255,255,255,0.96)',
-              color: '#1f2937', fontSize: 14.5, fontWeight: 600,
+              color: '#1f2937', fontSize: fs.body, fontWeight: 600,
               cursor: 'pointer',
             }}
             onMouseEnter={(e) => { e.currentTarget.style.background = '#fff'; e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 10px 26px rgba(0,0,0,0.35)' }}
@@ -135,7 +136,7 @@ function LoginContent() {
           {/* Divider */}
           <div className="my-5 flex items-center gap-[14px]">
             <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.06)' }} />
-            <span style={{ fontSize: 12, fontWeight: 500, letterSpacing: '0.06em', color: 'rgba(242,247,252,0.26)', textTransform: 'uppercase' }}>
+            <span style={{ fontSize: fs.caption, fontWeight: 500, letterSpacing: '0.06em', color: 'rgba(242,247,252,0.26)', textTransform: 'uppercase' }}>
               or sign in with email
             </span>
             <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.06)' }} />
@@ -176,7 +177,7 @@ function LoginContent() {
               <button
                 type="button"
                 onClick={() => void handleForgotPassword()}
-                style={{ fontSize: 12.5, color: 'rgba(242,247,252,0.40)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, transition: 'color 0.16s' }}
+                style={{ fontSize: fs.caption, color: 'rgba(242,247,252,0.40)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, transition: 'color 0.16s' }}
                 onMouseEnter={(e) => { e.currentTarget.style.color = '#38bdf8' }}
                 onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(242,247,252,0.40)' }}
               >
@@ -190,9 +191,9 @@ function LoginContent() {
               disabled={loading}
               className="flex w-full items-center justify-center gap-2"
               style={{
-                height: 50, marginTop: 4, borderRadius: 13, border: 'none',
+                height: 50, marginTop: 4, borderRadius: radius.sm, border: 'none',
                 background: 'linear-gradient(135deg, #38bdf8 0%, #0ea5e9 100%)',
-                color: '#04121f', fontSize: 15, fontWeight: 700, letterSpacing: '0.01em',
+                color: '#04121f', fontSize: fs.bodyLg, fontWeight: 700, letterSpacing: '0.01em',
                 cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.75 : 1,
                 boxShadow: '0 8px 22px rgba(14,165,233,0.32)',
                 transition: 'transform 0.14s, box-shadow 0.18s, filter 0.18s',
@@ -225,7 +226,7 @@ function LoginContent() {
               <motion.p
                 key="err"
                 initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}
-                style={{ marginTop: 12, fontSize: 13, color: '#fca5a5', lineHeight: 1.45 }}
+                style={{ marginTop: 12, fontSize: fs.small, color: '#fca5a5', lineHeight: 1.45 }}
               >
                 {error}
               </motion.p>
@@ -233,7 +234,7 @@ function LoginContent() {
               <motion.p
                 key="info"
                 initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}
-                style={{ marginTop: 12, fontSize: 13, color: '#7dd3fc', lineHeight: 1.45 }}
+                style={{ marginTop: 12, fontSize: fs.small, color: '#7dd3fc', lineHeight: 1.45 }}
               >
                 {info}
               </motion.p>
@@ -241,7 +242,7 @@ function LoginContent() {
           </AnimatePresence>
 
           {/* Sign up link */}
-          <p style={{ marginTop: 24, textAlign: 'center', fontSize: 14, color: 'rgba(242,247,252,0.40)' }}>
+          <p style={{ marginTop: 24, textAlign: 'center', fontSize: fs.body, color: 'rgba(242,247,252,0.40)' }}>
             New to OceanCore?{' '}
             <Link href="/auth/signup" style={{ color: '#38bdf8', fontWeight: 600, textDecoration: 'none' }}
               onMouseEnter={(e) => { e.currentTarget.style.textDecoration = 'underline' }}
@@ -252,7 +253,7 @@ function LoginContent() {
           </p>
 
           {/* Trust line */}
-          <div className="mt-[22px] flex items-center justify-center gap-4" style={{ fontSize: 12, color: 'rgba(242,247,252,0.26)' }}>
+          <div className="mt-[22px] flex items-center justify-center gap-4" style={{ fontSize: fs.caption, color: 'rgba(242,247,252,0.26)' }}>
             <span className="inline-flex items-center gap-[6px]">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" strokeWidth="2" style={{ opacity: 0.55 }}>
                 <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" />
