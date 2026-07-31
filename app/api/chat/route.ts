@@ -83,11 +83,13 @@ import {
 } from "@/lib/payment-settings";
 import { defaultSystemPrompt } from "@/lib/default-system-prompt";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { escapeHtml } from "@/lib/escape-html";
 import { buildQuickReplies, type ToolSignal } from "@/lib/pending-field";
 import { absoluteUrl } from "@/lib/site-url";
 import { appBaseUrl, getStripe } from "@/lib/stripe";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { verifyBusinessOwner } from "@/lib/verify-business-owner";
+import { notifyWaitlistForFreedSlot } from "@/lib/waitlist-notify";
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -2894,6 +2896,19 @@ async function runCancelReservation(
     }
   }
 
+  /*
+   * The table this guest just gave back may be exactly what someone on the
+   * waitlist asked for. Awaited rather than fired and forgotten: the freed slot
+   * has to be visible in the database first, and the notifier reads it back.
+   */
+  await notifyWaitlistForFreedSlot({
+    supabase: supabaseAdmin,
+    businessId: ctx.business_id,
+    dateKey: d.date,
+    restaurantName: ctx.ownerName ?? "the restaurant",
+    ownerEmail: ctx.ownerEmail,
+  });
+
   return {
     cancelled: true,
     result: {
@@ -3186,6 +3201,24 @@ async function runRescheduleReservation(
         },
       );
     }
+  }
+
+  /*
+   * Moving a booking gives its old slot back, which is a table the waitlist may
+   * have been waiting for. Only when the day actually changed or the time moved —
+   * a party-size edit that keeps the same slot frees nothing.
+   */
+  const movedAway =
+    previous.date !== wallClock.slice(0, 10) ||
+    previous.time !== wallClock.slice(11, 16);
+  if (movedAway) {
+    await notifyWaitlistForFreedSlot({
+      supabase: supabaseAdmin,
+      businessId: ctx.business_id,
+      dateKey: previous.date,
+      restaurantName: ctx.ownerName ?? "the restaurant",
+      ownerEmail: ctx.ownerEmail,
+    });
   }
 
   return {
@@ -3614,15 +3647,6 @@ async function executeTool(
 
 // ─── Notification email ───────────────────────────────────────────────────────
 
-/** Guest-supplied strings go into owner emails — escape them so a guest can't inject HTML. */
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
 
 /** Fire-and-forget; never throws. Sends a notification when a new guest opens a chat. */
 function queueNewConversationOwnerEmail(
@@ -4363,48 +4387,21 @@ export async function POST(request: Request) {
 
     const clientIp = getClientIp(request);
 
-    // ── Preview mode (gated) — landing demos only ─────────────────────────────
+    /*
+     * A business_id is not optional. There used to be a "preview mode" here for
+     * landing-page demos: unreachable (it needed a CHAT_PREVIEW_SECRET header,
+     * and a secret shipped to a public page is not a secret), and it built the
+     * system prompt with three of its arguments — no menu, no hours, no date map,
+     * no tools — so the concierge would have invented times and dishes.
+     *
+     * The landing page talks to /api/demo/concierge instead: a fixed fictional
+     * venue with real facts, and no reservation engine behind it to corrupt.
+     */
     if (!business_id) {
-      const previewSecret = process.env.CHAT_PREVIEW_SECRET;
-      const headerSecret = request.headers.get("x-chat-preview-secret");
-      if (!previewSecret || headerSecret !== previewSecret) {
-        return NextResponse.json(
-          { error: "business_id required" },
-          { status: 400 },
-        );
-      }
-
-      const ipLimit = await checkRateLimit(
-        `chat-preview:ip:${clientIp}`,
-        10,
-        CHAT_RATE_WINDOW_MS,
+      return NextResponse.json(
+        { error: "business_id required" },
+        { status: 400 },
       );
-      if (!ipLimit.allowed) {
-        return NextResponse.json(
-          { error: "Too many requests. Please try again shortly." },
-          {
-            status: 429,
-            headers: { "Retry-After": String(ipLimit.retryAfterSec ?? 60) },
-          },
-        );
-      }
-
-      const systemPrompt = buildSystemPrompt(
-        "AI Concierge",
-        "this restaurant",
-        null,
-      );
-      const response = await openai.chat.completions.create({
-        model: CHAT_MODEL,
-        messages: [
-          { role: "system", content: systemPrompt },
-          ...toOpenAiMessages(chatMessages),
-        ],
-        max_tokens: 500,
-      });
-      return NextResponse.json({
-        message: response.choices[0].message.content,
-      });
     }
 
     if (fromDashboard) {

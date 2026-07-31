@@ -1,3 +1,4 @@
+import { isCancelledStatus, isNoShowStatus } from '@/lib/appointment-status'
 import { parsePartySizeFromServiceName } from '@/lib/appointment-service-name'
 import {
   appointmentInstantFromRaw,
@@ -88,15 +89,6 @@ export function rangeDays(range: AnalyticsRange): number {
   return RANGE_DAYS[range]
 }
 
-function isCancelled(status: string | null): boolean {
-  const s = (status ?? '').toLowerCase()
-  return s === 'cancelled' || s === 'canceled'
-}
-
-function isNoShow(status: string | null): boolean {
-  const s = (status ?? '').toLowerCase()
-  return s === 'no-show' || s === 'noshow'
-}
 
 export function resolvePartySize(row: AnalyticsAppointmentRow): number {
   if (row.party_size != null && row.party_size > 0) return row.party_size
@@ -241,8 +233,8 @@ export function buildAnalyticsReport(
       prevBuckets.set(key, bucket)
     }
     bucket.bookings += 1
-    const cancelled = isCancelled(e.row.status)
-    const noShow = isNoShow(e.row.status)
+    const cancelled = isCancelledStatus(e.row.status)
+    const noShow = isNoShowStatus(e.row.status)
     if (cancelled) bucket.cancelled += 1
     if (noShow) bucket.noShows += 1
     if (!cancelled && !noShow) bucket.covers += resolvePartySize(e.row)
@@ -269,8 +261,8 @@ export function buildAnalyticsReport(
     }
 
     bucket.bookings += 1
-    const cancelled = isCancelled(e.row.status)
-    const noShow = isNoShow(e.row.status)
+    const cancelled = isCancelledStatus(e.row.status)
+    const noShow = isNoShowStatus(e.row.status)
     if (cancelled) {
       cancelledCount += 1
       bucket.cancelled += 1
@@ -327,7 +319,7 @@ export function buildAnalyticsReport(
   const bookings = inWindow.length
   const prevBookings = inPrevWindow.length
   const prevCovers = inPrevWindow.reduce((s, e) => {
-    if (isCancelled(e.row.status) || isNoShow(e.row.status)) return s
+    if (isCancelledStatus(e.row.status) || isNoShowStatus(e.row.status)) return s
     return s + resolvePartySize(e.row)
   }, 0)
 

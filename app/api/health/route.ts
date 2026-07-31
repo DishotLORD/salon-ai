@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server'
 
+import { VENUE_TIMEZONE_STATUS } from '@/lib/booking-wall-clock'
+
 /**
  * Uptime probe. Point Vercel monitoring, Better Stack, Pingdom or a status page
  * at this — hitting `/` instead would only prove that a static shell rendered,
@@ -65,7 +67,9 @@ export async function GET() {
   // it cannot write a booking without the service-role key. Everything else
   // degrades: no Stripe means no deposits, no Resend means no confirmation mail.
   const critical = database.ok && configured.openai && configured.supabase_admin
-  const degraded = !configured.email || !configured.payments
+  // A rejected timezone is a silent wrong-answer bug — every reservation lands in
+  // the wrong hour — so it counts as degraded even though nothing has crashed.
+  const degraded = !configured.email || !configured.payments || !VENUE_TIMEZONE_STATUS.valid
 
   return NextResponse.json(
     {
@@ -74,6 +78,10 @@ export async function GET() {
       environment: process.env.VERCEL_ENV ?? process.env.NODE_ENV ?? 'unknown',
       region: process.env.VERCEL_REGION ?? null,
       commit: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? null,
+      // Which timezone reservations are actually being interpreted in. Worth
+      // seeing at a glance: a wrong one is invisible until a guest turns up an
+      // hour late.
+      timezone: VENUE_TIMEZONE_STATUS,
       checks: { database },
       configured,
     },

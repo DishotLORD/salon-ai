@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 
 import { depositAmountCents, parsePaymentSettings } from '@/lib/payment-settings'
+import { isVoidStatus } from '@/lib/appointment-status'
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
 import { appBaseUrl, getStripe } from '@/lib/stripe'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -41,7 +42,10 @@ export async function POST(request: Request) {
   if (!appt) {
     return NextResponse.json({ error: 'not_found' }, { status: 404 })
   }
-  if (appt.status === 'cancelled') {
+  // Raw DB text, so it goes through the shared reader: an exact 'cancelled'
+  // comparison would have taken a deposit for a booking spelled 'canceled', and
+  // for one the guest never turned up to.
+  if (isVoidStatus(appt.status)) {
     return NextResponse.json({ error: 'cancelled' }, { status: 409 })
   }
   if (appt.deposit_status === 'paid') {
