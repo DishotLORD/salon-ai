@@ -5,6 +5,7 @@ import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 
 import { supabase } from '@/lib/supabase'
+import { formatPhoneInput, validatePhoneInput } from '@/lib/phone-input'
 import {
   DEFAULT_WIDGET_THEME,
   launcherColorOverrides,
@@ -130,6 +131,12 @@ const LAUNCHER_COLOR = 'var(--widget-launcher-color)'
 const LAUNCHER_SHADOW = 'var(--widget-launcher-shadow)'
 const SOFT_SHADOW = 'var(--widget-soft-shadow)'
 const CONTACT_SHADOW = 'var(--widget-contact-shadow)'
+/**
+ * Validation text. A literal rather than a theme token: both widget palettes are
+ * blue, and a warning that reads as decoration is not a warning. Chosen to clear
+ * WCAG AA on the light and dark contact-card backgrounds alike.
+ */
+const CONTACT_ERROR_COLOR = '#c2410c'
 
 /**
  * Bubbles drifting up through the header's deep end. Hand-placed rather than
@@ -288,25 +295,8 @@ function nextMessageId(prefix: string): string {
   return `${prefix}-${Date.now()}-${messageSeq}`
 }
 
-/**
- * Pretty-print North-American numbers, but never rewrite one we cannot parse.
- * The old mask cut every input to ten digits, so "+1 403 555 0142" reached the
- * restaurant as "(140) 355-5014" — a wrong number for a real guest.
- */
-function formatPhone(raw: string): string {
-  const international = raw.trimStart().startsWith('+')
-  const digits = raw.replace(/\D/g, '')
-  // E.164 tops out at 15 digits; past that the guest is pasting something else.
-  if (international) return `+${digits.slice(0, 15)}`
-  if (digits.length === 11 && digits.startsWith('1')) {
-    const local = digits.slice(1)
-    return `1 (${local.slice(0, 3)}) ${local.slice(3, 6)}-${local.slice(6)}`
-  }
-  if (digits.length > 10) return digits.slice(0, 15)
-  if (digits.length <= 3) return digits
-  if (digits.length <= 6) return `(${digits.slice(0, 3)}) ${digits.slice(3)}`
-  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`
-}
+// Phone masking, the 15-digit cap and the "is this usable?" question all live in
+// lib/phone-input.ts, where they can be tested without a browser.
 
 /** Bot already placed the booking — do not show the contact form again. */
 function aiAlreadyConfirmedBooking(text: string): boolean {
@@ -914,8 +904,9 @@ function WidgetPageInner() {
   }, [])
 
   const handleContactSubmit = async () => {
-    const phoneDigits = contactPhone.replace(/\D/g, '')
-    const value = phoneDigits.length >= 7 ? contactPhone : contactEmail.trim()
+    // A number that cannot work must not reach the restaurant as a callback
+    // number; the field says why instead of silently sending it.
+    const value = phoneCheck.ok ? contactPhone : contactEmail.trim()
     if (!value) return
     setContactPhone('')
     setContactEmail('')
@@ -953,9 +944,12 @@ function WidgetPageInner() {
     /\bemail\b/.test(contactAskText) && !/\bphone\b/.test(contactAskText) ? 'email' : 'phone'
   const effectiveContactMode = contactMode ?? defaultContactMode
 
-  const phoneReady = contactPhone.replace(/\D/g, '').length >= 7
+  const phoneCheck = validatePhoneInput(contactPhone)
   const emailReady = !!contactEmail.trim()
-  const canSubmit = effectiveContactMode === 'phone' ? phoneReady : emailReady
+  const canSubmit = effectiveContactMode === 'phone' ? phoneCheck.ok : emailReady
+  /** Shown only once the guest has typed something that cannot work. */
+  const phoneError =
+    effectiveContactMode === 'phone' ? phoneCheck.message : null
 
   useEffect(() => {
     if (!showContactStep || isMobile) return
@@ -1855,9 +1849,11 @@ function WidgetPageInner() {
                               inputMode={effectiveContactMode === 'phone' ? 'tel' : 'email'}
                               autoComplete={effectiveContactMode === 'phone' ? 'tel' : 'email'}
                               value={effectiveContactMode === 'phone' ? contactPhone : contactEmail}
+                              aria-invalid={phoneError ? true : undefined}
+                              aria-describedby={phoneError ? 'contact-detail-error' : undefined}
                               onChange={(e) =>
                                 effectiveContactMode === 'phone'
-                                  ? setContactPhone(formatPhone(e.target.value))
+                                  ? setContactPhone(formatPhoneInput(e.target.value))
                                   : setContactEmail(e.target.value)
                               }
                               onKeyDown={(e) => {
@@ -1908,6 +1904,21 @@ function WidgetPageInner() {
                             Send <ContactSendIcon />
                           </motion.button>
                         </div>
+                        {phoneError && (
+                          <p
+                            id="contact-detail-error"
+                            role="alert"
+                            style={{
+                              margin: '7px 2px 0',
+                              color: CONTACT_ERROR_COLOR,
+                              fontSize: 11,
+                              fontWeight: 600,
+                              lineHeight: 1.4,
+                            }}
+                          >
+                            {phoneError}
+                          </p>
+                        )}
                       </motion.div>
                     </AnimatePresence>
                   </motion.section>
