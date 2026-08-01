@@ -71,6 +71,15 @@ type DbRow = {
   zone_id?: string | null
   party_size?: number | null
   activity_id?: string | null
+  /**
+   * What the guest gave when they booked (migration 022). Kept on the booking
+   * because contact no longer merges into a customer record on an unverified
+   * phone or email — without this the restaurant would have no way to reach a
+   * guest whose number is already registered to someone else.
+   */
+  guest_name?: string | null
+  guest_phone?: string | null
+  guest_email?: string | null
 }
 
 type AdvancedFilters = {
@@ -123,7 +132,14 @@ function parseReservation(
   activityNameById?: Map<string, string>,
 ): Reservation {
   const parts = (row.service_name ?? '').split(' \u00b7 ') // split on " · "
-  let guestName = customerName?.trim() || parts[0]?.trim() || 'Guest'
+  /*
+   * guest_name is the name typed in the booking conversation (migration 022).
+   * Preferred over the customer record — which is a CRM identity that no longer
+   * merges on an unverified contact — and over the copy packed into
+   * service_name, which has to be parsed back out of a delimited string.
+   */
+  let guestName =
+    row.guest_name?.trim() || customerName?.trim() || parts[0]?.trim() || 'Guest'
   const activityId = row.activity_id ?? null
   // Prefer the DB column; only fall back to explicit "Party of N" / "N guests" /
   // "N players" segments — never invent a size from digits in "Pool Table 1".
@@ -1227,7 +1243,7 @@ function ReservationModal({
     void (async () => {
       const { data, error: fetchError } = await supabase
         .from('appointments')
-        .select('id, service_name, scheduled_at, status, customer_id, notes, zone_id, party_size, activity_id')
+        .select('id, service_name, scheduled_at, status, customer_id, notes, zone_id, party_size, activity_id, guest_name, guest_phone, guest_email')
         .eq('id', appointmentId)
         .single()
 
@@ -1409,8 +1425,11 @@ function ReservationModal({
         zone_id: resolvedZoneId,
         activity_id: resolvedActivityId,
         duration_minutes: durationMinutes,
+        // Same snapshot the concierge writes, so a staff-entered booking reads
+        // back the same way instead of relying on the service_name encoding.
+        guest_name: guestName.trim() || null,
       })
-      .select('id, service_name, scheduled_at, status, customer_id, notes, zone_id, party_size, activity_id')
+      .select('id, service_name, scheduled_at, status, customer_id, notes, zone_id, party_size, activity_id, guest_name, guest_phone, guest_email')
       .single()
 
     setSaving(false)
@@ -2382,7 +2401,7 @@ export default function BookingsPage() {
 
       const { data: rows, error } = await supabase
         .from('appointments')
-        .select('id, service_name, scheduled_at, status, customer_id, conversation_id, notes, zone_id, party_size, activity_id')
+        .select('id, service_name, scheduled_at, status, customer_id, conversation_id, notes, zone_id, party_size, activity_id, guest_name, guest_phone, guest_email')
         .eq('business_id', business.id)
         .gte('scheduled_at', startIso)
         .lt('scheduled_at', endIso)

@@ -117,6 +117,9 @@ export type Database = {
           status: string
           updated_at: string
           created_at: string
+          /** SHA-256 of the guest session token (migration 022). Never the token itself. */
+          guest_access_token_hash: string | null
+          guest_access_expires_at: string | null
         }
         Insert: {
           id?: string
@@ -126,6 +129,8 @@ export type Database = {
           status?: string
           updated_at?: string
           created_at?: string
+          guest_access_token_hash?: string | null
+          guest_access_expires_at?: string | null
         }
         Update: Partial<Database['public']['Tables']['conversations']['Insert']>
       }
@@ -158,6 +163,13 @@ export type Database = {
           notes: string | null
           created_at: string
           updated_at: string
+          /**
+           * Contact given in the booking conversation (migration 022).
+           * Unverified — never match a customer on these.
+           */
+          guest_name: string | null
+          guest_phone: string | null
+          guest_email: string | null
         }
         Insert: {
           id?: string
@@ -170,6 +182,9 @@ export type Database = {
           notes?: string | null
           created_at?: string
           updated_at?: string
+          guest_name?: string | null
+          guest_phone?: string | null
+          guest_email?: string | null
         }
         Update: Partial<Database['public']['Tables']['appointments']['Insert']>
       }
