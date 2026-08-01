@@ -83,6 +83,7 @@ import {
 } from "@/lib/payment-settings";
 import { defaultSystemPrompt } from "@/lib/default-system-prompt";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { buildQuickReplies, type ToolSignal } from "@/lib/pending-field";
 import { absoluteUrl } from "@/lib/site-url";
 import { appBaseUrl, getStripe } from "@/lib/stripe";
 import { supabaseAdmin } from "@/lib/supabase-admin";
@@ -4295,20 +4296,26 @@ function extractSuggestedTimes(
     return chips.length > 0 ? chips : previous;
   }
 
-  // Full slots for the requested time: one confirm chip.
-  if (
-    result.requested_time_available === true &&
-    typeof result.requested_time === "string"
-  ) {
-    return [result.requested_time];
-  }
+  /*
+   * A confirmed requested_time deliberately produces NO chip. It is the time the
+   * guest already asked for and the system has just agreed to — offering it back
+   * as something to tap re-sends a settled decision, and it was what put a
+   * "2:30 PM" button under "Where would you prefer to sit?".
+   */
 
-  // Alternatives after a full/unavailable slot.
+  // Alternatives after a full/unavailable slot: a real choice between times.
   if (
     Array.isArray(result.nearby_alternatives) &&
     result.nearby_alternatives.length > 0
   ) {
     return result.nearby_alternatives
+      .filter((t): t is string => typeof t === "string")
+      .slice(0, 6);
+  }
+
+  // The open times themselves, for when the concierge asks the guest to pick one.
+  if (Array.isArray(result.available_times) && result.available_times.length > 0) {
+    return result.available_times
       .filter((t): t is string => typeof t === "string")
       .slice(0, 6);
   }
@@ -4785,8 +4792,15 @@ export async function POST(request: Request) {
     let bookingDetails: BookingDetailsPayload | BookingDetailsPayload[] | null =
       null;
     let assistantText = "";
-    /** Tappable time suggestions for the widget, from the latest tool result. */
+    /** Real open times from the latest availability lookup; used only when the
+     *  pending field is `time`. */
     let suggestedTimes: string[] = [];
+    /**
+     * What each tool said, in order. This is the authoritative account of what
+     * the booking still needs — the widget's chips are derived from it rather
+     * than from reading the model's prose.
+     */
+    const toolSignals: ToolSignal[] = [];
 
     // 5 rounds fits the longest legitimate chain (get_my_reservation →
     // check_availability → reschedule → save_guest_details → final answer).
@@ -4882,7 +4896,15 @@ export async function POST(request: Request) {
         if (outcome.rescheduled) bookingRescheduled = true;
         if (outcome.customerId) resolvedCustomerId = outcome.customerId;
 
-        // Collect tappable time chips for the widget from this tool result.
+        toolSignals.push({
+          result: outcome.result,
+          created: outcome.created,
+          cancelled: outcome.cancelled,
+          rescheduled: outcome.rescheduled,
+        });
+
+        // The open times themselves; whether the guest should be tapping one is
+        // decided later, by the pending field.
         suggestedTimes = extractSuggestedTimes(outcome.result, suggestedTimes);
         if (outcome.created || outcome.cancelled) suggestedTimes = [];
 
@@ -4935,8 +4957,24 @@ export async function POST(request: Request) {
       booking_cancelled: bookingCancelled,
       booking_rescheduled: bookingRescheduled,
       booking_details: bookingDetails,
-      suggested_times:
-        suggestedTimes.length > 0 ? suggestedTimes.slice(0, 6) : undefined,
+      /*
+       * Chips for the one field the booking is waiting on. The tools decide it
+       * (a refusal names its own missing field); the reply text is consulted
+       * only when no tool ran. Each field builds its own list from scratch, so
+       * the previous step's chips cannot survive into this one — which is how a
+       * 7:00 PM chip used to end up under "Main, Patio or Bar?".
+       */
+      suggested_times: (() => {
+        const replies = buildQuickReplies({
+          toolSignals,
+          assistantText,
+          zoneNames: bookingCtx.zones
+            .filter((z) => z.is_active)
+            .map((z) => z.name),
+          availableTimes: suggestedTimes,
+        });
+        return replies.length > 0 ? replies : undefined;
+      })(),
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Unexpected error";
