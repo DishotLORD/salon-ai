@@ -48,14 +48,25 @@ import {
   type WallClockParts,
 } from "@/lib/booking-wall-clock";
 import { loadBusinessBookingContext } from "@/lib/booking-load";
+// formatGuestPreferencesForPrompt is gone with buildReturningGuestContext: it
+// rendered a stored guest's allergies and preferences into the system prompt.
 import {
-  formatGuestPreferencesForPrompt,
   mergeGuestPreferences,
   parseGuestNotes,
   serializeGuestNotes,
 } from "@/lib/guest-preferences";
 import { isPlausibleGuestName } from "@/lib/guest-display";
+import {
+  isNameGroundedInGuestMessages,
+  looksLikeContactNotName,
+} from "@/lib/guest-name-grounding";
 import { normalizeGuestContact, normalizeName } from "@/lib/guest-identity";
+import {
+  checkGuestSession,
+  generateGuestToken,
+  guestSessionExpiryFrom,
+  hashGuestToken,
+} from "@/lib/guest-session";
 import { languageInstruction } from "@/lib/language-preferences";
 import {
   DAY_ORDER,
@@ -98,7 +109,7 @@ COLLECT THESE DETAILS through natural conversation, asking only for what is stil
 2. Party size — skip the question if already stated (e.g. "table for 2", "party of 4").
 3. Time — reservations start every 15 minutes. If the guest says "6:50", pass the nearest slot (18:45) and explain briefly: "We book every 15 minutes — 6:45 or 7:00 works."
 4. Seating zone — ONLY when more than one dining zone exists: ask where they would like to sit, offering the zone names from the system context. The guest may say "no preference". Pass the guest's stated choice to create_reservation EXACTLY as they said it — never substitute, default, or pick a zone yourself.
-5. Full name — ask for this near the END, right before booking: "And your name for the reservation?" NEVER generate a name from context. If RETURNING GUEST CONTEXT is present, confirm before using it: "Shall I put this under [Name]?" A one-word reply like "Patio" or "Bar" after a seating question is a ZONE choice, not a name.
+5. Full name — ask for this near the END, right before booking: "And your name for the reservation?" Pass EXACTLY what the guest types, character for character, however unusual the spelling looks. NEVER correct it, complete it, or swap in a name from anywhere else — not from earlier context, not from a similar-sounding name, not from one of your own previous messages. If you did not receive a name from the guest in this conversation, ask for it. A one-word reply like "Patio" or "Bar" after a seating question is a ZONE choice, not a name.
 
 OPENING: when the guest just says "book a table" (or similar) with no details, warmly ask for the DATE and PARTY SIZE first — e.g. "Happy to help! What day were you thinking, and for how many?" Do NOT ask for their name yet, and do NOT ask if they mean "today" — just ask what day works.
 
@@ -108,7 +119,7 @@ TOOL USAGE:
 - check_availability — call BEFORE you offer or confirm any time; never invent open times or claim a time is unavailable without checking. Pass the guest's requested time when they stated one — the result then says definitively whether that exact time is open (requested_time_available). You may call it before knowing party size. Trust its result over any earlier assumption.
 - find_next_available — call when the guest is FLEXIBLE about the date: "when's your next free Friday evening?", "any weekend table for 6?", "first available slot". Translate their words into filters (weekend → weekdays ["Saturday","Sunday"]; evening → time_from "17:00"). Offer the returned dates and times verbatim. For one specific date, use check_availability instead.
 - create_reservation — call ONLY once the guest has stated the date, time, party size, seating zone, and name, passing each exactly as the guest said it. The system validates everything: if it returns missing_fields, ask the guest for those fields and call again; if it returns not_available, apologize briefly and offer the returned alternatives. After it succeeds, confirm warmly by first name with the exact date, time, dining area, and any noted requests.
-- get_my_reservation — call whenever the guest asks about their existing booking ("when is my reservation?", "do I have a table?", "is my deposit paid?") and BEFORE cancelling or moving a booking, so you can confirm which reservation you are changing. Relay the exact details it returns — never answer from memory.
+- get_my_reservation — call whenever the guest asks about a booking made in THIS chat ("when is my reservation?", "is my deposit paid?") and BEFORE cancelling or moving one. It only sees reservations created in this conversation. Relay the exact details it returns — never answer from memory, and never claim to see a booking it did not return.
 - reschedule_reservation — call when the guest wants to move an existing booking to a new date/time, or change how many people are coming (pass new_party_size; keep the same date/time by passing the current ones from get_my_reservation).
 - cancel_reservation — call when the guest wants to cancel. It returns the details of the cancelled booking — repeat them back using the word "cancelled".
 - save_guest_details — call as soon as you learn the guest's name, phone, or email, even before a booking is made. ALSO call it whenever the guest mentions an allergy, dietary restriction, lasting seating/ambiance preference, or a notable occasion.
@@ -117,7 +128,7 @@ TOOL USAGE:
 STYLE:
 - NEVER say "one moment", "I'll check now", or otherwise promise future work — call the tool immediately and reply with its result in the same turn.
 - The moment the guest has given the date, time, party size, zone, and name, call create_reservation in THAT turn. Do NOT ask "shall I proceed?" or re-confirm details the guest already gave — their request IS the consent; booking should feel effortless.
-- If RETURNING GUEST CONTEXT lists allergies or dietary needs, ALWAYS include them in special_requests when booking, even if the guest does not repeat them.
+- Include any allergy or dietary need the guest mentions IN THIS CONVERSATION in special_requests when booking. You have no allergy record for them from anywhere else.
 - Once you know the guest's name, address them by first name.
 - Keep responses concise (2–4 sentences). Never repeat questions already answered.
 - Sound like a gracious host, not a form: acknowledge what the guest said before asking the next question ("Lovely, a table for four —"), and vary your phrasing instead of repeating the same sentence patterns.
@@ -126,7 +137,7 @@ STYLE:
 - When check_availability returns many open times, NEVER list them all. Say the open range ("We have tables from 11 AM to 9:45 PM") and either propose 2-3 sensible options or ask what time suits them. Only list exact times when 6 or fewer remain or the guest asked for nearby options.
 
 RECOVERY & EDGE CASES:
-- If the guest references a previous booking ("same table", "my usual", "same as last time", "как в прошлый раз") and there is NO "RETURNING GUEST CONTEXT" section in this prompt, say you'd love to pull up their details and ask for the phone number or email they booked with. Once RETURNING GUEST CONTEXT is present, use "Their usual" from it instead of re-asking.
+- If the guest references a previous booking ("same table", "my usual", "same as last time", "как в прошлый раз"), say plainly that you cannot look up earlier visits from here, and offer to either take the details fresh or have the team check for them. Do NOT ask for a phone number or email in order to "find" them — a contact does not identify anyone, and you will not be shown their history either way. Only bookings made in THIS chat are visible to you.
 - Obvious typos or shorthand for common words ("toda"/"2day" → today, "tmrw" → tomorrow, "fri" → Friday, "ppl" → people) should be understood silently — never ask "did you mean today?". Only ask to clarify when the input is genuinely ambiguous or contradictory ("Just to be sure — Friday the 10th, or Saturday the 11th?"), and keep it to one short question.
 - If a tool returns past_date or beyond_booking_window, relay the reason kindly and ask for a date that works.
 - If the requested time is full: offer the returned alternatives first. If the guest declines them all, offer the waitlist — never just dead-end.
@@ -321,7 +332,7 @@ const BOOKING_TOOLS = [
     function: {
       name: "get_my_reservation",
       description:
-        "Look up the guest's current active bookings — dining table and/or activity. Returns every active booking (a guest may hold both). Call before answering any question about an existing booking, and before cancelling or rescheduling.",
+        "Look up bookings made in THIS conversation — dining table and/or activity (a guest may hold both). It cannot find reservations made in an earlier chat, by phone, or in person; nothing the guest types will make those visible. Call before answering a question about a booking made here, and before cancelling or rescheduling.",
       parameters: { type: "object", properties: {} },
     },
   },
@@ -598,7 +609,6 @@ function buildSystemPrompt(
   customPrompt: string | null | undefined,
   menuItems?: MenuEntry[] | null,
   menuPdfText?: string | null,
-  returningGuestContext?: string | null,
   todayLabel?: string,
   todayDateKey?: string,
   diningZones?:
@@ -631,6 +641,13 @@ function buildSystemPrompt(
     );
   }
   prompt += `\n${languageInstruction(language)}`;
+  /*
+   * The concierge has no memory of this guest, and must not imply that it does.
+   * A live test produced exactly that failure — "your usual spot", addressed to
+   * a first-time visitor under a different customer's name — so the prohibition
+   * is stated in the prompt as well as enforced by the tools.
+   */
+  prompt += `\nNO GUEST HISTORY: you know nothing about this guest beyond what they type in THIS conversation. You have no profile, no past visits, no saved name, phone, email, allergies or seating preference for them. NEVER say or imply otherwise — no "usual spot", "the usual", "welcome back", "details on file", "as always", "your preferred table", "I have your number". Do not greet anyone by a name they have not typed here. If they mention a previous booking or ask you to repeat a past order, say plainly that you cannot look up earlier visits, and offer to take the details fresh or pass them to the team.`;
   const escalationTriggers: string[] = [];
   if (notif?.escalate_complaint) {
     escalationTriggers.push(
@@ -651,13 +668,10 @@ function buildSystemPrompt(
     prompt += `\nESCALATION: call escalate_to_manager the moment ${escalationTriggers.join("; or ")}. Because staff follow up by phone, ask for a phone number first (email only if they have none) unless a contact is already on record, and pass it to the tool. It quietly alerts the staff — after calling it, tell the guest the team has been notified and will reach out, and keep helping them.`;
   }
   if (requireContactBeforeBooking) {
-    prompt += `\nCONTACT REQUIRED: a phone number OR email must be on record BEFORE create_reservation. If the guest already wrote one in this conversation, or RETURNING GUEST CONTEXT shows contact on file, that fully satisfies this — do NOT ask again. Otherwise ask once (either is fine), explaining it is for the confirmation.`;
+    prompt += `\nCONTACT REQUIRED: a phone number OR email must be given IN THIS CONVERSATION before create_reservation. If the guest already wrote one here, that fully satisfies this — do NOT ask again. Otherwise ask once (either is fine), explaining it is for the confirmation.`;
   }
   if (depositPerGuest != null && depositPerGuest > 0) {
     prompt += `\nDEPOSIT POLICY: this restaurant collects a $${depositPerGuest.toFixed(2)} CAD per-guest deposit to secure reservations. Mention this briefly BEFORE booking. When create_reservation succeeds and returns a payment_link, include that exact link in your confirmation and tell the guest the table is held and fully confirmed once the deposit is paid. Never invent a payment link.`;
-  }
-  if (returningGuestContext?.trim()) {
-    prompt += `\n\n${returningGuestContext.trim()}`;
   }
   if (menuItems && menuItems.length > 0) {
     const lines = menuItems.map((item) => {
@@ -804,27 +818,24 @@ function extractLatestContactFromMessages(messages: ChatMessage[]) {
   return {} as { phone?: string; email?: string };
 }
 
-type CustomerRow = {
-  id: string;
-  business_id: string;
-  name: string;
-  email: string | null;
-  phone: string | null;
-  total_bookings: number | null;
-  last_visit: string | null;
-  notes: string | null;
-};
-
-type GuestHistory = {
-  totalBookings: number;
-  lastVisit: string | null;
-  services: string[];
-  preferredPartySize: number | null;
-  /** From the most recent active booking — the "usual" the guest may ask to repeat. */
-  usualZone: string | null;
-  usualPartySize: number | null;
-  usualTimeLabel: string | null;
-};
+/*
+ * Returning-guest recognition used to live here: lookupReturningGuest,
+ * loadRecognizedGuest, fetchGuestHistory and buildReturningGuestContext.
+ *
+ * All four are deleted, not disabled. Between them they treated a typed phone
+ * number or email — or a customer id echoed back by the widget — as proof of
+ * identity, then injected that guest's name, contact, visit history and
+ * allergies into the system prompt and pointed the booking tools at their
+ * reservations. A live test showed it misfiring in the other direction too: a
+ * guest who typed "RoNIN NARRRR" was greeted as, and booked as, a different
+ * customer already on file.
+ *
+ * There is no verified-guest mechanism yet, so there is nothing to gate them
+ * behind. They are gone so they cannot be quietly re-wired: with no function
+ * that maps a contact to a stored customer, no call site can accidentally
+ * recreate the takeover. Recognition returns when a real verification step
+ * (email OTP, magic link) does.
+ */
 
 /** service_name is "Guest · Party of N · Zone" — the 3rd segment is the seating zone. */
 function parseZoneFromServiceName(
@@ -849,198 +860,14 @@ function formatClock12hFromWallClock(wallClock: string): string | null {
     : `${dh}:${String(min).padStart(2, "0")} ${period}`;
 }
 
-function mostCommonPartySize(sizes: number[]): number | null {
-  if (sizes.length === 0) return null;
-  const counts = new Map<number, number>();
-  for (const n of sizes) {
-    counts.set(n, (counts.get(n) ?? 0) + 1);
-  }
-  let best: number | null = null;
-  let bestCount = 0;
-  for (const [size, count] of counts) {
-    if (count > bestCount) {
-      best = size;
-      bestCount = count;
-    }
-  }
-  return best;
-}
-
-function formatVisitDate(iso: string | null): string {
-  if (!iso) return "unknown";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "unknown";
-  return d.toLocaleDateString("en-US", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
-async function lookupReturningGuest(
-  business_id: string,
-  phone: string | null,
-  email: string | null,
-): Promise<CustomerRow | null> {
-  const { phone: normalizedPhone, email: normalizedEmail } =
-    normalizeGuestContact({ phone, email });
-  if (!normalizedPhone && !normalizedEmail) return null;
-
-  const select =
-    "id, business_id, name, email, phone, total_bookings, last_visit, notes" as const;
-
-  if (normalizedEmail) {
-    const { data } = await supabaseAdmin
-      .from("customers")
-      .select(select)
-      .eq("business_id", business_id)
-      .eq("email", normalizedEmail)
-      .maybeSingle();
-    if (data) return data as CustomerRow;
-  }
-
-  if (normalizedPhone) {
-    const { data } = await supabaseAdmin
-      .from("customers")
-      .select(select)
-      .eq("business_id", business_id)
-      .eq("phone", normalizedPhone)
-      .maybeSingle();
-    if (data) return data as CustomerRow;
-  }
-
-  return null;
-}
-
-/**
- * Recognition by id (device-remembered guest or the conversation's linked
- * customer). Placeholder rows — no contact AND no real name — never count,
- * so an anonymous "Website visitor" can't masquerade as a returning guest.
+/*
+ * linkConversationToCustomer lived here. Its only callers re-pointed a
+ * conversation at a customer found by matching a typed phone or email — the
+ * merge that made the identity takeover destructive. A conversation is now
+ * bound to the customer created for it and never moved, so nothing needs to
+ * relink one. persistConversationGuest updates conversations.customer_name on
+ * its own, for the inbox.
  */
-async function loadRecognizedGuest(
-  business_id: string,
-  customer_id: string,
-): Promise<CustomerRow | null> {
-  const { data } = await supabaseAdmin
-    .from("customers")
-    .select(
-      "id, business_id, name, email, phone, total_bookings, last_visit, notes",
-    )
-    .eq("id", customer_id)
-    .eq("business_id", business_id)
-    .maybeSingle();
-  if (!data) return null;
-  const row = data as CustomerRow;
-  const hasContact = Boolean(row.phone?.trim() || row.email?.trim());
-  const hasRealName = isPlausibleGuestName(row.name ?? "");
-  return hasContact || hasRealName ? row : null;
-}
-
-async function fetchGuestHistory(customer_id: string): Promise<GuestHistory> {
-  const { data: appointments } = await supabaseAdmin
-    .from("appointments")
-    .select("service_name, scheduled_at, status")
-    .eq("customer_id", customer_id)
-    .order("scheduled_at", { ascending: false });
-
-  const rows = appointments ?? [];
-  const services = rows
-    .map((r) => r.service_name)
-    .filter((s): s is string => typeof s === "string" && s.trim().length > 0);
-
-  const partySizes = services
-    .map((s) => parsePartySizeFromServiceName(s))
-    .filter((n): n is number => n != null);
-
-  // "The usual" = the most recent booking that wasn't cancelled or a no-show.
-  const lastActive = rows.find((r) => {
-    const s = (r.status ?? "").toString().trim().toLowerCase();
-    return !["cancelled", "canceled", "no-show", "noshow", "no_show"].includes(
-      s,
-    );
-  });
-  const lastActiveWallClock = lastActive
-    ? scheduledAtToWallClock(String(lastActive.scheduled_at))
-    : null;
-
-  return {
-    totalBookings: rows.length,
-    lastVisit: rows[0]?.scheduled_at ?? null,
-    services,
-    preferredPartySize: mostCommonPartySize(partySizes),
-    usualZone: lastActive
-      ? parseZoneFromServiceName(lastActive.service_name)
-      : null,
-    usualPartySize: lastActive
-      ? parsePartySizeFromServiceName(lastActive.service_name)
-      : null,
-    usualTimeLabel: lastActiveWallClock
-      ? formatClock12hFromWallClock(lastActiveWallClock)
-      : null,
-  };
-}
-
-function buildReturningGuestContext(
-  customer: CustomerRow,
-  history: GuestHistory,
-): string {
-  const guestName = safeGuestPersonalName(customer.name);
-  const partyHint =
-    history.preferredPartySize != null
-      ? String(history.preferredPartySize)
-      : "unknown";
-  const servicesHint =
-    history.services.length > 0
-      ? history.services.slice(0, 5).join("; ")
-      : "none on record";
-
-  const prefLines = formatGuestPreferencesForPrompt(
-    parseGuestNotes(customer.notes),
-  );
-  const prefSection = prefLines ? `\n${prefLines}` : "";
-  const allergyReminder = /Allergies \/ dietary:/.test(prefLines ?? "")
-    ? "\nIMPORTANT: this guest has known allergies/dietary needs on file — include them in special_requests when you book."
-    : "";
-
-  const usualParts: string[] = [];
-  if (history.usualPartySize != null)
-    usualParts.push(`party of ${history.usualPartySize}`);
-  if (history.usualZone) usualParts.push(`${history.usualZone} seating`);
-  if (history.usualTimeLabel)
-    usualParts.push(`around ${history.usualTimeLabel}`);
-  const usualLine =
-    usualParts.length > 0
-      ? `\n- Their usual: ${usualParts.join(", ")} (from their last booking). If they ask for "the same table", "my usual", "same as last time", propose exactly this — confirm only the DATE, then book. Do not re-ask party size or seating they always use.`
-      : "";
-
-  return `RETURNING GUEST CONTEXT:
-- Name: ${guestName ?? "not on file"}
-- Phone: ${customer.phone?.trim() || "not on file"}
-- Email: ${customer.email?.trim() || "not on file"}
-- Contact on file: ${customer.phone?.trim() || customer.email?.trim() ? "YES — do NOT ask for a phone or email again" : "no"}
-- Total visits: ${history.totalBookings}
-- Last visit: ${formatVisitDate(history.lastVisit)}
-- Preferred party size: ${partyHint}
-- Past reservations: ${servicesHint}${usualLine}${prefSection}
-Use this info to personalize the conversation. ${guestName ? "Greet them by name" : "Their name is unknown — do not invent or guess one"}, and suggest their usual booking if appropriate.${allergyReminder}`;
-}
-
-async function linkConversationToCustomer(params: {
-  conversation_id: string;
-  business_id: string;
-  customer_id: string;
-  customer_name: string;
-}) {
-  const { conversation_id, business_id, customer_id, customer_name } = params;
-  await supabaseAdmin
-    .from("conversations")
-    .update({
-      customer_id,
-      customer_name: normalizeName(customer_name),
-    })
-    .eq("id", conversation_id)
-    .eq("business_id", business_id);
-}
 
 async function bumpCustomerVisitStats(
   customer_id: string,
@@ -1065,13 +892,33 @@ async function bumpCustomerVisitStats(
 
 // ─── Guest info persistence ───────────────────────────────────────────────────
 
+/** Postgres unique-violation. Here it means the contact belongs to another customer. */
+const UNIQUE_VIOLATION = "23505";
+
 /**
- * Persist structured guest details (from a tool call). Updates the customers record
- * and the conversations.customer_name so the inbox shows the real name instead of
- * "Website visitor". Merges into an existing returning-guest record when phone/email match.
- * Returns the (possibly re-pointed) customer id.
+ * Persist the guest details given IN THIS CONVERSATION onto this conversation's
+ * own customer row, and nothing else.
+ *
+ * This used to look the contact up and merge into whatever customer already held
+ * that phone or email. That merge was the third path into the identity takeover:
+ * typing a stranger's number re-pointed the conversation, the booking and the
+ * confirmation email at their record, and overwrote their stored name — all
+ * without the caller proving anything.
+ *
+ * So no lookup happens now, and the returned id is always the one passed in.
+ * The awkward part is migration 017's partial unique indexes on
+ * (business_id, phone) and (business_id, lower(email)): the merge is what used
+ * to keep writes off a taken contact. Instead each field is written on its own
+ * and a unique violation is swallowed — the contact simply does not land on the
+ * customer row. Nothing reads the conflicting row, nothing reveals it exists,
+ * and the guest's booking still carries their details, because
+ * runCreateReservation snapshots them onto the appointment (migration 022).
+ *
+ * The cost is duplicate CRM cards for genuine returning guests. That is the
+ * correct trade while there is no verification step: a duplicate is untidy, and
+ * a wrong merge hands one guest another guest's reservations.
  */
-async function persistGuest(params: {
+async function persistConversationGuest(params: {
   business_id: string;
   customer_id: string;
   conversation_id: string;
@@ -1099,51 +946,8 @@ async function persistGuest(params: {
 
   if (!name && !phone && !email) return customer_id;
 
-  let targetCustomerId = customer_id;
-
-  const returningGuest = await lookupReturningGuest(
-    business_id,
-    phone ?? null,
-    email ?? null,
-  );
-  if (returningGuest && returningGuest.id !== customer_id) {
-    targetCustomerId = returningGuest.id;
-    await linkConversationToCustomer({
-      conversation_id,
-      business_id,
-      customer_id: returningGuest.id,
-      customer_name: name ?? returningGuest.name ?? "Guest",
-    });
-
-    // Re-point records that still reference the placeholder customer. The FKs
-    // are ON DELETE SET NULL, so deleting the placeholder without this would
-    // orphan any booking made earlier in the conversation (lost from CRM).
-    await supabaseAdmin
-      .from("appointments")
-      .update({ customer_id: returningGuest.id })
-      .eq("customer_id", customer_id)
-      .eq("business_id", business_id);
-    await supabaseAdmin
-      .from("waitlist_entries")
-      .update({ customer_id: returningGuest.id })
-      .eq("customer_id", customer_id)
-      .eq("business_id", business_id);
-
-    // Delete the placeholder customer created for this session if it's now
-    // fully orphaned (no remaining conversations linked to it).
-    const { count: remainingConvs } = await supabaseAdmin
-      .from("conversations")
-      .select("id", { count: "exact", head: true })
-      .eq("customer_id", customer_id)
-      .eq("business_id", business_id);
-    if (!remainingConvs || remainingConvs === 0) {
-      await supabaseAdmin
-        .from("customers")
-        .delete()
-        .eq("id", customer_id)
-        .eq("business_id", business_id);
-    }
-  }
+  // Always this conversation's own customer. No contact lookup, no re-pointing.
+  const targetCustomerId = customer_id;
 
   const { data: existing } = await supabaseAdmin
     .from("customers")
@@ -1152,35 +956,53 @@ async function persistGuest(params: {
     .eq("business_id", business_id)
     .maybeSingle();
 
-  const customerUpdate: Record<string, string> = {};
   const placeholderName = /^(guest|website visitor)$/i;
   const existingNameIsPlaceholder =
     !existing?.name ||
     placeholderName.test(existing.name.trim()) ||
     isLikelyDiningZoneLabel(existing.name);
-  if (name && (params.authoritativeName || existingNameIsPlaceholder)) {
-    customerUpdate.name = name;
-  }
-  if (phone && (params.authoritativePhone || !existing?.phone?.trim())) {
-    customerUpdate.phone = phone;
-    if (params.rawPhone?.trim())
-      customerUpdate.phone_raw = params.rawPhone.trim();
-  }
-  if (email && (params.authoritativeEmail || !existing?.email?.trim())) {
-    customerUpdate.email = email;
-  }
 
-  if (Object.keys(customerUpdate).length > 0) {
-    await supabaseAdmin
+  /*
+   * One field per statement. A phone that belongs to another customer raises
+   * 23505 on customers_business_phone_key, and writing the fields together would
+   * lose the email to a phone conflict. Swallowing the violation is deliberate:
+   * the alternative is reading the conflicting row to find out whose it is,
+   * which is the lookup this whole change exists to remove.
+   */
+  const writeField = async (patch: Record<string, string>): Promise<void> => {
+    const { error } = await supabaseAdmin
       .from("customers")
-      .update(customerUpdate)
+      .update(patch)
       .eq("id", targetCustomerId)
       .eq("business_id", business_id);
+    if (!error) return;
+    if (error.code === UNIQUE_VIOLATION) {
+      // Log the field, never the value — the value is the other guest's contact.
+      console.log(
+        "[guest] contact already registered to another customer; kept off the profile:",
+        Object.keys(patch).join(","),
+      );
+      return;
+    }
+    console.error("[guest] Failed to persist guest field:", error.message);
+  };
+
+  if (name && (params.authoritativeName || existingNameIsPlaceholder)) {
+    await writeField({ name });
+  }
+  if (phone && (params.authoritativePhone || !existing?.phone?.trim())) {
+    await writeField(
+      params.rawPhone?.trim()
+        ? { phone, phone_raw: params.rawPhone.trim() }
+        : { phone },
+    );
+  }
+  if (email && (params.authoritativeEmail || !existing?.email?.trim())) {
+    await writeField({ email });
   }
 
-  const displayName = safeGuestPersonalName(
-    name ?? existing?.name ?? returningGuest?.name,
-  );
+  // Only this conversation's own name — never a name resolved from a contact.
+  const displayName = safeGuestPersonalName(name ?? existing?.name);
   if (
     displayName &&
     !placeholderName.test(displayName.trim()) &&
@@ -1283,8 +1105,6 @@ type ToolContext = {
   baseUrl: string;
   /** Escalation categories already alerted in this request (dedupe). */
   escalated: Set<string>;
-  /** Recognized returning guest's usual seating zone ("my usual" bookings). */
-  usualZoneName?: string | null;
 };
 
 type ToolOutcome = {
@@ -1292,7 +1112,7 @@ type ToolOutcome = {
   created?: boolean;
   cancelled?: boolean;
   rescheduled?: boolean;
-  /** customer_id may change if persistGuest merges into a returning guest */
+  /** This conversation's own customer id; never another guest's. */
   customerId?: string;
 };
 
@@ -1779,23 +1599,14 @@ async function runFindNextAvailable(
 }
 
 /**
- * Guard against fabricated names: the guest_name (or at least its first word)
- * must appear somewhere in the conversation. This allows the returning-guest
- * confirmation flow (the assistant proposed the name and the guest agreed) while
- * blocking names the model invented from nowhere.
+ * Guard against fabricated names. Superseded by isNameGroundedInGuestMessages;
+ * see lib/guest-name-grounding.ts for why this one could be fooled.
+ *
+ * The short version: it compared only the FIRST word, as a substring, against
+ * every message including the assistant's own. With another customer's profile
+ * in its prompt the model wrote "Ronald", then read its own sentence back as
+ * evidence that the guest had said it. The guest had typed "RoNIN NARRRR".
  */
-function guestNameMentionedInConversation(
-  name: string,
-  messages: ChatMessage[],
-): boolean {
-  const firstName = name.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
-  if (firstName.length < 2) return false;
-  const allText = messages
-    .map((m) => m.content)
-    .join(" ")
-    .toLowerCase();
-  return allText.includes(firstName);
-}
 
 async function runCreateReservation(
   args: Record<string, unknown>,
@@ -1839,14 +1650,21 @@ async function runCreateReservation(
     };
   }
 
-  if (!guestNameMentionedInConversation(guestName, ctx.chatMessages)) {
+  // The name must be one the GUEST typed, whole, in their own messages, and it
+  // has to be a name rather than a contact they happened to type. The
+  // assistant's turns are not evidence — that is precisely how "RoNIN NARRRR"
+  // became "Ronald Arauho".
+  if (
+    looksLikeContactNotName(guestName) ||
+    !isNameGroundedInGuestMessages(guestName, ctx.chatMessages)
+  ) {
     return {
       result: {
         ok: false,
         error: "missing_fields",
         missing_fields: ["guest_name"],
         message:
-          "Ask the guest for their name explicitly before booking. Do not invent or assume a name.",
+          "That name does not appear in the guest's own messages. Ask them for the name for the reservation and use exactly what they type. Never reuse a name from earlier context or from your own previous message.",
       },
     };
   }
@@ -1859,18 +1677,11 @@ async function runCreateReservation(
   // Otherwise the model invented it — refuse and force it to ask.
   if (multiZone) {
     const guestText = getUserMessagesCombined(ctx.chatMessages);
-    // "My usual table" from a recognized returning guest counts as choosing
-    // their usual zone — do not re-ask what they always book.
-    const guestAskedUsual =
-      /usual|same table|same as last|как обычно|прошлый раз|як минулого разу/i.test(
-        guestText,
-      );
+    // The "my usual" shortcut is gone with returning-guest recognition: there is
+    // no verified history to read a usual zone from, so the guest is asked.
     const guestStatedZone =
       seating.kind === "zone" &&
-      (inferZoneIdFromText(guestText, activeZones) === seating.zone.id ||
-        (guestAskedUsual &&
-          !!ctx.usualZoneName &&
-          seating.zone.name.toLowerCase() === ctx.usualZoneName.toLowerCase()));
+      inferZoneIdFromText(guestText, activeZones) === seating.zone.id;
     const guestStatedAny =
       seating.kind === "any" && guestAcceptsAnyZone(guestText);
 
@@ -2101,27 +1912,33 @@ async function runCreateReservation(
   if (zoneLabel) svcParts.push(zoneLabel);
   const serviceName = svcParts.join(" · ").slice(0, 500);
 
-  // Persist guest details first (may merge into a returning guest record).
-  // Contact from the conversation text is the fallback: the model often omits
-  // args.phone/email even when the guest typed them — losing them here is what
-  // used to create duplicate customer profiles for returning guests.
+  /*
+   * Contact for THIS booking, from THIS conversation only: the tool arguments
+   * first, then what the guest typed in chat (the model often omits
+   * args.phone/email even when they said it). Never from a stored customer —
+   * reaching for one of those is what let a typed phone number pull a stranger's
+   * details into the booking.
+   */
   const msgContact = extractContactFromMessages(ctx.chatMessages);
-  const targetCustomerId = await persistGuest({
+  const bookingPhone =
+    (typeof args.phone === "string" && args.phone.trim()
+      ? args.phone.trim()
+      : msgContact.phone) ?? null;
+  const bookingEmail =
+    (typeof args.email === "string" && args.email.trim()
+      ? args.email.trim()
+      : msgContact.email) ?? null;
+
+  const targetCustomerId = await persistConversationGuest({
     business_id: ctx.business_id,
     customer_id: ctx.customer_id,
     conversation_id: ctx.conversation_id,
     rawName: guestName,
-    rawPhone:
-      typeof args.phone === "string" && args.phone.trim()
-        ? args.phone
-        : (msgContact.phone ?? null),
-    rawEmail:
-      typeof args.email === "string" && args.email.trim()
-        ? args.email
-        : (msgContact.email ?? null),
+    rawPhone: bookingPhone,
+    rawEmail: bookingEmail,
     authoritativeName: true,
     // Passed in the tool call means the guest just stated it — it wins over
-    // whatever this customer record happens to hold.
+    // whatever this conversation's own customer record happens to hold.
     authoritativePhone: typeof args.phone === "string" && !!args.phone.trim(),
     authoritativeEmail: typeof args.email === "string" && !!args.email.trim(),
   });
@@ -2139,6 +1956,12 @@ async function runCreateReservation(
       duration_minutes: durationMinutes,
       party_size: partySize,
       zone_id: zoneId,
+      // Snapshot (migration 022). The restaurant can honour and chase this
+      // booking even when the contact never reached the customer row because it
+      // is already registered to someone else.
+      guest_name: guestName,
+      guest_phone: bookingPhone,
+      guest_email: bookingEmail,
     })
     .select("id")
     .maybeSingle();
@@ -2255,23 +2078,16 @@ async function runCreateReservation(
     });
   }
 
-  // Guest-facing confirmation, when we know their email.
+  /*
+   * Guest-facing confirmation, to the address given in THIS conversation.
+   *
+   * There used to be a fallback that read customers.email when the conversation
+   * had none. After a contact-based merge that column held a different guest's
+   * address, so a booking made by one person mailed a confirmation to another.
+   * The fallback is gone: no address in this conversation means no email.
+   */
   if (ctx.notifSettings.email_guest_confirmation) {
-    let guestEmail =
-      normalizeGuestContact({
-        email: typeof args.email === "string" ? args.email : null,
-      }).email ??
-      extractContactFromMessages(ctx.chatMessages).email ??
-      null;
-    if (!guestEmail) {
-      const { data: custRow } = await supabaseAdmin
-        .from("customers")
-        .select("email")
-        .eq("id", targetCustomerId)
-        .eq("business_id", ctx.business_id)
-        .maybeSingle();
-      guestEmail = custRow?.email?.trim() || null;
-    }
+    const guestEmail = normalizeGuestContact({ email: bookingEmail }).email ?? null;
     if (guestEmail) {
       queueGuestConfirmationEmail(
         guestEmail,
@@ -2387,10 +2203,13 @@ type ActiveAppointment = {
   service_name: string | null;
   status: string | null;
   notes: string | null;
+  /** Contact captured when the booking was made (migration 022). */
+  guest_name: string | null;
+  guest_email: string | null;
 };
 
 const ACTIVE_APPT_SELECT =
-  "id, zone_id, activity_id, scheduled_at, party_size, service_name, status, notes" as const;
+  "id, zone_id, activity_id, scheduled_at, party_size, service_name, status, notes, guest_name, guest_email" as const;
 
 function toActiveAppointment(row: Record<string, unknown>): ActiveAppointment {
   return {
@@ -2402,18 +2221,33 @@ function toActiveAppointment(row: Record<string, unknown>): ActiveAppointment {
     service_name: row.service_name != null ? String(row.service_name) : null,
     status: row.status != null ? String(row.status) : null,
     notes: row.notes != null ? String(row.notes) : null,
+    guest_name: row.guest_name != null ? String(row.guest_name) : null,
+    guest_email: row.guest_email != null ? String(row.guest_email) : null,
   };
 }
 
 /**
- * Find the guest's current active reservation(s) (by conversation, then by customer).
+ * The reservations THIS conversation created. Nothing else.
  *
- * Both lookups share a future-time filter with a 3-hour grace window: statuses
- * never auto-transition after the visit, so without the filter a device that
- * reuses last week's conversation would see its long-past booking as "active"
- * and create_reservation would refuse every new booking with already_booked.
- * The grace window keeps a currently-seated guest's booking findable mid-visit
- * ("is my deposit paid?") while excluding genuinely past reservations.
+ * There used to be a second lookup here, by customer_id, and it was the point
+ * where the identity takeover became destructive: whoever the conversation had
+ * been talked into believing the guest was, these tools then read, moved and
+ * cancelled that person's bookings. customer_id is not proof of anything — it is
+ * assigned by the server to whoever is chatting — so it is no longer consulted.
+ *
+ * conversation_id is proof of something narrow and real: the caller holds the
+ * session token minted when this conversation started (checkGuestSession, called
+ * before any tool runs). That is exactly the authority to manage what this
+ * session booked, which is the guarantee we can actually make. A booking made
+ * in an earlier session is out of reach until there is a way to verify a guest;
+ * the concierge hands those to staff instead.
+ *
+ * The future-time filter keeps a 3-hour grace window: statuses never
+ * auto-transition after the visit, so without it a resumed conversation would
+ * see its long-past booking as "active" and create_reservation would refuse
+ * every new booking with already_booked. The window keeps a currently-seated
+ * guest's booking findable mid-visit ("is my deposit paid?") while excluding
+ * genuinely past reservations.
  *
  * Guests may hold one dining reservation AND one activity booking at once —
  * those are separate physical commitments. Pass `kind` to target one of them.
@@ -2435,39 +2269,21 @@ async function findActiveAppointments(
   const activeSinceIso = new Date(
     Date.now() - 3 * 60 * 60 * 1000,
   ).toISOString();
-  const byId = new Map<string, ActiveAppointment>();
 
-  const { data: byConv } = await supabaseAdmin
+  const { data } = await supabaseAdmin
     .from("appointments")
     .select(ACTIVE_APPT_SELECT)
     .eq("conversation_id", ctx.conversation_id)
+    // Redundant beside conversation_id, which is already unique per business —
+    // and cheap insurance if conversation resolution is ever loosened.
+    .eq("business_id", ctx.business_id)
     .in("status", ["pending", "confirmed", "seated"])
     .gte("scheduled_at", activeSinceIso)
     .order("scheduled_at", { ascending: true })
     .limit(8);
-  for (const row of byConv ?? []) {
-    const appt = toActiveAppointment(row as Record<string, unknown>);
-    byId.set(appt.id, appt);
-  }
 
-  if (ctx.customer_id) {
-    const { data: byCustomer } = await supabaseAdmin
-      .from("appointments")
-      .select(ACTIVE_APPT_SELECT)
-      .eq("business_id", ctx.business_id)
-      .eq("customer_id", ctx.customer_id)
-      .in("status", ["pending", "confirmed", "seated"])
-      .gte("scheduled_at", activeSinceIso)
-      .order("scheduled_at", { ascending: true })
-      .limit(8);
-    for (const row of byCustomer ?? []) {
-      const appt = toActiveAppointment(row as Record<string, unknown>);
-      byId.set(appt.id, appt);
-    }
-  }
-
-  return [...byId.values()].sort((a, b) =>
-    a.scheduled_at.localeCompare(b.scheduled_at),
+  return (data ?? []).map((row) =>
+    toActiveAppointment(row as Record<string, unknown>),
   );
 }
 
@@ -2497,7 +2313,8 @@ async function resolveAppointmentForChange(
       result: {
         ok: false,
         error: "not_found",
-        message: "No active reservation found for this guest.",
+        message:
+          "No reservation was made in this chat, and bookings made elsewhere cannot be changed from here. Do not ask for a phone number or email to find one. Offer to take the guest's name and number and call escalate_to_manager so staff can help.",
       },
     };
   }
@@ -2603,17 +2420,23 @@ function describeAppointment(
 }
 
 /** Email on the guest's customer record, for change confirmations. */
-async function getCustomerEmail(
-  customer_id: string,
-  business_id: string,
-): Promise<string | null> {
-  const { data } = await supabaseAdmin
-    .from("customers")
-    .select("email")
-    .eq("id", customer_id)
-    .eq("business_id", business_id)
-    .maybeSingle();
-  return data?.email?.trim() || null;
+/**
+ * Where to mail a guest about a booking they are changing right now.
+ *
+ * Both sources belong to this conversation: what the guest typed in it, and the
+ * snapshot taken when the booking was made (migration 022). The old version
+ * finished with a read of customers.email, which after a contact-based merge was
+ * somebody else's address.
+ */
+function guestEmailForBooking(
+  appt: ActiveAppointment,
+  ctx: ToolContext,
+): string | null {
+  return (
+    extractContactFromMessages(ctx.chatMessages).email ??
+    appt.guest_email?.trim() ??
+    null
+  );
 }
 
 // ─── Activities ───────────────────────────────────────────────────────────────
@@ -2846,7 +2669,7 @@ async function runBookActivity(
   }
 
   const msgContact = extractContactFromMessages(ctx.chatMessages);
-  const targetCustomerId = await persistGuest({
+  const targetCustomerId = await persistConversationGuest({
     business_id: ctx.business_id,
     customer_id: ctx.customer_id,
     conversation_id: ctx.conversation_id,
@@ -2955,7 +2778,7 @@ async function runGetMyReservation(ctx: ToolContext): Promise<ToolOutcome> {
         ok: false,
         error: "not_found",
         message:
-          "No active reservation found for this guest. If they believe they have one, ask for the phone number or email they booked with so the system can recognize them.",
+          "No reservation was made in this chat. You can only see bookings created in THIS conversation — asking for a phone number or email will NOT find an earlier one, so do not ask for one to look it up. Tell the guest you cannot access bookings made elsewhere, then offer to take their name and a phone number and call escalate_to_manager so the team can check.",
       },
     };
   }
@@ -3058,9 +2881,7 @@ async function runCancelReservation(
     });
   }
   if (ctx.notifSettings.email_guest_confirmation) {
-    const guestEmail =
-      extractContactFromMessages(ctx.chatMessages).email ??
-      (await getCustomerEmail(ctx.customer_id, ctx.business_id));
+    const guestEmail = guestEmailForBooking(appt, ctx);
     if (guestEmail) {
       queueGuestCancellationEmail(
         guestEmail,
@@ -3363,9 +3184,7 @@ async function runRescheduleReservation(
     });
   }
   if (ctx.notifSettings.email_guest_confirmation) {
-    const guestEmail =
-      extractContactFromMessages(ctx.chatMessages).email ??
-      (await getCustomerEmail(ctx.customer_id, ctx.business_id));
+    const guestEmail = guestEmailForBooking(appt, ctx);
     if (guestEmail) {
       queueGuestConfirmationEmail(
         guestEmail,
@@ -3419,7 +3238,7 @@ async function runSaveGuestDetails(
   args: Record<string, unknown>,
   ctx: ToolContext,
 ): Promise<ToolOutcome> {
-  const customerId = await persistGuest({
+  const customerId = await persistConversationGuest({
     business_id: ctx.business_id,
     customer_id: ctx.customer_id,
     conversation_id: ctx.conversation_id,
@@ -3563,7 +3382,7 @@ async function runJoinWaitlist(
     ? null
     : inferZoneIdFromText(seatingArea, ctx.bookingCtx.zones);
 
-  const targetCustomerId = await persistGuest({
+  const targetCustomerId = await persistConversationGuest({
     business_id: ctx.business_id,
     customer_id: ctx.customer_id,
     conversation_id: ctx.conversation_id,
@@ -3755,7 +3574,7 @@ async function runEscalateToManager(
   // Persist a phone/name captured only in this escalation so it lands in the CRM
   // (best effort — never block the alert on it).
   if (hasCurrentContact || toolGuestName) {
-    await persistGuest({
+    await persistConversationGuest({
       business_id: ctx.business_id,
       customer_id: ctx.customer_id,
       conversation_id: ctx.conversation_id,
@@ -4526,22 +4345,29 @@ const CHAT_RATE_WINDOW_MS = 60_000;
 
 export async function POST(request: Request) {
   try {
+    /*
+     * `guest_customer_id` used to be accepted here: the widget remembered a
+     * customer id in localStorage and the server treated it as "this is who I
+     * am", checking only that the row belonged to the same restaurant. It is not
+     * read any more — an identifier the client supplies is a claim, not proof.
+     * Old widgets still send it; the field is ignored rather than rejected so
+     * they keep working while caches expire.
+     */
     const body = (await request.json()) as {
       messages?: ChatMessage[];
       business_id?: string;
       conversation_id?: string;
-      /** Device-remembered guest id (widget localStorage) — candidate only, validated server-side. */
-      guest_customer_id?: string;
+      /** Session token minted with the conversation; required to resume one. */
+      guest_token?: string;
       from_dashboard?: boolean;
     };
 
     const chatMessages = sanitizeIncomingMessages(body.messages);
     const business_id = body.business_id;
     const conversation_id = body.conversation_id;
-    const guest_customer_id =
-      typeof body.guest_customer_id === "string" &&
-      body.guest_customer_id.trim()
-        ? body.guest_customer_id.trim()
+    const guestToken =
+      typeof body.guest_token === "string" && body.guest_token.trim()
+        ? body.guest_token.trim()
         : null;
     const fromDashboard = body.from_dashboard === true;
 
@@ -4669,29 +4495,44 @@ export async function POST(request: Request) {
     }
 
     // ── Resolve (or create) conversation + customer ───────────────────────────
+    /*
+     * Resuming a conversation takes the id AND the session token minted with it
+     * (migration 022). Presenting an id alone used to be enough, which meant
+     * anyone holding one could continue someone else's chat and act on its
+     * bookings — and until migration 021 the anon role could list those ids
+     * straight out of the table.
+     *
+     * Anything short of a valid, unexpired token starts a FRESH conversation
+     * rather than failing: a guest whose session lapsed should be able to keep
+     * talking, just not to inherit the old thread. Conversations created before
+     * this migration have no hash and land here too, which is the intended
+     * fail-closed behaviour.
+     */
     let resolvedConversationId: string | null = null;
     let resolvedCustomerId: string | null = null;
     let isNewConversation = false;
+    /** Non-null only when a token is minted this request; returned to the widget once. */
+    let issuedGuestToken: string | null = null;
 
     if (conversation_id) {
       const { data: existing } = await supabaseAdmin
         .from("conversations")
-        .select("id, customer_id, business_id, status")
+        .select(
+          "id, customer_id, business_id, status, guest_access_token_hash, guest_access_expires_at",
+        )
         .eq("id", conversation_id)
         .eq("business_id", business_id)
         .maybeSingle();
 
-      // A stale id (the device remembers a conversation the owner deleted or a
-      // retention job removed) must NOT brick the widget with a 404 on every
-      // message — fall through and start a fresh conversation instead; the
-      // response carries the new conversation_id, so the client heals itself.
-      if (existing) {
+      const session = checkGuestSession(existing, guestToken);
+
+      if (existing && session.ok) {
         resolvedConversationId = existing.id;
         resolvedCustomerId = existing.customer_id ?? null;
 
-        // A returning guest reopens an auto-closed thread. Without this the
-        // inbox keeps the row in "Closed", and the dashboard never subscribes
-        // to its presence channel — the guest shows Offline while typing.
+        // A guest reopens an auto-closed thread. Without this the inbox keeps
+        // the row in "Closed", and the dashboard never subscribes to its
+        // presence channel — the guest shows Offline while typing.
         // 'human' is deliberately untouched: owner takeover must persist.
         if (
           (existing.status ?? "").toString().trim().toLowerCase() === "closed"
@@ -4702,11 +4543,34 @@ export async function POST(request: Request) {
             .eq("id", existing.id)
             .eq("business_id", business_id);
         }
+      } else if (existing) {
+        // Log the reason, never the token. `no_session` is the expected shape
+        // for pre-022 threads; `invalid_token` is worth noticing.
+        console.log("[chat] conversation resume refused:", session.ok ? "ok" : session.reason);
+      }
+    }
+
+    /*
+     * The dashboard talks to this route too, already authenticated by
+     * verifyBusinessOwner, and it has no guest token to present. Staff must not
+     * be silently forked onto a new thread when they reply from the inbox.
+     */
+    if (!resolvedConversationId && fromDashboard && conversation_id) {
+      const { data: staffConv } = await supabaseAdmin
+        .from("conversations")
+        .select("id, customer_id")
+        .eq("id", conversation_id)
+        .eq("business_id", business_id)
+        .maybeSingle();
+      if (staffConv?.id) {
+        resolvedConversationId = staffConv.id;
+        resolvedCustomerId = staffConv.customer_id ?? null;
       }
     }
 
     if (!resolvedConversationId) {
       isNewConversation = true;
+      issuedGuestToken = generateGuestToken();
       const { data: newConv, error: convInsErr } = await supabaseAdmin
         .from("conversations")
         .insert({
@@ -4714,6 +4578,8 @@ export async function POST(request: Request) {
           customer_id: null,
           customer_name: "Website visitor",
           status: "active",
+          guest_access_token_hash: hashGuestToken(issuedGuestToken),
+          guest_access_expires_at: guestSessionExpiryFrom(),
         })
         .select("id")
         .maybeSingle();
@@ -4735,54 +4601,11 @@ export async function POST(request: Request) {
       );
     }
 
-    // ── Returning guest recognition (before creating a placeholder customer) ──
-    // Identity sources, strongest first:
-    //   1. phone/email typed in THIS conversation (guest proved who they are)
-    //   2. guest id remembered by the device (widget localStorage, validated
-    //      server-side against this business — placeholders never qualify)
-    //   3. the conversation's already-linked customer (restored session)
-    let returningGuest: CustomerRow | null = null;
-    const { phone: contactPhone, email: contactEmail } =
-      extractContactFromMessages(chatMessages);
-
-    if (contactPhone || contactEmail) {
-      returningGuest = await lookupReturningGuest(
-        business_id,
-        contactPhone ?? null,
-        contactEmail ?? null,
-      );
-    }
-    if (!returningGuest && guest_customer_id) {
-      returningGuest = await loadRecognizedGuest(
-        business_id,
-        guest_customer_id,
-      );
-    }
-    if (!returningGuest && resolvedCustomerId) {
-      returningGuest = await loadRecognizedGuest(
-        business_id,
-        resolvedCustomerId,
-      );
-    }
-
-    let returningGuestContext: string | null = null;
-    let returningGuestUsualZone: string | null = null;
-    if (returningGuest) {
-      const history = await fetchGuestHistory(returningGuest.id);
-      returningGuestContext = buildReturningGuestContext(
-        returningGuest,
-        history,
-      );
-      returningGuestUsualZone = history.usualZone;
-      resolvedCustomerId = returningGuest.id;
-
-      await linkConversationToCustomer({
-        conversation_id: resolvedConversationId,
-        business_id,
-        customer_id: returningGuest.id,
-        customer_name: returningGuest.name?.trim() || "Guest",
-      });
-    }
+    /*
+     * No returning-guest recognition happens here any more — see the note where
+     * lookupReturningGuest used to live. The concierge starts every conversation
+     * knowing nothing about who is typing, and learns only what they tell it.
+     */
 
     if (!resolvedCustomerId) {
       const { data: newCustomer, error: custErr } = await supabaseAdmin
@@ -4846,7 +4669,6 @@ export async function POST(request: Request) {
       business.system_prompt,
       menuItems,
       (business as Record<string, unknown>).menu_pdf_text as string | null,
-      returningGuestContext,
       todayLabel,
       wallClockDateKey(nowParts),
       bookingCtx.zones,
@@ -4866,7 +4688,6 @@ export async function POST(request: Request) {
     if (
       isNewConversation &&
       resolvedCustomerId &&
-      !returningGuestContext &&
       notifSettings.email_on_new_chat
     ) {
       queueNewConversationOwnerEmail(business.email, business.name);
@@ -5019,7 +4840,6 @@ export async function POST(request: Request) {
           paymentSettings,
           baseUrl: appBaseUrl(request),
           escalated: escalatedCategories,
-          usualZoneName: returningGuestUsualZone,
         });
 
         // Refusals were invisible in the logs: only the call and the successes
@@ -5099,7 +4919,15 @@ export async function POST(request: Request) {
     return NextResponse.json({
       message: assistantText,
       conversation_id: resolvedConversationId,
-      customer_id: resolvedCustomerId,
+      /*
+       * The plaintext token, exactly once, on the request that minted it. The
+       * database only ever holds its hash, so it cannot be re-issued — a widget
+       * that loses it starts a new conversation, which is the correct outcome.
+       *
+       * customer_id is deliberately no longer returned: the widget used to store
+       * it and send it back as an identity claim.
+       */
+      guest_token: issuedGuestToken ?? undefined,
       booking_created: bookingCreated,
       booking_cancelled: bookingCancelled,
       booking_rescheduled: bookingRescheduled,

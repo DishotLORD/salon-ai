@@ -83,6 +83,12 @@ function googleCalendarUrl(card: BookingCard, businessName: string | null): stri
 
 const DEFAULT_CONCIERGE_NAME = 'AI Concierge'
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000
+/**
+ * How often an open chat checks for messages it did not send — in practice, the
+ * owner replying during a human takeover. Six seconds keeps that conversational
+ * without making the widget chatty; see the poller for why this is not realtime.
+ */
+const MESSAGE_POLL_MS = 6000
 
 const QUICK_CHIPS = ['Book a table', 'What’s on the menu?', 'What are your hours?']
 
@@ -184,22 +190,47 @@ function storageKey(businessId: string) {
   return `oceancore-conv-${businessId}`
 }
 
-function saveSession(businessId: string, convId: string) {
+/**
+ * A conversation and the token that proves we opened it.
+ *
+ * The id alone used to be enough to resume a chat and act on its bookings.
+ * It was never a secret — until migration 021 the anon key could list every
+ * conversation id in the database — so the server now mints a random token when
+ * the conversation is created and stores only its hash (migration 022). We keep
+ * the plaintext here; it is the one copy that exists, and losing it simply means
+ * the next message starts a fresh conversation.
+ */
+type GuestSession = { id: string; token: string }
+
+function saveSession(businessId: string, convId: string, token: string) {
   try {
-    localStorage.setItem(storageKey(businessId), JSON.stringify({ id: convId, ts: Date.now() }))
+    localStorage.setItem(
+      storageKey(businessId),
+      JSON.stringify({ id: convId, token, ts: Date.now() }),
+    )
   } catch { /* storage full / blocked — non-critical */ }
 }
 
-function loadSession(businessId: string): string | null {
+function loadSession(businessId: string): GuestSession | null {
   try {
     const raw = localStorage.getItem(storageKey(businessId))
     if (!raw) return null
-    const { id, ts } = JSON.parse(raw) as { id: string; ts: number }
-    if (Date.now() - ts > SESSION_TTL_MS) {
+    const { id, token, ts } = JSON.parse(raw) as {
+      id?: string
+      token?: string
+      ts?: number
+    }
+    if (typeof ts !== 'number' || Date.now() - ts > SESSION_TTL_MS) {
       localStorage.removeItem(storageKey(businessId))
       return null
     }
-    return id
+    // Sessions stored before tokens existed have no token and cannot be
+    // resumed. Dropping them here saves a round trip that would only be refused.
+    if (typeof id !== 'string' || !id || typeof token !== 'string' || !token) {
+      localStorage.removeItem(storageKey(businessId))
+      return null
+    }
+    return { id, token }
   } catch {
     return null
   }
@@ -229,36 +260,25 @@ function buildNudgeText(businessName: string | null, conciergeName: string): str
   return `Hi! Can I help you book a table or answer a question?`
 }
 
-// ── Device-level guest identity ───────────────────────────────────────────────
-// Outlives the 24h conversation session: the same browser is recognized as the
-// same guest for months, so returning guests get their history without retyping
-// contact info. The server validates the id — a stale/foreign id is ignored.
-
-const GUEST_TTL_MS = 180 * 24 * 60 * 60 * 1000
-
-function guestKey(businessId: string) {
-  return `oceancore-guest-${businessId}`
-}
-
-function saveGuestId(businessId: string, customerId: string) {
+/**
+ * Device-level guest identity used to live here: the widget kept a customer id
+ * for 180 days and sent it with every message, and the server took it as "this
+ * is who I am". An identifier the client hands over is a claim, not proof —
+ * whoever held one inherited that guest's name, contact, visit history and
+ * reservations. Both the storage and the field are gone.
+ *
+ * Anything already written by an older build is cleared on load; there is no
+ * reason to leave a stale customer id sitting in a stranger's browser.
+ */
+function purgeLegacyGuestIdentity() {
   try {
-    localStorage.setItem(guestKey(businessId), JSON.stringify({ id: customerId, ts: Date.now() }))
-  } catch { /* storage full / blocked — non-critical */ }
-}
-
-function loadGuestId(businessId: string): string | null {
-  try {
-    const raw = localStorage.getItem(guestKey(businessId))
-    if (!raw) return null
-    const { id, ts } = JSON.parse(raw) as { id: string; ts: number }
-    if (Date.now() - ts > GUEST_TTL_MS) {
-      localStorage.removeItem(guestKey(businessId))
-      return null
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i)
+      if (key && key.startsWith('oceancore-guest-')) {
+        localStorage.removeItem(key)
+      }
     }
-    return typeof id === 'string' && id ? id : null
-  } catch {
-    return null
-  }
+  } catch { /* storage blocked — nothing to clean up */ }
 }
 
 let messageSeq = 0
@@ -496,6 +516,11 @@ function WidgetPageInner() {
     buildWelcome(null, DEFAULT_CONCIERGE_NAME),
   ])
   const [conversationId, setConversationId] = useState<string | null>(null)
+  /**
+   * Held in a ref, not state: it is a credential, it must be readable by the
+   * send handler and the poller without re-rendering, and nothing displays it.
+   */
+  const guestTokenRef = useRef<string | null>(null)
   const messagesContainerRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
   const contactInputRef = useRef<HTMLInputElement | null>(null)
@@ -510,119 +535,180 @@ function WidgetPageInner() {
   // Restore session from localStorage on mount / businessId change
   useEffect(() => {
     restoredRef.current = false
+    purgeLegacyGuestIdentity()
     if (!businessId) {
+      guestTokenRef.current = null
       // eslint-disable-next-line react-hooks/set-state-in-effect -- restore persisted session on mount/business change
       setConversationId(null)
       return
     }
     const saved = loadSession(businessId)
     if (saved) {
-      setConversationId(saved)
+      guestTokenRef.current = saved.token
+      setConversationId(saved.id)
       restoredRef.current = true
     } else {
+      guestTokenRef.current = null
       setConversationId(null)
     }
   }, [businessId])
 
-  // When conversationId is restored, fetch message history from DB
+  /*
+   * Transcript for a restored session, from the server.
+   *
+   * This used to read `public.messages` directly with the anon key, which
+   * required an RLS policy granting anonymous selects. Migration 021 removed it
+   * — the live database was also letting anon enumerate `conversations`, so the
+   * id being filtered on was not private either. /api/chat/history does the read
+   * with the service role after checking the session token.
+   */
   useEffect(() => {
-    if (!conversationId || !restoredRef.current) return
+    if (!conversationId || !businessId || !restoredRef.current) return
     restoredRef.current = false
+
+    const token = guestTokenRef.current
+    if (!token) return
 
     let cancelled = false
     setHistoryLoading(true)
 
     void (async () => {
-      const { data: rows } = await supabase
-        .from('messages')
-        .select('id, role, content')
-        .eq('conversation_id', conversationId)
-        .order('created_at', { ascending: true })
+      try {
+        const res = await fetch('/api/chat/history', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            business_id: businessId,
+            conversation_id: conversationId,
+            guest_token: token,
+          }),
+        })
+        if (cancelled) return
 
-      if (cancelled) return
+        if (res.status === 401) {
+          // The session is over (expired, or the conversation predates tokens).
+          // Drop it and let the next message open a fresh one, rather than
+          // leaving the guest looking at a thread they can no longer add to.
+          clearSession(businessId)
+          guestTokenRef.current = null
+          setConversationId(null)
+          setHistoryLoading(false)
+          return
+        }
 
-      if (rows && rows.length > 0) {
-        const history: WidgetMessage[] = rows.map((r) => ({
-          id: r.id,
-          sender: r.role === 'user' ? 'customer' as const : 'ai' as const,
-          text: r.content ?? '',
-        }))
-        setMessages(history)
+        if (res.ok) {
+          const data = (await res.json()) as {
+            messages?: { id: string; role: 'user' | 'assistant'; content: string }[]
+          }
+          if (cancelled) return
+          const rows = data.messages ?? []
+          if (rows.length > 0) {
+            setMessages(
+              rows.map((r) => ({
+                id: r.id,
+                sender: r.role === 'user' ? ('customer' as const) : ('ai' as const),
+                text: r.content ?? '',
+              })),
+            )
+          }
+        }
+      } catch {
+        // Offline or a blocked request: keep the welcome message rather than an
+        // error. The guest can still type, and sending recreates the thread.
       }
-      setHistoryLoading(false)
+      if (!cancelled) setHistoryLoading(false)
     })()
 
     return () => { cancelled = true }
-  }, [conversationId])
+  }, [conversationId, businessId])
 
-  // Persist conversationId to localStorage whenever it changes
+  // Persist the session whenever it changes. Id and token travel together — an
+  // id stored without its token is unusable, so it is not stored at all.
   useEffect(() => {
-    if (conversationId && businessId) {
-      saveSession(businessId, conversationId)
+    if (conversationId && businessId && guestTokenRef.current) {
+      saveSession(businessId, conversationId, guestTokenRef.current)
     }
   }, [conversationId, businessId])
 
+  /*
+   * Live updates, by polling.
+   *
+   * This was a Supabase realtime subscription on `public.messages`. Realtime
+   * applies RLS, and the policy it depended on let ANY anonymous caller read
+   * messages — migration 021 removed it. Realtime has no way to present a guest
+   * session token, so there is no safe way to keep the subscription; polling the
+   * token-checked endpoint is the honest substitute until the transport can
+   * carry a credential.
+   *
+   * What this delivers is the owner's replies during a human takeover. Only
+   * while the panel is open — a closed widget has nothing to show, and this is a
+   * request per interval per guest.
+   */
   useEffect(() => {
-    if (!conversationId) {
-      return
-    }
+    if (!conversationId || !businessId || !isOpen) return
+    const token = guestTokenRef.current
+    if (!token) return
 
-    const channel = supabase
-      .channel(`widget-messages:${conversationId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'messages',
-          filter: `conversation_id=eq.${conversationId}`,
-        },
-        (payload) => {
-          const row = payload.new as { id?: string; role?: string; content?: string | null }
-          if (typeof row.id !== 'string') {
-            return
-          }
-          const incomingId = row.id
+    let cancelled = false
+
+    const poll = async () => {
+      try {
+        const res = await fetch('/api/chat/history', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            business_id: businessId,
+            conversation_id: conversationId,
+            guest_token: token,
+          }),
+        })
+        if (cancelled || !res.ok) return
+
+        const data = (await res.json()) as {
+          messages?: { id: string; role: 'user' | 'assistant'; content: string }[]
+        }
+        if (cancelled) return
+
+        for (const row of data.messages ?? []) {
           const content = row.content ?? ''
-          if (!content.trim()) return
+          if (!content.trim()) continue
+          const incomingId = row.id
           const isAssistant = row.role === 'assistant'
-
-          if (isAssistant) {
-            setMessages((prev) => {
-              if (prev.some((m) => m.id === incomingId)) return prev
-              const ownIdx = prev.findLastIndex(
-                (m) => m.sender === 'ai' && m.text === content && m.id.startsWith('ai-'),
-              )
-              if (ownIdx !== -1) {
-                const next = [...prev]
-                next[ownIdx] = { ...next[ownIdx], id: incomingId }
-                return next
-              }
-              return [...prev, { id: incomingId, sender: 'ai', text: content }]
-            })
-            return
-          }
 
           setMessages((prev) => {
             if (prev.some((m) => m.id === incomingId)) return prev
-            const optimisticIdx = prev.findLastIndex(
-              (m) => m.sender === 'customer' && m.text === content && m.id.startsWith('customer-'),
+            // Reconcile with the optimistic copy this client already rendered:
+            // match on text and the client-side id prefix, then adopt the real id.
+            const prefix = isAssistant ? 'ai-' : 'customer-'
+            const localIdx = prev.findLastIndex(
+              (m) =>
+                m.sender === (isAssistant ? 'ai' : 'customer') &&
+                m.text === content &&
+                m.id.startsWith(prefix),
             )
-            if (optimisticIdx !== -1) {
+            if (localIdx !== -1) {
               const next = [...prev]
-              next[optimisticIdx] = { id: incomingId, sender: 'customer', text: content }
+              next[localIdx] = { ...next[localIdx], id: incomingId }
               return next
             }
-            return [...prev, { id: incomingId, sender: 'customer', text: content }]
+            return [...prev, { id: incomingId, sender: isAssistant ? 'ai' : 'customer', text: content }]
           })
         }
-      )
-      .subscribe()
+      } catch {
+        // Transient failure; the next tick tries again.
+      }
+    }
+
+    // Not while the guest is waiting on a reply — the send already returns it.
+    const timer = window.setInterval(() => {
+      if (!isLoading) void poll()
+    }, MESSAGE_POLL_MS)
 
     return () => {
-      void supabase.removeChannel(channel)
+      cancelled = true
+      window.clearInterval(timer)
     }
-  }, [conversationId])
+  }, [conversationId, businessId, isOpen, isLoading])
 
   // Presence heartbeat — lets the dashboard see that the guest is online
   useEffect(() => {
@@ -666,58 +752,53 @@ function WidgetPageInner() {
       setLauncherColor(null)
       return
     }
+    /*
+     * Branding comes from /api/widget/meta, not from a direct read of
+     * `public.businesses`.
+     *
+     * The direct read needed an anon SELECT policy on that table, and the policy
+     * that provided it granted `using (true)` over every column — every
+     * restaurant's email, phone, address, system prompt and menu text, readable
+     * by anyone with the public key. Migration 021 dropped it. The endpoint runs
+     * with the service role and returns four display fields for one venue.
+     *
+     * On any failure the widget keeps whatever branding it already has (the
+     * defaults on first load), which is the same thing the old code did when the
+     * query errored — an unbranded chat still books tables.
+     */
     let cancelled = false
     void (async () => {
-      const themedResult = await supabase
-        .from('businesses')
-        .select('name, agent_name, widget_theme, widget_launcher_color')
-        .eq('id', businessId)
-        .maybeSingle()
-      let data = themedResult.data as {
-        name?: unknown
-        agent_name?: unknown
-        widget_theme?: unknown
-        widget_launcher_color?: unknown
-      } | null
-      let error = themedResult.error
-      if (error?.message.toLowerCase().includes('widget_launcher_color')) {
-        const withoutColor = await supabase
-          .from('businesses')
-          .select('name, agent_name, widget_theme')
-          .eq('id', businessId)
-          .maybeSingle()
-        data = withoutColor.data as {
+      try {
+        const res = await fetch(`/api/widget/meta?id=${encodeURIComponent(businessId)}`)
+        if (cancelled || !res.ok) return
+
+        const meta = (await res.json()) as {
           name?: unknown
-          agent_name?: unknown
-          widget_theme?: unknown
-        } | null
-        error = withoutColor.error
+          agentName?: unknown
+          theme?: unknown
+          launcherColor?: unknown
+        }
+        if (cancelled) return
+
+        const nextName =
+          typeof meta.name === 'string' && meta.name.trim() ? meta.name.trim() : null
+        const nextConcierge =
+          typeof meta.agentName === 'string' && meta.agentName.trim()
+            ? meta.agentName.trim()
+            : DEFAULT_CONCIERGE_NAME
+
+        setBusinessName(nextName)
+        setConciergeName(nextConcierge)
+        setWidgetTheme(parseWidgetTheme(meta.theme))
+        setLauncherColor(parseWidgetLauncherColor(meta.launcherColor))
+        setMessages((prev) =>
+          prev.length === 1 && prev[0].id === 'welcome'
+            ? [buildWelcome(nextName, nextConcierge)]
+            : prev,
+        )
+      } catch {
+        // Offline or blocked: keep the default branding rather than an error.
       }
-      if (error?.message.toLowerCase().includes('widget_theme')) {
-        const fallback = await supabase
-          .from('businesses')
-          .select('name, agent_name')
-          .eq('id', businessId)
-          .maybeSingle()
-        data = fallback.data as { name?: unknown; agent_name?: unknown } | null
-        error = fallback.error
-      }
-      if (cancelled) return
-      if (error) return
-      const nextName = typeof data?.name === 'string' && data.name.trim() ? data.name.trim() : null
-      const nextConcierge =
-        typeof data?.agent_name === 'string' && data.agent_name.trim()
-          ? data.agent_name.trim()
-          : DEFAULT_CONCIERGE_NAME
-      setBusinessName(nextName)
-      setConciergeName(nextConcierge)
-      setWidgetTheme(parseWidgetTheme(data?.widget_theme))
-      setLauncherColor(parseWidgetLauncherColor(data?.widget_launcher_color))
-      setMessages((prev) =>
-        prev.length === 1 && prev[0].id === 'welcome'
-          ? [buildWelcome(nextName, nextConcierge)]
-          : prev,
-      )
     })()
     return () => {
       cancelled = true
@@ -844,6 +925,9 @@ function WidgetPageInner() {
 
   const handleNewChat = useCallback(() => {
     if (businessId) clearSession(businessId)
+    // Drop the token with the thread: "new chat" must not leave a credential
+    // behind that still reaches the old conversation.
+    guestTokenRef.current = null
     setConversationId(null)
     setMessages([buildWelcome(businessName, conciergeName)])
   }, [businessId, businessName, conciergeName])
@@ -926,7 +1010,7 @@ function WidgetPageInner() {
         messages: { role: string; content: string }[]
         business_id?: string
         conversation_id?: string
-        guest_customer_id?: string
+        guest_token?: string
       } = {
         messages: nextMessages.map((message) => ({
           role: message.sender === 'customer' ? 'user' : 'assistant',
@@ -935,12 +1019,11 @@ function WidgetPageInner() {
       }
       if (businessId) {
         body.business_id = businessId
-        if (conversationId) {
+        // Both or neither: an id without its token cannot resume a conversation,
+        // and sending one would only earn a refusal and a new thread.
+        if (conversationId && guestTokenRef.current) {
           body.conversation_id = conversationId
-        }
-        const rememberedGuestId = loadGuestId(businessId)
-        if (rememberedGuestId) {
-          body.guest_customer_id = rememberedGuestId
+          body.guest_token = guestTokenRef.current
         }
       }
 
@@ -955,7 +1038,8 @@ function WidgetPageInner() {
       const data = (await response.json()) as {
         message?: string | null
         conversation_id?: string
-        customer_id?: string | null
+        /** Present only on the response that created the conversation. */
+        guest_token?: string
         skipped?: boolean
         reason?: string
         booking_created?: boolean
@@ -984,11 +1068,17 @@ function WidgetPageInner() {
 
       if (response.ok && typeof data.conversation_id === 'string' && data.conversation_id) {
         setConversationId(data.conversation_id)
-      }
-      // Remember who this device belongs to — after a booking the id points to
-      // the merged/real guest profile, so future chats greet them by name.
-      if (response.ok && businessId && typeof data.customer_id === 'string' && data.customer_id) {
-        saveGuestId(businessId, data.customer_id)
+        /*
+         * A token comes back only on the response that minted the conversation.
+         * The server keeps a hash, so this is the only copy — persist it with
+         * the id, and keep the existing one on every later turn.
+         */
+        if (typeof data.guest_token === 'string' && data.guest_token) {
+          guestTokenRef.current = data.guest_token
+        }
+        if (businessId && guestTokenRef.current) {
+          saveSession(businessId, data.conversation_id, guestTokenRef.current)
+        }
       }
 
       if (data.skipped) {

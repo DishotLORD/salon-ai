@@ -30,5 +30,6 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules"]
+  "_comment_exclude": "tests/ runs on `node --test`, which needs explicit .ts import specifiers that this config's bundler resolution rejects. They are not part of the app build.",
+  "exclude": ["node_modules", "tests"]
 }
