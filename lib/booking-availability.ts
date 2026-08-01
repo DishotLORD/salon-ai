@@ -28,6 +28,7 @@ import {
   type OperatingHours,
 } from '@/lib/operating-hours'
 import { buildTimeSlots, timeToMinutes, type TimelineRange } from '@/lib/time-timeline'
+import { holdsATable } from '@/lib/appointment-status'
 
 export type ExistingBooking = {
   id?: string
@@ -49,15 +50,6 @@ export type AvailableSlot = {
   zoneName?: string
 }
 
-/** Statuses that no longer hold a table. Anything else (incl. unknown) is treated as active. */
-const INACTIVE_STATUSES = new Set([
-  'cancelled',
-  'canceled',
-  'no-show',
-  'noshow',
-  'no_show',
-  'completed',
-])
 
 /** Set BOOKING_AVAILABILITY_DEBUG=1 to log query date vs DB bookings (Calgary wall-clock). */
 const AVAILABILITY_DEBUG = process.env.BOOKING_AVAILABILITY_DEBUG === '1'
@@ -78,8 +70,9 @@ export function logAvailabilityDebug(
 }
 
 function isActiveStatus(status: string | null | undefined): boolean {
+  // A row with no status at all predates the column's default and is live.
   if (!status) return true
-  return !INACTIVE_STATUSES.has(status.trim().toLowerCase())
+  return holdsATable(status)
 }
 
 function durationForBooking(

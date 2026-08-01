@@ -6,8 +6,51 @@
  * server agree. True per-business timezones (multi-tenant) remain future work.
  */
 
-export const CALGARY_TZ =
-  process.env.NEXT_PUBLIC_BUSINESS_TIMEZONE?.trim() || 'America/Edmonton'
+const DEFAULT_TZ = 'America/Edmonton'
+
+/**
+ * Every date function in this file feeds the IANA name straight to
+ * `Intl.DateTimeFormat`, which throws a RangeError on anything it does not
+ * recognise. Unchecked, one typo in NEXT_PUBLIC_BUSINESS_TIMEZONE ("Amercia/…",
+ * "EST", a trailing space that survived a copy-paste) took down availability
+ * checks, booking, rescheduling and the calendar at once — a whole restaurant
+ * unable to take a reservation because of a config string.
+ *
+ * So it is validated once, here, and a bad value degrades to the default with a
+ * loud warning instead of throwing on every request. `/api/health` reports which
+ * name actually took effect.
+ */
+function resolveVenueTimezone(): { timezone: string; configuredValue: string | null; valid: boolean } {
+  const configured = process.env.NEXT_PUBLIC_BUSINESS_TIMEZONE?.trim() || null
+  if (!configured) return { timezone: DEFAULT_TZ, configuredValue: null, valid: true }
+  try {
+    new Intl.DateTimeFormat('en-CA', { timeZone: configured }).format(new Date())
+    return { timezone: configured, configuredValue: configured, valid: true }
+  } catch {
+    console.error(
+      `[timezone] NEXT_PUBLIC_BUSINESS_TIMEZONE="${configured}" is not an IANA timezone name. ` +
+        `Falling back to ${DEFAULT_TZ}. Reservation times will be wrong until this is fixed — ` +
+        `use a name like "America/Toronto" or "Europe/Kyiv".`,
+    )
+    return { timezone: DEFAULT_TZ, configuredValue: configured, valid: false }
+  }
+}
+
+const resolvedTimezone = resolveVenueTimezone()
+
+/**
+ * The venue's timezone. Named for Calgary because that is the default and every
+ * call site below reads that way; it is whatever NEXT_PUBLIC_BUSINESS_TIMEZONE
+ * says, provided that value is a real IANA name.
+ */
+export const CALGARY_TZ = resolvedTimezone.timezone
+
+/** For diagnostics: what was asked for, and whether we could honour it. */
+export const VENUE_TIMEZONE_STATUS = {
+  active: resolvedTimezone.timezone,
+  configured: resolvedTimezone.configuredValue,
+  valid: resolvedTimezone.valid,
+} as const
 
 const WALL_CLOCK_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/
 

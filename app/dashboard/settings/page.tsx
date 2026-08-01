@@ -16,6 +16,8 @@ import {
 import { SettingsTabNav } from '@/components/settings-tab-nav'
 import { SettingsHero } from '@/components/settings-hero'
 import { SettingsToggle } from '@/components/settings-toggle'
+import { SecurityPanel } from '@/components/security-panel'
+import { TeamMembersPanel } from '@/components/team-members-panel'
 import { BookingSettingsPanel } from '@/components/booking-settings-panel'
 import { DiningZonesPanel, type DiningZoneDraft } from '@/components/dining-zones-panel'
 import { WorkingHoursPanel } from '@/components/working-hours-panel'
@@ -48,6 +50,7 @@ import {
   DEFAULT_SYSTEM_PROMPT_PLACEHOLDER,
 } from '@/lib/default-system-prompt'
 import { defaultMainDiningZone, parseDiningZoneRow, slugifyZoneName } from '@/lib/dining-zones'
+import { MENU_PDF_MAX_BYTES, MENU_PDF_MAX_MB } from '@/lib/menu-pdf-limits'
 import { oceanTransition, settingsPanelHeavy } from '@/lib/ocean-motion'
 import {
   DEFAULT_OPERATING_HOURS,
@@ -475,12 +478,29 @@ function SettingsPageInner() {
     tabParam === 'general'
       ? tabParam
       : 'general'
-  const [activeCategory, setActiveCategory] = useState<CategoryId>(() => {
-    if (categoryParam === 'reservations') return 'reservations'
-    return tabToCategory(initialTab)
-  })
+  /**
+   * Any category may be deep-linked, not just reservations. It used to be that
+   * one special case, so `?category=security` and `?category=team` — the two
+   * tabs that just gained real content — silently dropped the visitor on
+   * Restaurant instead. The dashboard's setup checklist links straight into
+   * these, and a link that lands on the wrong page is worse than no link.
+   */
+  const categoryFromUrl = SETTINGS_CATEGORIES.some((c) => c.id === categoryParam)
+    ? (categoryParam as CategoryId)
+    : null
+
+  const [activeCategory, setActiveCategory] = useState<CategoryId>(
+    () => categoryFromUrl ?? tabToCategory(initialTab),
+  )
 
   useEffect(() => {
+    // An explicit ?category wins: it names the destination directly, where ?tab
+    // only implies one.
+    if (categoryFromUrl) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- sync active category with URL changes
+      setActiveCategory(categoryFromUrl)
+      return
+    }
     if (
       tabParam === 'ai' ||
       tabParam === 'menu' ||
@@ -492,7 +512,7 @@ function SettingsPageInner() {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- sync active category with URL changes
       setActiveCategory(tabToCategory(tabParam))
     }
-  }, [tabParam])
+  }, [tabParam, categoryFromUrl])
 
   useEffect(() => {
     if (categoryParam === 'reservations') {
@@ -1268,6 +1288,16 @@ function SettingsPageInner() {
 
   const handleMenuPdfUpload = async (file: File) => {
     if (!businessRowId) return
+
+    // Caught here rather than after a minute of uploading. The server enforces
+    // the real limit; this only saves the wait.
+    if (file.size > MENU_PDF_MAX_BYTES) {
+      setMenuPdfError(
+        `That PDF is ${(file.size / (1024 * 1024)).toFixed(1)} MB — the limit is ${MENU_PDF_MAX_MB} MB. Export it at a lower resolution, or upload the food and drink menus separately.`,
+      )
+      return
+    }
+
     setMenuPdfUploading(true)
     setMenuPdfError('')
 
@@ -1280,20 +1310,44 @@ function SettingsPageInner() {
       return fetch('/api/menu/pdf', { method: 'POST', body: fd })
     }
 
-    let res = await postPdf(false)
-    let data = (await res.json()) as PdfMenuResponse
-    // pdf-parse often returns a single stray line; if vision was skipped and text is tiny, retry once.
-    if (res.ok && data.text && data.text.length < 400 && !data.usedOcr) {
-      res = await postPdf(true)
-      data = (await res.json()) as PdfMenuResponse
+    /*
+     * Not every failure comes back as JSON — a body rejected by the platform, or
+     * a proxy timing out mid-OCR, returns HTML. res.json() threw on those, the
+     * rejection went unhandled, and the spinner stayed up forever with no
+     * explanation.
+     */
+    const readJson = async (res: Response): Promise<PdfMenuResponse> => {
+      try {
+        return (await res.json()) as PdfMenuResponse
+      } catch {
+        return {
+          error:
+            res.status === 413
+              ? `That file is too large — the limit is ${MENU_PDF_MAX_MB} MB.`
+              : `The upload failed (${res.status}). Try again, or paste the menu text below.`,
+        }
+      }
     }
 
-    if (res.ok && data.text) {
-      setMenuPdfText(data.text)
-    } else {
-      setMenuPdfError(data.error ?? 'Upload failed')
+    try {
+      let res = await postPdf(false)
+      let data = await readJson(res)
+      // pdf-parse often returns a single stray line; if vision was skipped and text is tiny, retry once.
+      if (res.ok && data.text && data.text.length < 400 && !data.usedOcr) {
+        res = await postPdf(true)
+        data = await readJson(res)
+      }
+
+      if (res.ok && data.text) {
+        setMenuPdfText(data.text)
+      } else {
+        setMenuPdfError(data.error ?? 'Upload failed')
+      }
+    } catch {
+      setMenuPdfError('Lost the connection during the upload. Try again?')
+    } finally {
+      setMenuPdfUploading(false)
     }
-    setMenuPdfUploading(false)
   }
 
   const handleMenuPdfClear = async () => {
@@ -1326,23 +1380,32 @@ function SettingsPageInner() {
     }
 
     if (activeCategory === 'team') {
+      // TeamMembersPanel was written, tested against migration 014, and then
+      // never mounted — this tab said "Coming soon" over a finished feature.
+      if (!businessRowId) {
+        return (
+          <SettingsPlaceholder
+            reduceMotion={reduceMotion}
+            title="Team management"
+            description="Save your restaurant details first — a team needs a restaurant to belong to."
+          />
+        )
+      }
       return (
-        <SettingsPlaceholder
-          reduceMotion={reduceMotion}
-          title="Team management"
-          description="Invite staff and assign manager or host roles. Coming soon."
-        />
+        <div style={{ ...glassCard, padding: 16 }}>
+          {/* Deliberately not businessEmail: that field is the restaurant's public
+              contact address, editable on the Restaurant tab, and it drifts from
+              the account that actually owns the business. Showing it against
+              "Full access, billing & team" names the wrong person in a
+              permissions table. The panel falls back to the signed-in account,
+              which is the one whose access is being described. */}
+          <TeamMembersPanel businessId={businessRowId} ownerEmail={null} s={s} />
+        </div>
       )
     }
 
     if (activeCategory === 'security') {
-      return (
-        <SettingsPlaceholder
-          reduceMotion={reduceMotion}
-          title="Security"
-          description="Password changes and two-factor authentication will live here. Coming soon."
-        />
-      )
+      return <SecurityPanel />
     }
 
     if (activeCategory === 'reservations') {

@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { isCancelledStatus, isCompletedStatus, isNoShowStatus } from '@/lib/appointment-status'
 import { formatCalgaryTime } from '@/lib/booking-wall-clock'
 import { parsePartySizeFromServiceName } from '@/lib/appointment-service-name'
 import { appointmentInstantFromRaw } from '@/lib/reservation-schedule'
@@ -52,18 +53,18 @@ function IconMail() {
 function statusLabel(raw: string | null): string {
   const s = (raw ?? 'pending').toLowerCase()
   if (s === 'confirmed') return 'Confirmed'
-  if (s === 'cancelled' || s === 'canceled') return 'Cancelled'
-  if (s === 'seated' || s === 'completed') return 'Seated'
-  if (s === 'no-show' || s === 'noshow') return 'No-show'
+  if (isCancelledStatus(s)) return 'Cancelled'
+  if (s === 'seated' || isCompletedStatus(s)) return 'Seated'
+  if (isNoShowStatus(s)) return 'No-show'
   return 'Pending'
 }
 
 function statusColors(raw: string | null): { bg: string; color: string } {
   const s = (raw ?? 'pending').toLowerCase()
   if (s === 'confirmed') return { bg: 'var(--bk-green-bg)', color: 'var(--bk-green)' }
-  if (s === 'cancelled' || s === 'canceled') return { bg: 'var(--bk-danger-bg)', color: 'var(--bk-danger)' }
-  if (s === 'seated' || s === 'completed') return { bg: 'var(--bk-blue-bg)', color: 'var(--bk-blue)' }
-  if (s === 'no-show' || s === 'noshow') return { bg: 'var(--bk-surface)', color: 'var(--bk-body)' }
+  if (isCancelledStatus(s)) return { bg: 'var(--bk-danger-bg)', color: 'var(--bk-danger)' }
+  if (s === 'seated' || isCompletedStatus(s)) return { bg: 'var(--bk-blue-bg)', color: 'var(--bk-blue)' }
+  if (isNoShowStatus(s)) return { bg: 'var(--bk-surface)', color: 'var(--bk-body)' }
   return { bg: 'var(--bk-amber-bg)', color: 'var(--bk-amber)' }
 }
 

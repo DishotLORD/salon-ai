@@ -14,6 +14,7 @@ import {
   filterVisibleCrmCustomers,
   type CrmAppointmentRow,
 } from '@/lib/crm-guest-metrics'
+import { guestCsvFilename, guestsToCsv } from '@/lib/guest-csv'
 import {
   crmTagChipStyle,
   displayGuestName,
@@ -161,6 +162,81 @@ function CrmGuestFilterBar({
         )
       })}
     </div>
+  )
+}
+
+/**
+ * Downloads whatever the table is currently showing, not the whole list — the
+ * filters and the search box are how someone narrows to "the VIPs" or "everyone
+ * with an allergy", and an export that ignored them would be the wrong file.
+ */
+function ExportGuestsButton({
+  guests,
+  disabled,
+}: {
+  guests: CrmCustomer[]
+  disabled: boolean
+}) {
+  const [hover, setHover] = useState(false)
+
+  const download = useCallback(() => {
+    const blob = new Blob([guestsToCsv(guests)], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = guestCsvFilename()
+    link.click()
+    // Revoking immediately can cancel the download in Safari; one tick is enough.
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }, [guests])
+
+  return (
+    <button
+      type="button"
+      onClick={download}
+      disabled={disabled}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      title={
+        disabled
+          ? 'No guests to export'
+          : `Download ${guests.length} ${guests.length === 1 ? 'guest' : 'guests'} as a CSV`
+      }
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 7,
+        padding: '6px 12px',
+        borderRadius: 999,
+        border: `1px solid ${hover && !disabled ? 'var(--bk-border-strong)' : 'var(--bk-border)'}`,
+        background: hover && !disabled ? 'var(--bk-surface)' : 'transparent',
+        color: disabled ? 'var(--bk-muted)' : 'var(--bk-body)',
+        fontSize: bk.caption,
+        fontWeight: 600,
+        lineHeight: 1.2,
+        whiteSpace: 'nowrap',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        fontFamily: bk.font,
+        transition: 'background 0.16s ease, border-color 0.16s ease',
+      }}
+    >
+      <svg
+        width="13"
+        height="13"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.1"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+        <path d="M7 10l5 5 5-5" />
+        <path d="M12 15V3" />
+      </svg>
+      Export CSV
+    </button>
   )
 }
 
@@ -636,8 +712,19 @@ export function CrmGuestsClient({ initialCustomers, initialBusinessId }: CrmGues
             ))}
           </div>
 
-          {/* filter bar */}
-          <CrmGuestFilterBar value={filterTag} onChange={setFilterTag} counts={counts} />
+          {/* filter bar + export */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 10,
+              flexWrap: 'wrap',
+            }}
+          >
+            <CrmGuestFilterBar value={filterTag} onChange={setFilterTag} counts={counts} />
+            <ExportGuestsButton guests={filtered} disabled={filtered.length === 0} />
+          </div>
 
           {error && (
             <div

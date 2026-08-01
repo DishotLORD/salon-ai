@@ -21,14 +21,27 @@ export type ZoneOccupancy = {
   guestsToday: number
 }
 
+export type SetupStep = {
+  id: string
+  title: string
+  description: string
+  href: string
+  done: boolean
+}
+
 type DashboardClientProps = {
   businessDisplayName: string
   conciergeName: string
   businessId: string
   activeChats: number
   messageCount: number
+  /** Same clock time yesterday, so a half-finished day is compared to half a day. */
+  messageCountYesterday: number
+  /** Median guest-to-reply gap today, in seconds. Null when nobody has asked yet. */
+  medianResponseSeconds: number | null
   recentActivity: RecentActivity[]
   zoneOccupancy: ZoneOccupancy[]
+  setupSteps: SetupStep[]
 }
 
 function getGreeting() {
@@ -103,7 +116,8 @@ function IcCheck() {
 type StatCardProps = {
   label: string
   value: string | number
-  delta?: string
+  /** Signed, already formatted ("+18%", "-7%"). Null when there is nothing to compare against. */
+  delta?: string | null
   hint?: string
   icon: React.ReactNode
 }
@@ -140,8 +154,19 @@ function StatCard({ label, value, delta, hint, icon }: StatCardProps) {
       {(delta || hint) && (
         <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5 }}>
           {delta && (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontWeight: 600, color: t.green }}>
-              <IcUp />{delta}
+            // The arrow and the colour follow the sign. Both were pinned to
+            // "up" and green before, so a quiet day still read as growth.
+            <span
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 3, fontWeight: 600,
+                color: delta.startsWith('-') ? t.textMuted : t.green,
+                transform: delta.startsWith('-') ? 'none' : undefined,
+              }}
+            >
+              <span style={{ display: 'inline-flex', transform: delta.startsWith('-') ? 'rotate(180deg)' : 'none' }}>
+                <IcUp />
+              </span>
+              {delta}
             </span>
           )}
           {hint && <span style={{ color: t.textMuted }}>{hint}</span>}
@@ -370,6 +395,111 @@ function ZoneOccupancyPanel({ zones }: { zones: ZoneOccupancy[] }) {
   )
 }
 
+// ─── Setup checklist ──────────────────────────────────────────
+/**
+ * Shown until every step is done, then gone for good — there is no dismiss
+ * button because there is nothing to dismiss once it is finished, and hiding an
+ * unfinished setup helps nobody.
+ *
+ * The order is deliberate: the widget comes first because without it the product
+ * is switched off, however carefully the rest is filled in.
+ */
+function SetupChecklist({ steps, isMobile }: { steps: SetupStep[]; isMobile: boolean }) {
+  const done = steps.filter((s) => s.done).length
+  const total = steps.length
+  const pct = Math.round((done / total) * 100)
+
+  return (
+    <section
+      aria-label="Finish setting up"
+      style={{
+        marginBottom: 28,
+        padding: isMobile ? 18 : 22,
+        borderRadius: 16,
+        border: `1px solid ${t.accentSoftBorder}`,
+        background: `linear-gradient(140deg, ${t.accentSoftBg}, transparent 62%), ${t.bgSurface}`,
+        boxShadow: t.shadowCard,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: 16.5, fontWeight: 700, color: t.text, letterSpacing: '-0.015em' }}>
+            Finish setting up
+          </h2>
+          <p style={{ margin: '4px 0 0', fontSize: 13, color: t.textMuted, lineHeight: 1.5 }}>
+            {done === 0
+              ? 'Four short steps and your concierge is working for you.'
+              : `${total - done} ${total - done === 1 ? 'step' : 'steps'} to go.`}
+          </p>
+        </div>
+        <span style={{ fontSize: 12.5, fontWeight: 700, color: t.accent, fontVariantNumeric: 'tabular-nums' }}>
+          {done}/{total}
+        </span>
+      </div>
+
+      <div
+        role="progressbar"
+        aria-valuenow={pct}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-label="Setup progress"
+        style={{ height: 4, borderRadius: 999, background: t.bgSubtle, margin: '14px 0 16px', overflow: 'hidden' }}
+      >
+        <div style={{ width: `${pct}%`, height: '100%', background: t.accent, transition: 'width 0.3s ease' }} />
+      </div>
+
+      <ol style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 8 }}>
+        {steps.map((step) => (
+          <li key={step.id}>
+            <Link
+              href={step.href}
+              style={{
+                display: 'flex', alignItems: 'flex-start', gap: 11,
+                padding: '11px 13px', borderRadius: 11,
+                border: `1px solid ${step.done ? 'transparent' : t.border}`,
+                background: step.done ? 'transparent' : t.bgSurfaceMuted,
+                textDecoration: 'none',
+                opacity: step.done ? 0.6 : 1,
+              }}
+            >
+              <span
+                aria-hidden
+                style={{
+                  flexShrink: 0, width: 19, height: 19, borderRadius: '50%',
+                  marginTop: 1,
+                  display: 'grid', placeItems: 'center',
+                  border: step.done ? 'none' : `1.5px solid ${t.borderStrong}`,
+                  background: step.done ? t.accent : 'transparent',
+                  color: 'var(--t-on-accent)',
+                }}
+              >
+                {step.done && (
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M20 6 9 17l-5-5" />
+                  </svg>
+                )}
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <span style={{
+                  display: 'block', fontSize: 13.5, fontWeight: 600, color: t.text,
+                  textDecoration: step.done ? 'line-through' : 'none',
+                }}>
+                  {step.title}
+                </span>
+                {!step.done && (
+                  <span style={{ display: 'block', marginTop: 2, fontSize: 12.5, color: t.textMuted, lineHeight: 1.45 }}>
+                    {step.description}
+                  </span>
+                )}
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ol>
+    </section>
+  )
+}
+
 // ─── Main client component ────────────────────────────────────
 export function DashboardClient({
   businessDisplayName,
@@ -377,8 +507,11 @@ export function DashboardClient({
   businessId,
   activeChats,
   messageCount,
+  messageCountYesterday,
+  medianResponseSeconds,
   recentActivity,
   zoneOccupancy,
+  setupSteps,
 }: DashboardClientProps) {
   const [unreadCount, setUnreadCount] = useState(activeChats)
 
@@ -397,6 +530,28 @@ export function DashboardClient({
   }, [businessId])
 
   const today = new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date())
+
+  /*
+   * These three used to be hardcoded — "+4 vs. yesterday", "+18%", "2s, -0.6s
+   * faster" — on a page a restaurant owner reads as a measurement of their
+   * business. Now they either say something true or say nothing.
+   */
+  const messageDelta =
+    messageCountYesterday > 0
+      ? `${messageCount >= messageCountYesterday ? '+' : ''}${Math.round(
+          ((messageCount - messageCountYesterday) / messageCountYesterday) * 100,
+        )}%`
+      : null
+  const messageDeltaHint = messageCountYesterday > 0 ? 'vs. this time yesterday' : 'First day of traffic'
+
+  const responseLabel =
+    medianResponseSeconds == null
+      ? '—'
+      : medianResponseSeconds < 60
+        ? `${Math.max(1, Math.round(medianResponseSeconds))}s`
+        : `${Math.round(medianResponseSeconds / 60)}m`
+
+  const remainingSteps = setupSteps.filter((step) => !step.done)
 
   return (
     <DashboardOceanNav activeNav="Dashboard">
@@ -441,6 +596,10 @@ export function DashboardClient({
             </p>
           </section>
 
+          {remainingSteps.length > 0 && (
+            <SetupChecklist steps={setupSteps} isMobile={isMobile} />
+          )}
+
           {/* Stats */}
           <section style={{
             display: 'grid',
@@ -448,9 +607,12 @@ export function DashboardClient({
             gap: 16,
             marginBottom: 28,
           }}>
-            <StatCard label="Active Chats"    value={activeChats}   delta="+4"    hint="vs. yesterday"    icon={<IcChat />} />
-            <StatCard label="Messages Today"  value={messageCount}  delta="+18%"  hint="vs. last 7 days"  icon={<IcWave />} />
-            <StatCard label="Response Time"   value="2s"            delta="-0.6s" hint="faster"            icon={<IcBolt />} />
+            <StatCard label="Active Chats" value={activeChats} icon={<IcChat />}
+              hint={activeChats === 0 ? 'Nothing waiting on you' : 'Open right now'} />
+            <StatCard label="Messages Today" value={messageCount} icon={<IcWave />}
+              delta={messageDelta} hint={messageDeltaHint} />
+            <StatCard label="Reply Time" value={responseLabel} icon={<IcBolt />}
+              hint={medianResponseSeconds == null ? 'No guest messages yet today' : 'Median, today'} />
           </section>
 
           {/* Actions */}

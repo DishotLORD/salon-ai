@@ -15,6 +15,7 @@ import {
   PasswordToggle,
 } from '@/components/auth-shell'
 import { supabase } from '@/lib/supabase'
+import { fs, radius } from '@/lib/marketing-scale'
 
 /**
  * Where a "reset your password" email actually lands.
@@ -79,29 +80,45 @@ function ResetPasswordContent() {
   const [resending, setResending] = useState(false)
 
   useEffect(() => {
+    let settled = false
     let cancelled = false
 
     const finish = (next: Phase, message = '') => {
-      if (cancelled) return
+      if (cancelled || settled) return
+      settled = true
       setPhase(next)
       if (message) setError(message)
     }
 
+    const url = new URL(window.location.href)
+    const hash = new URLSearchParams(url.hash.replace(/^#/, ''))
+    const tokenHash = url.searchParams.get('token_hash') ?? hash.get('token_hash')
+    const code = url.searchParams.get('code')
+    /** A grant in the URL still has to be redeemed, so nothing else may rule first. */
+    const carriesGrant = Boolean(tokenHash || code || hash.get('access_token'))
+
     /*
-     * A recovery grant can also arrive as an auth event rather than something we
-     * can read off the URL — that is what happens when detectSessionInUrl wins
-     * the race. Subscribing first means we never miss it.
+     * The grant can also reach us as an auth event rather than as something we
+     * can read off the URL — that is what happens when the client's own
+     * detectSessionInUrl wins the race, and INITIAL_SESSION is how we learn
+     * there is no grant at all. Subscribing before touching the URL means we
+     * cannot miss either.
+     *
+     * Driven by events rather than a getSession() call on purpose: the same
+     * pattern the SessionGuard uses, and it settles without waiting on the auth
+     * client's internal lock, which does not always release in an embedded or
+     * background browser view.
      */
     const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'PASSWORD_RECOVERY' || (session && event === 'SIGNED_IN')) {
+      if (event === 'PASSWORD_RECOVERY' || session) {
         finish('ready')
+        return
       }
+      // No session and none coming: the visitor opened this page cold.
+      if (event === 'INITIAL_SESSION' && !carriesGrant) finish('invalid')
     })
 
     void (async () => {
-      const url = new URL(window.location.href)
-      const hash = new URLSearchParams(url.hash.replace(/^#/, ''))
-
       // Supabase reports a dead link by redirecting with an error, not a token.
       const failure =
         url.searchParams.get('error_description') ??
@@ -113,7 +130,6 @@ function ResetPasswordContent() {
         return
       }
 
-      const tokenHash = url.searchParams.get('token_hash') ?? hash.get('token_hash')
       if (tokenHash) {
         const { error: otpError } = await supabase.auth.verifyOtp({
           type: 'recovery',
@@ -123,25 +139,24 @@ function ResetPasswordContent() {
         return
       }
 
-      const code = url.searchParams.get('code')
       if (code) {
         const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code)
-        // "already used" here means detectSessionInUrl got there first, which is
-        // a success, not a failure — the session check below settles it.
-        if (!exchangeError) {
-          finish('ready')
-          return
-        }
+        // An "already used" code means detectSessionInUrl got there first, which
+        // is a success — the subscription above will have settled us to ready.
+        finish(exchangeError ? 'invalid' : 'ready', exchangeError?.message ?? '')
       }
-
-      // No token in the URL: either the grant is already a session, or someone
-      // opened this page directly.
-      const { data } = await supabase.auth.getSession()
-      finish(data.session ? 'ready' : 'invalid')
     })()
+
+    /*
+     * Whatever happens, stop spinning. Someone locked out of their account is
+     * better served by the "send a new link" form than by a spinner that never
+     * resolves.
+     */
+    const bailout = window.setTimeout(() => finish('invalid'), 8000)
 
     return () => {
       cancelled = true
+      window.clearTimeout(bailout)
       sub.subscription.unsubscribe()
     }
   }, [])
@@ -215,7 +230,7 @@ function ResetPasswordContent() {
         <div style={{ marginBottom: 28 }}>
           <div
             style={{
-              fontSize: 12,
+              fontSize: fs.caption,
               fontWeight: 600,
               letterSpacing: '0.12em',
               textTransform: 'uppercase',
@@ -228,7 +243,7 @@ function ResetPasswordContent() {
           <h2
             style={{
               fontFamily: 'var(--font-playfair), Georgia, serif',
-              fontSize: 30,
+              fontSize: fs.formTitle,
               fontWeight: 600,
               letterSpacing: '-0.01em',
               lineHeight: 1.12,
@@ -241,7 +256,7 @@ function ResetPasswordContent() {
             {phase === 'invalid' && 'That link has expired'}
             {phase === 'done' && 'Your password is updated'}
           </h2>
-          <p style={{ marginTop: 10, fontSize: 14.5, lineHeight: 1.55, color: 'rgba(242,247,252,0.55)' }}>
+          <p style={{ marginTop: 10, fontSize: fs.body, lineHeight: 1.55, color: 'rgba(242,247,252,0.55)' }}>
             {phase === 'verifying' && 'One moment while we confirm the reset link.'}
             {phase === 'ready' && 'Pick something you have not used elsewhere. You will stay signed in on this device.'}
             {phase === 'invalid' && 'Reset links are single-use and last an hour. Send yourself a fresh one below.'}
@@ -253,13 +268,13 @@ function ResetPasswordContent() {
           <div
             style={{
               height: 50,
-              borderRadius: 13,
+              borderRadius: radius.sm,
               background: 'rgba(255,255,255,0.035)',
               border: '1px solid rgba(255,255,255,0.10)',
               display: 'grid',
               placeItems: 'center',
               color: 'rgba(242,247,252,0.40)',
-              fontSize: 13.5,
+              fontSize: fs.small,
             }}
           >
             Verifying…
@@ -310,7 +325,7 @@ function ResetPasswordContent() {
                       />
                     ))}
                   </div>
-                  <span style={{ fontSize: 11.5, fontWeight: 600, color: strength.color }}>
+                  <span style={{ fontSize: fs.micro, fontWeight: 600, color: strength.color }}>
                     {strength.label}
                   </span>
                 </motion.div>
@@ -331,7 +346,7 @@ function ResetPasswordContent() {
             />
 
             {mismatch ? (
-              <p style={{ margin: '-6px 0 14px', fontSize: 12.5, color: '#fca5a5' }}>
+              <p style={{ margin: '-6px 0 14px', fontSize: fs.caption, color: '#fca5a5' }}>
                 The two passwords do not match
               </p>
             ) : null}
@@ -379,10 +394,10 @@ function ResetPasswordContent() {
             className="flex w-full items-center justify-center gap-2"
             style={{
               height: 50,
-              borderRadius: 13,
+              borderRadius: radius.sm,
               background: 'linear-gradient(135deg, #38bdf8 0%, #0ea5e9 100%)',
               color: '#04121f',
-              fontSize: 15,
+              fontSize: fs.bodyLg,
               fontWeight: 700,
               textDecoration: 'none',
               boxShadow: '0 8px 22px rgba(14,165,233,0.32)',
@@ -412,7 +427,7 @@ function ResetPasswordContent() {
               initial={{ opacity: 0, y: -6 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -6 }}
-              style={{ marginTop: 12, fontSize: 13, color: '#fca5a5', lineHeight: 1.45 }}
+              style={{ marginTop: 12, fontSize: fs.small, color: '#fca5a5', lineHeight: 1.45 }}
             >
               {error}
             </motion.p>
@@ -422,7 +437,7 @@ function ResetPasswordContent() {
               initial={{ opacity: 0, y: -6 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -6 }}
-              style={{ marginTop: 12, fontSize: 13, color: '#7dd3fc', lineHeight: 1.45 }}
+              style={{ marginTop: 12, fontSize: fs.small, color: '#7dd3fc', lineHeight: 1.45 }}
             >
               {info}
             </motion.p>
@@ -430,7 +445,7 @@ function ResetPasswordContent() {
         </AnimatePresence>
 
         {phase !== 'done' ? (
-          <p style={{ marginTop: 24, textAlign: 'center', fontSize: 14, color: 'rgba(242,247,252,0.40)' }}>
+          <p style={{ marginTop: 24, textAlign: 'center', fontSize: fs.body, color: 'rgba(242,247,252,0.40)' }}>
             Remembered it?{' '}
             <Link
               href="/auth/login"

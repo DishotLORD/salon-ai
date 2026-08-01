@@ -239,21 +239,32 @@ export function ColorSwatchPicker({
 }: ColorSwatchPickerProps) {
   const [hsv, setHsv] = useState<Hsv>(() => hexToHsv(value))
   const [hexDraft, setHexDraft] = useState(value)
+  const [syncedValue, setSyncedValue] = useState(value)
   const sqRef = useRef<HTMLDivElement | null>(null)
   const hueRef = useRef<HTMLDivElement | null>(null)
   const dragging = useRef<'sv' | 'hue' | null>(null)
 
-  useEffect(() => {
+  /*
+   * Pull the colour in when the parent changes it. Done during render rather
+   * than in an effect — React's own recommendation for adjusting state on a prop
+   * change — so the swatch never paints the previous colour for one frame first.
+   * The guard is what keeps it from looping.
+   */
+  if (value !== syncedValue) {
+    setSyncedValue(value)
     const parsed = parseWidgetLauncherColor(value)
-    if (!parsed) return
-    setHexDraft(parsed)
-    setHsv((prev) => {
-      const next = hexToHsv(parsed)
-      if (next.s < 0.01 && next.v > 0.99) return { ...prev, s: next.s, v: next.v }
-      if (next.v < 0.01) return { ...prev, s: next.s, v: next.v }
-      return next
-    })
-  }, [value])
+    if (parsed) {
+      setHexDraft(parsed)
+      setHsv((prev) => {
+        const next = hexToHsv(parsed)
+        // Pure white and pure black have no meaningful hue; keep the one the
+        // user last aimed at so the hue slider does not jump to red.
+        if (next.s < 0.01 && next.v > 0.99) return { ...prev, s: next.s, v: next.v }
+        if (next.v < 0.01) return { ...prev, s: next.s, v: next.v }
+        return next
+      })
+    }
+  }
 
   const commit = useCallback(
     (next: Hsv) => {
@@ -317,10 +328,16 @@ export function ColorSwatchPicker({
       }}
     >
       <div style={{ display: 'grid', gap: 12, minWidth: 0 }}>
+        {/* A two-axis control has no single value, but the slider role requires
+            one — brightness carries the number and aria-valuetext spells out the
+            colour actually selected. */}
         <div
           ref={sqRef}
           role="slider"
           aria-label="Saturation and brightness"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(hsv.v * 100)}
           aria-valuetext={selected}
           tabIndex={0}
           onPointerDown={(e) => {
@@ -368,6 +385,10 @@ export function ColorSwatchPicker({
           ref={hueRef}
           role="slider"
           aria-label="Hue"
+          aria-valuemin={0}
+          aria-valuemax={360}
+          aria-valuenow={Math.round(hsv.h)}
+          aria-valuetext={`${Math.round(hsv.h)} degrees`}
           tabIndex={0}
           onPointerDown={(e) => {
             dragging.current = 'hue'

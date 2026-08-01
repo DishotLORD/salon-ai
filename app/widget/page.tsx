@@ -806,26 +806,77 @@ function WidgetPageInner() {
 
   /**
    * Talk to widget.js. The host origin is unknown (any restaurant's domain), so
-   * messages go out with '*' — they carry no guest data, only "I am up" and
-   * "the guest closed me", and the host verifies they came from this frame.
+   * messages go out with '*' — they carry no contact details, only "I am up",
+   * "the guest closed me", and how many replies are waiting. The host verifies
+   * they came from this frame.
    */
   const postToHost = useCallback(
-    (type: 'ready' | 'close') => {
+    (message: { type: 'ready' | 'close' } | { type: 'unread'; count: number; preview?: string }) => {
       if (!isEmbed || typeof window === 'undefined' || window.parent === window) return
-      window.parent.postMessage({ source: WIDGET_MESSAGE_SOURCE, type }, '*')
+      window.parent.postMessage({ source: WIDGET_MESSAGE_SOURCE, ...message }, '*')
     },
     [isEmbed],
   )
 
   useEffect(() => {
-    postToHost('ready')
+    postToHost({ type: 'ready' })
   }, [postToHost])
+
+  /*
+   * Embedded, the panel never unmounts — widget.js just hides the frame — so the
+   * chat has no way of knowing whether the guest can see it. Without that, a
+   * reply that lands while the launcher is closed goes unnoticed: the guest
+   * asked a question, walked away from a silent bubble, and never came back.
+   * The host tells us, and we count what it missed.
+   */
+  const [hostVisible, setHostVisible] = useState(true)
+  const seenMessageIdRef = useRef<string | null>(null)
+  const unreadRef = useRef(0)
+
+  useEffect(() => {
+    if (!isEmbed) return
+    const onHostMessage = (event: MessageEvent) => {
+      const data = event.data as { source?: string; type?: string; visible?: boolean } | null
+      if (!data || data.source !== WIDGET_MESSAGE_SOURCE || data.type !== 'visibility') return
+      setHostVisible(Boolean(data.visible))
+    }
+    window.addEventListener('message', onHostMessage)
+    return () => window.removeEventListener('message', onHostMessage)
+  }, [isEmbed])
+
+  useEffect(() => {
+    if (!isEmbed) return
+    const latest = messages[messages.length - 1]
+    if (!latest) return
+
+    // Coming back into view clears the count, whatever arrived while away.
+    if (hostVisible) {
+      seenMessageIdRef.current = latest.id
+      if (unreadRef.current !== 0) {
+        unreadRef.current = 0
+        postToHost({ type: 'unread', count: 0 })
+      }
+      return
+    }
+
+    // Only the concierge's own words are news; the guest's last line is not.
+    if (latest.id === seenMessageIdRef.current || latest.sender !== 'ai') return
+    seenMessageIdRef.current = latest.id
+    unreadRef.current += 1
+    postToHost({
+      type: 'unread',
+      count: unreadRef.current,
+      // Trimmed here rather than in the host: the badge shows a teaser, and a
+      // whole reply pasted onto a restaurant's page is a wall of text.
+      preview: latest.text.length > 120 ? `${latest.text.slice(0, 117)}…` : latest.text,
+    })
+  }, [messages, hostVisible, isEmbed, postToHost])
 
   const closeChat = useCallback(() => {
     if (isEmbed) {
       // The frame itself is what gets hidden — stay open behind it so the
       // thread is still there when the guest comes back.
-      postToHost('close')
+      postToHost({ type: 'close' })
       return
     }
     setIsOpen(false)
@@ -1174,6 +1225,13 @@ function WidgetPageInner() {
         {isOpen ? (
           <motion.div
             key="widget-panel"
+            /* A chat panel that opens over the page is a dialog. Named and
+               labelled so a screen reader announces what just appeared instead
+               of a bare group of controls. Not modal: the guest may keep using
+               the page behind it, and Escape already closes this. */
+            id="oceancore-chat-panel"
+            role="dialog"
+            aria-label={`${conciergeName} — chat`}
             initial={{ opacity: 0, y: 18, scale: 0.95 }}
             animate={{
               opacity: 1,
@@ -2050,6 +2108,11 @@ function WidgetPageInner() {
             layout
             transition={reduceMotion ? { duration: 0.01 } : { type: 'spring', stiffness: 420, damping: 28 }}
             aria-label={isOpen ? 'Close chat widget' : 'Open chat widget'}
+            /* widget.js sets these on the embedded launcher; this one never did,
+               so a screen reader could not tell whether the chat was already
+               open. */
+            aria-expanded={isOpen}
+            aria-controls="oceancore-chat-panel"
             style={{
               width: 60,
               height: 60,

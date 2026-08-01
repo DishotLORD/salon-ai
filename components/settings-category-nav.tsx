@@ -42,9 +42,9 @@ export const SETTINGS_CATEGORIES: SettingsCategoryDef[] = [
   { id: 'ai', title: 'AI Personality', description: 'Voice, tone, guardrails' },
   { id: 'menu', title: 'Menu', description: 'Dishes and pricing' },
   { id: 'integrations', title: 'Integrations', description: 'Channels & POS' },
-  { id: 'team', title: 'Team', description: 'Members & access', comingSoon: true },
+  { id: 'team', title: 'Team', description: 'Members & access' },
   { id: 'billing', title: 'Billing', description: 'Plan & invoices' },
-  { id: 'security', title: 'Security', description: 'Password & 2FA', comingSoon: true },
+  { id: 'security', title: 'Security', description: 'Password & devices' },
 ]
 
 /** Serif numeral, so the section reads as an entry in an index rather than a

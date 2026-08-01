@@ -10,15 +10,12 @@
   },
   "dependencies": {
     "@calcom/embed-react": "^1.5.3",
-    "@gsap/react": "^2.1.2",
     "@napi-rs/canvas": "^1.0.0",
     "@studio-freight/lenis": "^1.0.42",
     "@supabase/ssr": "^0.10.2",
     "@supabase/supabase-js": "^2.104.0",
-    "@types/three": "^0.184.0",
     "canvas": "^3.2.3",
     "framer-motion": "^12.38.0",
-    "gsap": "^3.15.0",
     "next": "16.2.4",
     "openai": "^6.34.0",
     "pdf-parse": "^1.1.4",
@@ -26,9 +23,7 @@
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "resend": "^6.12.2",
-    "stripe": "^22.3.0",
-    "three": "^0.184.0",
-    "vanta": "^0.5.24"
+    "stripe": "^22.3.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

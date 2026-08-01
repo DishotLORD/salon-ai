@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono, Inter, Montserrat, Playfair_Display, Plus_Jakarta_Sans } from "next/font/google";
+import { Geist, Geist_Mono, Montserrat, Playfair_Display, Plus_Jakarta_Sans, Space_Grotesk } from "next/font/google";
 
 import { AppProviders } from "@/components/app-providers";
 import { SessionGuard } from "@/components/session-guard";
@@ -23,10 +23,19 @@ const playfair = Playfair_Display({
   weight: ["400", "500", "600", "700"],
 });
 
-const inter = Inter({
-  variable: "--font-inter",
+/*
+ * The wordmark. components/oceancore-logo.tsx has always asked for
+ * "Space Grotesk" — in the nav, the footer, the auth panels, the dashboard rail
+ * and the legal pages — and nothing ever loaded it, so the brand rendered in
+ * whatever generic sans the device happened to have. Only the two weights the
+ * lockup actually uses.
+ *
+ * It replaces Inter, which was loaded in four weights and referenced nowhere.
+ */
+const spaceGrotesk = Space_Grotesk({
+  variable: "--font-space-grotesk",
   subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
+  weight: ["600", "700"],
 });
 
 const montserrat = Montserrat({
@@ -116,7 +125,7 @@ export default function RootLayout({
       // The inline theme script below sets data-theme before hydration, so the
       // server-rendered attribute never matches — suppress that known diff.
       suppressHydrationWarning
-      className={`${geistSans.variable} ${geistMono.variable} ${playfair.variable} ${inter.variable} ${plusJakarta.variable} ${montserrat.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} ${playfair.variable} ${spaceGrotesk.variable} ${plusJakarta.variable} ${montserrat.variable} h-full antialiased`}
     >
       <head>
         {/* Always stamp data-theme (default dark). Without the attribute the

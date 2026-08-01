@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react'
 
+import { fs, radius } from '@/lib/marketing-scale'
+
 /**
  * The dead-end page: 404, a crashed boundary, a link that expired. Shared so a
  * visitor who hits one still lands somewhere that looks like the product —
@@ -65,7 +67,7 @@ export function BrandNotice({
           <div
             style={{
               marginTop: 30,
-              fontSize: 12,
+              fontSize: fs.caption,
               fontWeight: 700,
               letterSpacing: '0.2em',
               textTransform: 'uppercase',
@@ -80,7 +82,7 @@ export function BrandNotice({
           style={{
             margin: code ? '12px 0 0' : '30px 0 0',
             fontFamily: 'var(--font-playfair), Georgia, serif',
-            fontSize: 34,
+            fontSize: fs.pageTitle,
             fontWeight: 600,
             lineHeight: 1.15,
             letterSpacing: '-0.015em',
@@ -90,7 +92,7 @@ export function BrandNotice({
           {title}
         </h1>
 
-        <div style={{ marginTop: 14, fontSize: 15.5, lineHeight: 1.65, color: '#94a8c4' }}>{body}</div>
+        <div style={{ marginTop: 14, fontSize: fs.bodyLg, lineHeight: 1.65, color: '#94a8c4' }}>{body}</div>
 
         {actions ? (
           <div
@@ -117,11 +119,11 @@ export const noticeButtonStyle = {
     alignItems: 'center',
     gap: 8,
     padding: '13px 24px',
-    borderRadius: 12,
+    borderRadius: radius.sm,
     border: '1px solid transparent',
     background: '#38bdf8',
     color: '#04121f',
-    fontSize: 14.5,
+    fontSize: fs.body,
     fontWeight: 700,
     textDecoration: 'none',
     cursor: 'pointer',
@@ -132,11 +134,11 @@ export const noticeButtonStyle = {
     alignItems: 'center',
     gap: 8,
     padding: '13px 24px',
-    borderRadius: 12,
+    borderRadius: radius.sm,
     border: '1px solid rgba(125,211,252,0.28)',
     background: 'rgba(255,255,255,0.03)',
     color: '#e8f1ff',
-    fontSize: 14.5,
+    fontSize: fs.body,
     fontWeight: 600,
     textDecoration: 'none',
     cursor: 'pointer',
