@@ -5,6 +5,7 @@ import OpenAI from 'openai'
 
 import { MENU_PDF_MAX_BYTES, MENU_PDF_MAX_MB } from '@/lib/menu-pdf-limits'
 import { checkRateLimit } from '@/lib/rate-limit'
+import { businessIdFromUrl, declaredBodyTooLarge } from '@/lib/upload-guard'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { verifyBusinessOwner } from '@/lib/verify-business-owner'
 
@@ -132,8 +133,43 @@ async function verifyOwner(business_id: string): Promise<true | NextResponse> {
   return true
 }
 
-// ── POST /api/menu/pdf ────────────────────────────────────────────────────────
+// ── POST /api/menu/pdf?business_id=… ─────────────────────────────────────────
 export async function POST(request: Request) {
+  /*
+   * Everything down to the formData() call is deliberately body-free.
+   *
+   * formData() buffers the entire multipart upload. This route used to call it
+   * first and authorize afterwards, so an anonymous request could make the
+   * server hold a whole file in memory before being told 403. The venue id now
+   * travels in the query string precisely so authorization can finish first —
+   * it is a tenant identifier, already public in every widget embed URL, and
+   * nothing about it is worth protecting.
+   */
+  const business_id = businessIdFromUrl(request.url)
+  if (!business_id) {
+    return NextResponse.json({ error: 'business_id required' }, { status: 400 })
+  }
+
+  // Owner or manager, exactly as before — verifyOwner is unchanged, it just runs
+  // sooner. It answers 403 for a signed-in stranger and for no session at all.
+  const check = await verifyOwner(business_id)
+  if (check instanceof NextResponse) return check
+
+  /*
+   * Advisory size gate, before the read rather than after it. Content-Length is
+   * the client's claim and a chunked upload has none, so this only catches the
+   * obvious cases; the real limit is still enforced below against the parsed
+   * file's own size, which is the number that cannot be lied about.
+   */
+  if (declaredBodyTooLarge(request.headers.get('content-length'), MENU_PDF_MAX_BYTES)) {
+    return NextResponse.json(
+      {
+        error: `That upload is larger than the ${MENU_PDF_MAX_MB} MB limit. Export the menu at a lower resolution, or upload the food and drink menus separately.`,
+      },
+      { status: 413 },
+    )
+  }
+
   // A malformed multipart body threw straight out of the handler, so a truncated
   // upload came back as a 500 with a stack trace instead of "try again".
   let formData: FormData
@@ -146,12 +182,9 @@ export async function POST(request: Request) {
     )
   }
 
-  const business_id = formData.get('business_id')
   const file = formData.get('file')
   const forceOcr = formData.get('force_ocr') === '1' || formData.get('force_ocr') === 'true'
 
-  if (typeof business_id !== 'string' || !business_id)
-    return NextResponse.json({ error: 'business_id required' }, { status: 400 })
   if (!(file instanceof Blob))
     return NextResponse.json({ error: 'file required' }, { status: 400 })
 
@@ -167,9 +200,6 @@ export async function POST(request: Request) {
   if (file.size === 0) {
     return NextResponse.json({ error: 'That file is empty.' }, { status: 400 })
   }
-
-  const check = await verifyOwner(business_id)
-  if (check instanceof NextResponse) return check
 
   const buffer = Buffer.from(await file.arrayBuffer())
 
