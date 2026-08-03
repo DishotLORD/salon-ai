@@ -10,6 +10,11 @@ import { BookingsDayChips, BookingsDayEmptyStrip } from '@/components/bookings-d
 import { WaitlistPanel } from '@/components/waitlist-panel'
 import { toStatusKind } from '@/lib/appointment-status'
 import { reservationCsvFilename, reservationsToCsv } from '@/lib/guest-csv'
+import {
+  slotFreedRequestForDeletion,
+  slotFreedRequestForStatusChange,
+  type SlotFreedRequest,
+} from '@/lib/waitlist-slot-freed'
 import { BookingsLightCalendar } from '@/components/bookings-light-calendar'
 import { BookingsDayTimeline } from '@/components/bookings-day-timeline'
 import { DashboardOceanNav } from '@/components/dashboard-ocean-nav'
@@ -2646,26 +2651,53 @@ export default function BookingsPage() {
      * change itself succeeded, and a failed courtesy email must not make the
      * cancellation look like it failed.
      */
-    if (status === 'cancelled' || status === 'no-show') {
-      void fetch('/api/waitlist/slot-freed', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ appointment_id: id }),
-      }).catch(() => {
-        /* offline — staff still see the freed slot in the waitlist panel */
-      })
-    }
+    const freed = slotFreedRequestForStatusChange(id, status)
+    if (freed) offerFreedSlotToWaitlist(freed)
   }
 
   async function deleteReservation(id: string) {
     const previous = reservations
+    /*
+     * Captured before the row goes: once it is deleted there is nothing left to
+     * look up, and the queue is keyed on the venue's own calendar day rather
+     * than the browser's. Deleting frees exactly the capacity that cancelling
+     * does, so it owes the waitlist the same call — it just cannot make it the
+     * same way.
+     */
+    const deleted = reservations.find((r) => r.id === id)
+    const freed = deleted
+      ? slotFreedRequestForDeletion(businessId, calgaryCalendarDayKey(deleted.scheduledAt))
+      : null
+
     setReservations((prev) => prev.filter((r) => r.id !== id))
     setUpdateError(null)
     const { error } = await supabase.from('appointments').delete().eq('id', id)
     if (error) {
       setReservations(previous)
       setUpdateError("Couldn't delete reservation. Please try again.")
+      return
     }
+
+    // Only once the delete actually succeeded: a failed one frees nothing, and
+    // the guest must not be told a table opened when it did not.
+    if (freed) offerFreedSlotToWaitlist(freed)
+  }
+
+  /*
+   * Deliberately not awaited and never surfaced as an error: the change to the
+   * booking already succeeded, and a failed courtesy email must not make it look
+   * as though it had not. Duplicate offers are the server's problem to prevent,
+   * and it does — the queue entry is claimed with a waiting→contacted guard
+   * before any mail goes out.
+   */
+  function offerFreedSlotToWaitlist(request: SlotFreedRequest) {
+    void fetch('/api/waitlist/slot-freed', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    }).catch(() => {
+      /* offline — staff still see the freed slot in the waitlist panel */
+    })
   }
 
   const pendingBadgeCount = useMemo(
