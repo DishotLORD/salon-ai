@@ -61,7 +61,9 @@ const FRAME_DENY_HEADERS = [
 const FRAMEABLE_NEVER = ["/dashboard", "/onboarding", "/auth", "/pay"];
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ['@napi-rs/canvas'],
+  // Native canvas + pdf.js must stay external so Node can load the .node binary
+  // and so our DOMMatrix polyfill runs before pdf.js evaluates `new DOMMatrix()`.
+  serverExternalPackages: ['@napi-rs/canvas', 'pdfjs-dist'],
   // A framework version in a header is free reconnaissance for anyone scanning
   // for known CVEs, and it buys us nothing.
   poweredByHeader: false,

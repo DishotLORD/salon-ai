@@ -1,9 +1,14 @@
-import path from 'path'
-import { pathToFileURL } from 'url'
 import { NextResponse } from 'next/server'
 import OpenAI from 'openai'
 
 import { MENU_PDF_MAX_BYTES, MENU_PDF_MAX_MB } from '@/lib/menu-pdf-limits'
+import {
+  extractPdfTextLayer,
+  INVALID_PDF_MESSAGE,
+  isInvalidPdfError,
+  pdfReadErrorMessage,
+  renderPdfPagesToPngBase64,
+} from '@/lib/menu-pdf-read'
 import { checkRateLimit } from '@/lib/rate-limit'
 import { businessIdFromUrl, declaredBodyTooLarge } from '@/lib/upload-guard'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -20,51 +25,11 @@ export const maxDuration = 120 // 2 minutes for OCR of large PDFs
  */
 const OCR_LIMIT_PER_HOUR = 12
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const pdfParse = require('pdf-parse') as (buf: Buffer) => Promise<{ text: string; numpages: number }>
-
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
 // ── OCR: render PDF pages to PNGs, send to GPT-4o Vision ─────────────────────
 async function ocrPdf(buffer: Buffer): Promise<string> {
-  const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs')
-
-  const pdfDist = path.join(process.cwd(), 'node_modules', 'pdfjs-dist')
-  pdfjsLib.GlobalWorkerOptions.workerSrc = pathToFileURL(
-    path.join(pdfDist, 'legacy', 'build', 'pdf.worker.mjs'),
-  ).href
-
-  const dirUrl = (sub: string) => pathToFileURL(path.join(pdfDist, sub) + path.sep).href
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const getDocument = (pdfjsLib as any).getDocument as (p: Record<string, unknown>) => { promise: Promise<any> }
-
-  const doc = await getDocument({
-    data: new Uint8Array(buffer),
-    cMapUrl: dirUrl('cmaps'),
-    cMapPacked: true,
-    standardFontDataUrl: dirUrl('standard_fonts'),
-    wasmUrl: dirUrl('wasm'),
-  }).promise
-
-  const MAX_PAGES = 10
-  const pageCount = Math.min(doc.numPages, MAX_PAGES)
-  const pageImages: string[] = []
-  const canvasFactory = doc.canvasFactory as {
-    create: (w: number, h: number) => { canvas: { toBuffer: (mime: string) => Buffer }; context: unknown }
-  }
-
-  for (let i = 1; i <= pageCount; i++) {
-    const page = await doc.getPage(i)
-    const viewport = page.getViewport({ scale: 2.5 })
-    const w = Math.ceil(viewport.width)
-    const h = Math.ceil(viewport.height)
-    const { canvas, context } = canvasFactory.create(w, h)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (page as any).render({ canvasContext: context, viewport }).promise
-    pageImages.push(canvas.toBuffer('image/png').toString('base64'))
-    page.cleanup()
-  }
+  const pageImages = await renderPdfPagesToPngBase64(buffer, { maxPages: 10, scale: 2.5 })
 
   // Send pages to GPT-4o Vision
   const content: OpenAI.Chat.Completions.ChatCompletionContentPart[] = [
@@ -88,7 +53,7 @@ async function ocrPdf(buffer: Buffer): Promise<string> {
 }
 
 /**
- * pdf-parse often returns only headings (dish names) while prices and descriptions
+ * A text layer that only has headings (dish names) while prices and descriptions
  * live in a different layer, custom encodings, or outlines. If the string looks
  * like a priced menu but barely contains digits / price-like tokens, fall back to vision OCR.
  */
@@ -100,7 +65,7 @@ function parsedPdfLikelyIncomplete(text: string, pageCount: number): boolean {
   if (lines.length === 0) return true
 
   // One real menu page almost always yields more text than a stray footer line
-  // (e.g. only "Gluten free buns available $4" from pdf-parse).
+  // (e.g. only "Gluten free buns available $4").
   const pages = Math.max(pageCount, 1)
   const minCharsForPages = Math.max(320, 220 * pages)
   if (t.length < minCharsForPages) return true
@@ -205,7 +170,7 @@ export async function POST(request: Request) {
 
   /*
    * Trust the bytes, not the name or the browser's guess at a MIME type. A .docx
-   * renamed to .pdf used to get all the way through pdf-parse and Vision before
+   * renamed to .pdf used to get all the way through parsing and Vision before
    * failing with something unhelpful about rendering.
    */
   if (buffer.subarray(0, 5).toString('latin1') !== '%PDF-') {
@@ -215,17 +180,21 @@ export async function POST(request: Request) {
     )
   }
 
-  // Try text extraction first (fast, free)
+  // Try text extraction first (fast, free) — pdf.js with Node canvas polyfills.
   let text = ''
   let pages = 0
   let usedOcr = false
 
   try {
-    const result = await pdfParse(buffer)
-    text = result.text.trim()
-    pages = result.numpages
-  } catch {
-    // parsing failed, will fall through to OCR
+    const result = await extractPdfTextLayer(buffer)
+    text = result.text
+    pages = result.pages
+  } catch (err) {
+    if (isInvalidPdfError(err)) {
+      return NextResponse.json({ error: INVALID_PDF_MESSAGE }, { status: 422 })
+    }
+    // Unexpected open failure: still attempt OCR below only if we have no text.
+    console.error('[pdf] text-layer extract failed:', err instanceof Error ? err.message : err)
   }
 
   const pageCount = pages || 1
@@ -279,23 +248,18 @@ export async function POST(request: Request) {
         )
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      console.error('[pdf] OCR error:', msg)
+      const msg = pdfReadErrorMessage(err)
+      console.error('[pdf] OCR error:', err instanceof Error ? err.message : err)
+      if (isInvalidPdfError(err)) {
+        return NextResponse.json({ error: INVALID_PDF_MESSAGE }, { status: 422 })
+      }
       if (!textBeforeOcr) {
-        return NextResponse.json(
-          { error: `Could not read this PDF. Error: ${msg}` },
-          { status: 422 },
-        )
+        return NextResponse.json({ error: msg }, { status: 422 })
       }
       if (parsedPdfLikelyIncomplete(textBeforeOcr, pageCount)) {
-        return NextResponse.json(
-          {
-            error: `PDF vision read failed (${msg}). This often happens if the server cannot run PDF rendering; redeploy with current dependencies or try another file.`,
-          },
-          { status: 422 },
-        )
+        return NextResponse.json({ error: msg }, { status: 422 })
       }
-      console.warn('[pdf] Keeping pdf-parse text after OCR failure (parse looked complete)')
+      console.warn('[pdf] Keeping text-layer extraction after OCR failure (parse looked complete)')
       text = textBeforeOcr
     }
   }
