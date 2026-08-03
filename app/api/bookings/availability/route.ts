@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 
 import { getOpenSlotsForDate, inferDateKeyFromText } from '@/lib/booking-availability'
-import { getCalgaryNowParts } from '@/lib/booking-wall-clock'
+import { getVenueNowParts } from '@/lib/booking-wall-clock'
 import { loadBusinessBookingContext } from '@/lib/booking-load'
 import { createClient } from '@/lib/supabase-server'
 import { verifyBusinessOwner } from '@/lib/verify-business-owner'
@@ -30,7 +30,7 @@ export async function GET(request: Request) {
   const supabase = await createClient()
   const ctx = await loadBusinessBookingContext(supabase, businessId)
 
-  const now = getCalgaryNowParts()
+  const now = getVenueNowParts(ctx.timezone)
   const dateKey = dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)
     ? dateParam
     : inferDateKeyFromText(dateParam ?? 'today', now)
@@ -40,6 +40,7 @@ export async function GET(request: Request) {
     operatingHours: ctx.operatingHours,
     existing: ctx.existingBookings,
     settings: ctx.bookingSettings,
+    timeZone: ctx.timezone,
     now,
     excludeAppointmentId,
     zones: ctx.zones,

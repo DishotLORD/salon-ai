@@ -15,6 +15,11 @@ import {
   type CrmAppointmentRow,
 } from '@/lib/crm-guest-metrics'
 import { guestCsvFilename, guestsToCsv } from '@/lib/guest-csv'
+import { loadBusinessTimezone } from '@/lib/business-timezone-load'
+import {
+  DEFAULT_BUSINESS_TIMEZONE,
+  type CanadianBusinessTimezone,
+} from '@/lib/business-timezone'
 import {
   crmTagChipStyle,
   displayGuestName,
@@ -173,22 +178,24 @@ function CrmGuestFilterBar({
 function ExportGuestsButton({
   guests,
   disabled,
+  timeZone,
 }: {
   guests: CrmCustomer[]
   disabled: boolean
+  timeZone: CanadianBusinessTimezone
 }) {
   const [hover, setHover] = useState(false)
 
   const download = useCallback(() => {
-    const blob = new Blob([guestsToCsv(guests)], { type: 'text/csv;charset=utf-8' })
+    const blob = new Blob([guestsToCsv(guests, timeZone)], { type: 'text/csv;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
-    link.download = guestCsvFilename()
+    link.download = guestCsvFilename(timeZone)
     link.click()
     // Revoking immediately can cancel the download in Safari; one tick is enough.
     setTimeout(() => URL.revokeObjectURL(url), 1000)
-  }, [guests])
+  }, [guests, timeZone])
 
   return (
     <button
@@ -352,6 +359,9 @@ export function CrmGuestsClient({ initialCustomers, initialBusinessId }: CrmGues
   // looks unchanged until a column is actually clicked.
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: 'joined', dir: 'desc' })
   const [businessId, setBusinessId] = useState<string | null>(initialBusinessId)
+  const [timeZone, setTimeZone] = useState<CanadianBusinessTimezone>(
+    DEFAULT_BUSINESS_TIMEZONE,
+  )
   const customersRef = useRef(initialCustomers)
   // eslint-disable-next-line react-hooks/refs -- latest-ref pattern for silent refetch decisions
   customersRef.current = customers
@@ -380,6 +390,8 @@ export function CrmGuestsClient({ initialCustomers, initialBusinessId }: CrmGues
     }
     const biz = { id: access.businessId }
     setBusinessId((prev) => (prev === biz.id ? prev : biz.id))
+    // Visit times, month buckets and exported dates are all venue-local.
+    setTimeZone(await loadBusinessTimezone(supabase, biz.id))
     const [customersRes, appointmentsRes] = await Promise.all([
       supabase
         .from('customers')
@@ -723,7 +735,11 @@ export function CrmGuestsClient({ initialCustomers, initialBusinessId }: CrmGues
             }}
           >
             <CrmGuestFilterBar value={filterTag} onChange={setFilterTag} counts={counts} />
-            <ExportGuestsButton guests={filtered} disabled={filtered.length === 0} />
+            <ExportGuestsButton
+              guests={filtered}
+              disabled={filtered.length === 0}
+              timeZone={timeZone}
+            />
           </div>
 
           {error && (
@@ -965,6 +981,7 @@ export function CrmGuestsClient({ initialCustomers, initialBusinessId }: CrmGues
 
           {selected && (
             <CrmGuestDetail
+              timeZone={timeZone}
               customer={selected}
               businessId={businessId}
               onClose={() => {

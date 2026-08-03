@@ -2,10 +2,12 @@ import { isCancelledStatus, isNoShowStatus } from '@/lib/appointment-status'
 import { parsePartySizeFromServiceName } from '@/lib/appointment-service-name'
 import {
   appointmentInstantFromRaw,
-  getCalgaryPartsFromInstant,
+  getVenuePartsFromInstant,
+  weekdayIndexFromParts,
   wallClockDateKey,
   type WallClockParts,
 } from '@/lib/booking-wall-clock'
+import type { CanadianBusinessTimezone } from '@/lib/business-timezone'
 
 export type AnalyticsRange = '7d' | '30d' | '90d' | '12m'
 
@@ -126,11 +128,16 @@ export function reportWindow(range: AnalyticsRange, now: Date = new Date()) {
  * `allRows` must contain the business's complete appointment history (used to
  * decide whether a guest is new or returning); the report itself covers
  * [window.start, window.end).
+ *
+ * `timeZone` is the venue zone. Every day, month, and hour bucket is cut on the
+ * venue's calendar, so a 7pm Toronto booking counts as 7pm on the Toronto day —
+ * not 5pm Mountain, and not the following UTC day.
  */
 export function buildAnalyticsReport(
   allRows: AnalyticsAppointmentRow[],
   zones: AnalyticsZone[],
   range: AnalyticsRange,
+  timeZone: CanadianBusinessTimezone,
   now: Date = new Date(),
 ): AnalyticsReport {
   const { start, end, prevStart } = reportWindow(range, now)
@@ -140,7 +147,7 @@ export function buildAnalyticsReport(
   const firstSeen = new Map<string, number>()
   const parsed = allRows
     .map((row) => {
-      const instant = appointmentInstantFromRaw(row.scheduled_at)
+      const instant = appointmentInstantFromRaw(row.scheduled_at, timeZone)
       return { row, ms: instant.getTime(), instant }
     })
     .filter((e) => Number.isFinite(e.ms))
@@ -158,7 +165,7 @@ export function buildAnalyticsReport(
   // ── Buckets ──
   const buckets = new Map<string, AnalyticsBucket>()
   const bucketKeyFor = (instant: Date): { key: string; label: string } => {
-    const parts = getCalgaryPartsFromInstant(instant)
+    const parts = getVenuePartsFromInstant(instant, timeZone)
     if (useMonthBuckets) {
       const key = monthKey(parts)
       return { key, label: monthLabel(key) }
@@ -169,7 +176,7 @@ export function buildAnalyticsReport(
 
   // Pre-seed every bucket in the window so gaps render as zeros.
   if (useMonthBuckets) {
-    const nowParts = getCalgaryPartsFromInstant(now)
+    const nowParts = getVenuePartsFromInstant(now, timeZone)
     for (let i = 11; i >= 0; i--) {
       let y = nowParts.year
       let m = nowParts.month - i
@@ -184,7 +191,7 @@ export function buildAnalyticsReport(
     const days = RANGE_DAYS[range]
     for (let i = days - 1; i >= 0; i--) {
       const instant = new Date(end - 1 - i * 24 * 60 * 60 * 1000)
-      const parts = getCalgaryPartsFromInstant(instant)
+      const parts = getVenuePartsFromInstant(instant, timeZone)
       const key = wallClockDateKey(parts)
       if (!buckets.has(key)) {
         buckets.set(key, { key, label: dayLabel(key), bookings: 0, covers: 0, cancelled: 0, noShows: 0, newGuests: 0, returningGuests: 0 })
@@ -205,7 +212,7 @@ export function buildAnalyticsReport(
   })
   const prevBuckets = new Map<string, AnalyticsBucket>()
   if (useMonthBuckets) {
-    const nowParts = getCalgaryPartsFromInstant(now)
+    const nowParts = getVenuePartsFromInstant(now, timeZone)
     for (let i = 23; i >= 12; i--) {
       let y = nowParts.year
       let m = nowParts.month - i
@@ -220,7 +227,7 @@ export function buildAnalyticsReport(
     const days = RANGE_DAYS[range]
     for (let i = 2 * days - 1; i >= days; i--) {
       const instant = new Date(end - 1 - i * 24 * 60 * 60 * 1000)
-      const parts = getCalgaryPartsFromInstant(instant)
+      const parts = getVenuePartsFromInstant(instant, timeZone)
       const key = wallClockDateKey(parts)
       if (!prevBuckets.has(key)) prevBuckets.set(key, emptyBucket(key, dayLabel(key)))
     }
@@ -309,8 +316,8 @@ export function buildAnalyticsReport(
         z.events.push({ startMs: e.ms, endMs: e.ms + turnover * 60 * 1000 })
       }
 
-      const parts = getCalgaryPartsFromInstant(e.instant)
-      const wd = new Date(Date.UTC(parts.year, parts.month - 1, parts.day)).getUTCDay()
+      const parts = getVenuePartsFromInstant(e.instant, timeZone)
+      const wd = weekdayIndexFromParts(parts)
       const hk = `${wd}-${parts.hour}`
       heat.set(hk, (heat.get(hk) ?? 0) + 1)
     }

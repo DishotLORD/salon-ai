@@ -40,14 +40,18 @@ import {
 } from "@/lib/notification-settings";
 import {
   addDaysToDateKey,
-  getCalgaryNowParts,
+  formatDateKeyLabel,
+  getVenueNowParts,
   scheduledAtToWallClock,
   wallClockDateKey,
   snapWallClockToSlotInterval,
-  wallClockInCalgaryToUtcDate,
+  resolveWallClockToUtc,
+  venueBoundaryUtcIso,
   type WallClockParts,
 } from "@/lib/booking-wall-clock";
+import type { CanadianBusinessTimezone } from "@/lib/business-timezone";
 import { loadBusinessBookingContext } from "@/lib/booking-load";
+import { prepareReservationWriteWallClock } from "@/lib/reservation-write-wall-clock";
 // formatGuestPreferencesForPrompt is gone with buildReturningGuestContext: it
 // rendered a stored guest's allergies and preferences into the system prompt.
 import {
@@ -1087,6 +1091,7 @@ type BookingEngineContext = {
   existingBookings: ExistingBooking[];
   zones: DiningZone[];
   activities: ActivityResource[];
+  timezone: CanadianBusinessTimezone;
 };
 
 // ─── Tool execution ───────────────────────────────────────────────────────────
@@ -1137,14 +1142,14 @@ function buildWallClock(date: unknown, time: unknown): string | null {
 async function loadFreshBookingsForDay(
   business_id: string,
   wallClock: string,
+  timeZone: CanadianBusinessTimezone,
 ): Promise<ExistingBooking[]> {
   const dateKey = wallClock.slice(0, 10);
-  const fromIso = wallClockInCalgaryToUtcDate(
-    `${dateKey}T00:00:00`,
-  ).toISOString();
-  const toIso = wallClockInCalgaryToUtcDate(
+  const fromIso = venueBoundaryUtcIso(`${dateKey}T00:00:00`, timeZone);
+  const toIso = venueBoundaryUtcIso(
     `${addDaysToDateKey(dateKey, 1)}T00:00:00`,
-  ).toISOString();
+    timeZone,
+  );
 
   const { data } = await supabaseAdmin
     .from("appointments")
@@ -1158,7 +1163,7 @@ async function loadFreshBookingsForDay(
     const raw = String(row.scheduled_at ?? "");
     return {
       id: row.id != null ? String(row.id) : undefined,
-      scheduled_at: scheduledAtToWallClock(raw) ?? raw,
+      scheduled_at: scheduledAtToWallClock(raw, timeZone) ?? raw,
       status: row.status != null ? String(row.status) : null,
       duration_minutes:
         row.duration_minutes != null ? Number(row.duration_minutes) : null,
@@ -1339,6 +1344,7 @@ async function runCheckAvailability(
     operatingHours: ctx.bookingCtx.operatingHours,
     existing: ctx.bookingCtx.existingBookings,
     settings: ctx.bookingCtx.bookingSettings,
+    timeZone: ctx.bookingCtx.timezone,
     now: ctx.nowParts,
     zones: ctx.bookingCtx.zones,
     partySize,
@@ -1353,6 +1359,7 @@ async function runCheckAvailability(
       operatingHours: ctx.bookingCtx.operatingHours,
       existing: ctx.bookingCtx.existingBookings,
       settings: ctx.bookingCtx.bookingSettings,
+      timeZone: ctx.bookingCtx.timezone,
       now: ctx.nowParts,
       zones: ctx.bookingCtx.zones,
       partySize,
@@ -1540,6 +1547,7 @@ async function runFindNextAvailable(
       operatingHours: ctx.bookingCtx.operatingHours,
       existing: ctx.bookingCtx.existingBookings,
       settings: ctx.bookingCtx.bookingSettings,
+      timeZone: ctx.bookingCtx.timezone,
       now: ctx.nowParts,
       zones: ctx.bookingCtx.zones,
       partySize,
@@ -1752,11 +1760,25 @@ async function runCreateReservation(
   if (windowError) return { result: windowError };
 
   const interval = ctx.bookingCtx.bookingSettings.slot_interval_minutes;
-  const snapped = snapWallClockToSlotInterval(wallClock, interval);
   const requestedTime = wallClock.slice(11, 16);
-  if (snapped && snapped !== wallClock) {
-    wallClock = snapped;
+  // Resolve venue wall-clock → UTC BEFORE availability. Spring-forward gaps
+  // must return DST_GAP_MESSAGE, not a generic not_available from a missing slot.
+  const writeWall = prepareReservationWriteWallClock(
+    wallClock,
+    ctx.bookingCtx.timezone,
+    interval,
+  );
+  if (!writeWall.ok) {
+    return {
+      result: {
+        ok: false,
+        error: writeWall.error,
+        message: writeWall.message,
+      },
+    };
   }
+  wallClock = writeWall.prepared.wallClock;
+  const scheduledAt = writeWall.prepared.resolved;
 
   // The guest's chosen zone is FINAL. "no preference" leaves it null so the
   // system may assign any zone with room; a named zone is never substituted.
@@ -1778,6 +1800,7 @@ async function runCreateReservation(
       existingAppt,
       ctx.bookingCtx.zones,
       ctx.bookingCtx.activities,
+      ctx.bookingCtx.timezone,
     );
     return {
       result: {
@@ -1800,6 +1823,7 @@ async function runCreateReservation(
     operatingHours: ctx.bookingCtx.operatingHours,
     existing: ctx.bookingCtx.existingBookings,
     settings: ctx.bookingCtx.bookingSettings,
+    timeZone: ctx.bookingCtx.timezone,
     now: ctx.nowParts,
     zones: ctx.bookingCtx.zones,
     partySize,
@@ -1812,6 +1836,7 @@ async function runCreateReservation(
       operatingHours: ctx.bookingCtx.operatingHours,
       existing: ctx.bookingCtx.existingBookings,
       settings: ctx.bookingCtx.bookingSettings,
+      timeZone: ctx.bookingCtx.timezone,
       now: ctx.nowParts,
       zones: ctx.bookingCtx.zones,
       partySize,
@@ -1846,6 +1871,7 @@ async function runCreateReservation(
           ctx.bookingCtx.operatingHours,
           ctx.bookingCtx.existingBookings,
           ctx.bookingCtx.bookingSettings,
+          ctx.bookingCtx.timezone,
           null,
           ctx.nowParts,
         )
@@ -1875,12 +1901,14 @@ async function runCreateReservation(
   const freshBookings = await loadFreshBookingsForDay(
     ctx.business_id,
     wallClock,
+    ctx.bookingCtx.timezone,
   );
   const stillAvailable = isSlotAvailable({
     wallClock,
     operatingHours: ctx.bookingCtx.operatingHours,
     existing: freshBookings,
     settings: ctx.bookingCtx.bookingSettings,
+    timeZone: ctx.bookingCtx.timezone,
     now: ctx.nowParts,
     zones: ctx.bookingCtx.zones,
     partySize,
@@ -1892,6 +1920,7 @@ async function runCreateReservation(
       operatingHours: ctx.bookingCtx.operatingHours,
       existing: freshBookings,
       settings: ctx.bookingCtx.bookingSettings,
+      timeZone: ctx.bookingCtx.timezone,
       now: ctx.nowParts,
       zones: ctx.bookingCtx.zones,
       partySize,
@@ -1908,7 +1937,8 @@ async function runCreateReservation(
     };
   }
 
-  const scheduledAtIso = wallClockInCalgaryToUtcDate(wallClock).toISOString();
+  // scheduledAt was resolved before availability — reuse it (no second conversion).
+  const scheduledAtIso = scheduledAt.iso;
   const svcParts = [guestName, `Party of ${partySize}`];
   if (zoneLabel) svcParts.push(zoneLabel);
   const serviceName = svcParts.join(" · ").slice(0, 500);
@@ -2346,11 +2376,13 @@ async function resolveAppointmentForChange(
       dining,
       ctx.bookingCtx.zones,
       ctx.bookingCtx.activities,
+      ctx.bookingCtx.timezone,
     );
     const dActivity = describeAppointment(
       activity,
       ctx.bookingCtx.zones,
       ctx.bookingCtx.activities,
+      ctx.bookingCtx.timezone,
     );
     return {
       result: {
@@ -2398,9 +2430,10 @@ function describeAppointment(
   appt: ActiveAppointment,
   zones: DiningZone[],
   activities: ActivityResource[] = [],
+  timeZone: CanadianBusinessTimezone,
 ) {
   const wallClock =
-    scheduledAtToWallClock(appt.scheduled_at) ?? appt.scheduled_at;
+    scheduledAtToWallClock(appt.scheduled_at, timeZone) ?? appt.scheduled_at;
   // An activity booking holds a resource, not a seat, so reporting a dining
   // zone for it would describe a table the guest never reserved.
   const activity = appt.activity_id
@@ -2583,24 +2616,42 @@ async function runBookActivity(
 ): Promise<ToolOutcome> {
   const guestName =
     typeof args.guest_name === "string" ? args.guest_name.trim() : "";
-  const wallClock = buildWallClock(args.date, args.time);
+  const rawActivityWall = buildWallClock(args.date, args.time);
   const missing: string[] = [];
   if (!guestName) missing.push("guest_name");
-  if (!wallClock) missing.push("date/time");
-  if (missing.length > 0) {
+  if (!rawActivityWall) missing.push("date/time");
+  if (missing.length > 0 || !rawActivityWall) {
     return {
       result: {
         ok: false,
         error: "missing_fields",
-        missing,
-        message: `Ask the guest for: ${missing.join(", ")}. Do not book until they answer.`,
+        missing: missing.length > 0 ? missing : ["date/time"],
+        message: `Ask the guest for: ${(missing.length > 0 ? missing : ["date/time"]).join(", ")}. Do not book until they answer.`,
       },
     };
   }
 
-  const dateKey = wallClock!.slice(0, 10);
+  const dateKey = rawActivityWall.slice(0, 10);
   const windowError = checkDateInBookableWindow(dateKey, ctx);
   if (windowError) return { result: windowError };
+
+  // Resolve before resource availability so spring-gap is never "taken".
+  const activityWriteWall = prepareReservationWriteWallClock(
+    rawActivityWall,
+    ctx.bookingCtx.timezone,
+    ctx.bookingCtx.bookingSettings.slot_interval_minutes,
+  );
+  if (!activityWriteWall.ok) {
+    return {
+      result: {
+        ok: false,
+        error: activityWriteWall.error,
+        message: activityWriteWall.message,
+      },
+    };
+  }
+  const wallClock = activityWriteWall.prepared.wallClock;
+  const activityScheduledAt = activityWriteWall.prepared.resolved;
 
   const request = resolveActivityRequest(args.activity, ctx);
   if (!request) return noActivitiesResult();
@@ -2618,7 +2669,7 @@ async function runBookActivity(
 
   const resource = firstFreeActivity(
     ctx.bookingCtx.activities,
-    wallClock!,
+    wallClock,
     ctx.bookingCtx.existingBookings,
     request.filter,
   );
@@ -2652,6 +2703,7 @@ async function runBookActivity(
       existingActivity,
       ctx.bookingCtx.zones,
       ctx.bookingCtx.activities,
+      ctx.bookingCtx.timezone,
     );
     return {
       result: {
@@ -2710,7 +2762,7 @@ async function runBookActivity(
       customer_id: targetCustomerId,
       conversation_id: ctx.conversation_id,
       service_name: serviceName,
-      scheduled_at: wallClockInCalgaryToUtcDate(wallClock!).toISOString(),
+      scheduled_at: activityScheduledAt.iso,
       status: "pending" as const,
       notes,
       duration_minutes: resource.duration_minutes,
@@ -2790,6 +2842,7 @@ async function runGetMyReservation(ctx: ToolContext): Promise<ToolOutcome> {
       appt,
       ctx.bookingCtx.zones,
       ctx.bookingCtx.activities,
+      ctx.bookingCtx.timezone,
     );
     const statusLabel =
       appt.status === "pending"
@@ -2870,6 +2923,7 @@ async function runCancelReservation(
     appt,
     ctx.bookingCtx.zones,
     ctx.bookingCtx.activities,
+    ctx.bookingCtx.timezone,
   );
   if (ctx.notifSettings.email_on_reservation) {
     queueBookingChangeOwnerEmail(ctx.ownerEmail, ctx.ownerName, {
@@ -2956,14 +3010,23 @@ async function runRescheduleReservation(
   const windowError = checkDateInBookableWindow(wallClock.slice(0, 10), ctx);
   if (windowError) return { result: windowError };
 
-  // Snap to the configured slot grid, same as create_reservation.
-  const snappedReschedule = snapWallClockToSlotInterval(
+  // Resolve before availability so spring-gap returns DST_GAP_MESSAGE.
+  const writeWall = prepareReservationWriteWallClock(
     wallClock,
+    ctx.bookingCtx.timezone,
     ctx.bookingCtx.bookingSettings.slot_interval_minutes,
   );
-  if (snappedReschedule && snappedReschedule !== wallClock) {
-    wallClock = snappedReschedule;
+  if (!writeWall.ok) {
+    return {
+      result: {
+        ok: false,
+        error: writeWall.error,
+        message: writeWall.message,
+      },
+    };
   }
+  wallClock = writeWall.prepared.wallClock;
+  const rescheduledAt = writeWall.prepared.resolved;
 
   const currentPartySize =
     appt.party_size && appt.party_size > 0 ? appt.party_size : 2;
@@ -2992,6 +3055,7 @@ async function runRescheduleReservation(
       const freshBookings = await loadFreshBookingsForDay(
         ctx.business_id,
         wallClock,
+        ctx.bookingCtx.timezone,
       );
       if (!isActivityFree(resource, wallClock, freshBookings, appt.id)) {
         const range = dayOpenRange(ctx, dateKey);
@@ -3027,6 +3091,7 @@ async function runRescheduleReservation(
         operatingHours: ctx.bookingCtx.operatingHours,
         existing: ctx.bookingCtx.existingBookings,
         settings: ctx.bookingCtx.bookingSettings,
+        timeZone: ctx.bookingCtx.timezone,
         now: ctx.nowParts,
         excludeAppointmentId: appt.id,
         zones: ctx.bookingCtx.zones,
@@ -3040,6 +3105,7 @@ async function runRescheduleReservation(
       operatingHours: ctx.bookingCtx.operatingHours,
       existing: ctx.bookingCtx.existingBookings,
       settings: ctx.bookingCtx.bookingSettings,
+      timeZone: ctx.bookingCtx.timezone,
       now: ctx.nowParts,
       zones: ctx.bookingCtx.zones,
       partySize,
@@ -3062,6 +3128,7 @@ async function runRescheduleReservation(
   const freshBookings = await loadFreshBookingsForDay(
     ctx.business_id,
     wallClock,
+    ctx.bookingCtx.timezone,
   );
   // Activities already had their own fresh resource check above.
   const stillAvailable = appt.activity_id
@@ -3071,6 +3138,7 @@ async function runRescheduleReservation(
         operatingHours: ctx.bookingCtx.operatingHours,
         existing: freshBookings,
         settings: ctx.bookingCtx.bookingSettings,
+        timeZone: ctx.bookingCtx.timezone,
         now: ctx.nowParts,
         excludeAppointmentId: appt.id,
         zones: ctx.bookingCtx.zones,
@@ -3083,6 +3151,7 @@ async function runRescheduleReservation(
       operatingHours: ctx.bookingCtx.operatingHours,
       existing: freshBookings,
       settings: ctx.bookingCtx.bookingSettings,
+      timeZone: ctx.bookingCtx.timezone,
       now: ctx.nowParts,
       zones: ctx.bookingCtx.zones,
       partySize,
@@ -3099,10 +3168,12 @@ async function runRescheduleReservation(
     };
   }
 
+  // rescheduledAt was resolved before availability — reuse it.
+
   const guestName = parseGuestNameFromServiceName(appt.service_name);
   let zoneLabel: string | null = null;
   const update: Record<string, unknown> = {
-    scheduled_at: wallClockInCalgaryToUtcDate(wallClock).toISOString(),
+    scheduled_at: rescheduledAt.iso,
     party_size: partySize,
   };
 
@@ -3124,6 +3195,7 @@ async function runRescheduleReservation(
       ctx.bookingCtx.operatingHours,
       ctx.bookingCtx.existingBookings,
       ctx.bookingCtx.bookingSettings,
+      ctx.bookingCtx.timezone,
       preferredZoneId,
       ctx.nowParts,
     );
@@ -3167,6 +3239,7 @@ async function runRescheduleReservation(
     appt,
     ctx.bookingCtx.zones,
     ctx.bookingCtx.activities,
+    ctx.bookingCtx.timezone,
   );
   const activityName = appt.activity_id
     ? (ctx.bookingCtx.activities.find((a) => a.id === appt.activity_id)
@@ -3831,12 +3904,7 @@ function queueGuestConfirmationEmail(
         ? `Reservation updated, ${firstName}`
         : `You're booked, ${firstName}!`;
 
-      const dateObj = new Date(`${details.date}T12:00:00`);
-      const formattedDate = dateObj.toLocaleDateString("en-US", {
-        weekday: "long",
-        month: "long",
-        day: "numeric",
-      });
+      const formattedDate = formatDateKeyLabel(details.date);
       const [h, m] = details.time.split(":").map(Number);
       const formattedTime = `${h > 12 ? h - 12 : h || 12}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`;
 
@@ -3945,12 +4013,7 @@ function queueGuestCancellationEmail(
         details.guestName.split(/\s+/)[0] || "there",
       );
 
-      const dateObj = new Date(`${details.date}T12:00:00`);
-      const formattedDate = dateObj.toLocaleDateString("en-US", {
-        weekday: "long",
-        month: "long",
-        day: "numeric",
-      });
+      const formattedDate = formatDateKeyLabel(details.date);
       const [h, m] = details.time.split(":").map(Number);
       const formattedTime = `${h > 12 ? h - 12 : h || 12}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`;
 
@@ -4032,7 +4095,7 @@ function queueBookingChangeOwnerEmail(
       const dashboardUrl = absoluteUrl("/dashboard/bookings");
 
       const fmtDate = (dateKey: string) =>
-        new Date(`${dateKey}T12:00:00`).toLocaleDateString("en-US", {
+        formatDateKeyLabel(dateKey, {
           weekday: "short",
           month: "short",
           day: "numeric",
@@ -4143,8 +4206,7 @@ function queueReservationBookedEmail(
       const dashboardUrl = absoluteUrl("/dashboard/bookings");
 
       // Format date: 2026-06-16 → Mon, Jun 16 2026
-      const dateObj = new Date(`${details.date}T12:00:00`);
-      const formattedDate = dateObj.toLocaleDateString("en-US", {
+      const formattedDate = formatDateKeyLabel(details.date, {
         weekday: "short",
         month: "short",
         day: "numeric",
@@ -4655,7 +4717,7 @@ export async function POST(request: Request) {
       business_id,
     );
 
-    const nowParts = getCalgaryNowParts();
+    const nowParts = getVenueNowParts(bookingCtx.timezone);
     const todayLabel = new Date(
       Date.UTC(nowParts.year, nowParts.month - 1, nowParts.day),
     ).toLocaleDateString("en-US", {

@@ -7,7 +7,8 @@ import type { Reservation } from '@/components/reservation-card'
 import { bk } from '@/lib/bookings-compact-ui'
 import { getDayHoursForDate, type OperatingHours } from '@/lib/operating-hours'
 import { calendarMonthSlide } from '@/lib/ocean-motion'
-import { calgaryCalendarDayKey } from '@/lib/booking-wall-clock'
+import { venueCalendarDayKey } from '@/lib/booking-wall-clock'
+import type { CanadianBusinessTimezone } from '@/lib/business-timezone'
 import { toDateIso } from '@/lib/reservation-schedule'
 
 function isSameDay(a: Date, b: Date) {
@@ -72,6 +73,8 @@ export type BookingsLightCalendarProps = {
   today: Date
   operatingHours: OperatingHours
   reduceMotion: boolean | null
+  /** Venue IANA timezone for grouping appointment instants onto calendar days. */
+  timeZone: CanadianBusinessTimezone
 }
 
 export function BookingsLightCalendar({
@@ -86,6 +89,7 @@ export function BookingsLightCalendar({
   today,
   operatingHours,
   reduceMotion,
+  timeZone,
 }: BookingsLightCalendarProps) {
   const [slideDir, setSlideDir] = useState(0)
 
@@ -114,7 +118,7 @@ export function BookingsLightCalendar({
   const dayStats = useMemo(() => {
     const map = new Map<string, DayCellStats>()
     for (const r of reservations) {
-      const k = calgaryCalendarDayKey(r.scheduledAt)
+      const k = venueCalendarDayKey(r.scheduledAt, timeZone)
       const curr = map.get(k) ?? {
         count: 0,
         covers: 0,
@@ -136,7 +140,7 @@ export function BookingsLightCalendar({
       })
     }
     return map
-  }, [reservations])
+  }, [reservations, timeZone])
 
   const maxCount = useMemo(
     () => Math.max(1, ...Array.from(dayStats.values()).map((s) => s.count)),

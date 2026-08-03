@@ -5,6 +5,11 @@ import type { ExistingBooking } from '@/lib/booking-availability'
 import { logAvailabilityDebug } from '@/lib/booking-availability'
 import { parseBookingSettings, type BookingSettings } from '@/lib/booking-settings'
 import {
+  isTimezoneSchemaError,
+  resolveBusinessTimezone,
+  type CanadianBusinessTimezone,
+} from '@/lib/business-timezone'
+import {
   defaultMainDiningZone,
   parseDiningZoneRow,
   type DiningZone,
@@ -12,10 +17,10 @@ import {
 import {
   addDaysToDateKey,
   formatWallClock,
-  getCalgaryNowParts,
+  getVenueNowParts,
   scheduledAtToWallClock,
   wallClockDateKey,
-  wallClockInCalgaryToUtcDate,
+  venueBoundaryUtcIso,
 } from '@/lib/booking-wall-clock'
 import { parseOperatingHours, type OperatingHours } from '@/lib/operating-hours'
 
@@ -25,20 +30,40 @@ export type BusinessBookingContext = {
   existingBookings: ExistingBooking[]
   zones: DiningZone[]
   activities: ActivityResource[]
+  /** Resolved Canadian IANA zone (null DB → America/Edmonton). */
+  timezone: CanadianBusinessTimezone
 }
 
-/** Load hours, settings, zones, and upcoming appointments for availability checks. */
+/** Load hours, settings, zones, timezone, and upcoming appointments for availability checks. */
 export async function loadBusinessBookingContext(
   supabase: SupabaseClient,
   businessId: string,
   lookaheadDays = 14,
 ): Promise<BusinessBookingContext> {
-  const { data: biz } = await supabase
-    .from('businesses')
-    .select('operating_hours, booking_settings')
-    .eq('id', businessId)
-    .maybeSingle()
+  let biz: Record<string, unknown> | null = null
+  {
+    const withTz = await supabase
+      .from('businesses')
+      .select('operating_hours, booking_settings, timezone')
+      .eq('id', businessId)
+      .maybeSingle()
+    if (withTz.error && isTimezoneSchemaError(withTz.error.message)) {
+      const fallback = await supabase
+        .from('businesses')
+        .select('operating_hours, booking_settings')
+        .eq('id', businessId)
+        .maybeSingle()
+      biz = (fallback.data as Record<string, unknown> | null) ?? null
+    } else {
+      biz = (withTz.data as Record<string, unknown> | null) ?? null
+    }
+  }
 
+  const timezone = resolveBusinessTimezone(
+    biz && typeof (biz as { timezone?: unknown }).timezone === 'string'
+      ? String((biz as { timezone: string }).timezone)
+      : null,
+  )
   const operatingHours = parseOperatingHours(biz?.operating_hours)
   const bookingSettings = parseBookingSettings(biz?.booking_settings)
 
@@ -75,13 +100,13 @@ export async function loadBusinessBookingContext(
     }
   }
 
-  const now = getCalgaryNowParts()
+  const now = getVenueNowParts(timezone)
   const todayKey = wallClockDateKey(now)
   const fromKey = addDaysToDateKey(todayKey, -1) + 'T00:00:00'
   const toKey = addDaysToDateKey(todayKey, lookaheadDays) + 'T23:59:59'
 
-  const fromIso = wallClockInCalgaryToUtcDate(fromKey).toISOString()
-  const toIso = wallClockInCalgaryToUtcDate(toKey).toISOString()
+  const fromIso = venueBoundaryUtcIso(fromKey, timezone)
+  const toIso = venueBoundaryUtcIso(toKey, timezone)
 
   // Activities are optional: a venue with no pool tables simply has none, and
   // the table is only present once migration 019 has run, so a failed read must
@@ -106,7 +131,7 @@ export async function loadBusinessBookingContext(
   const existingBookings: ExistingBooking[] = (rows ?? []).map((r) => {
     const row = r as Record<string, unknown>
     const raw = String(row.scheduled_at ?? '')
-    const wallClock = scheduledAtToWallClock(raw) ?? raw
+    const wallClock = scheduledAtToWallClock(raw, timezone) ?? raw
     return {
       id: row.id != null ? String(row.id) : undefined,
       scheduled_at: wallClock,
@@ -121,8 +146,9 @@ export async function loadBusinessBookingContext(
 
   logAvailabilityDebug('load_context', {
     businessId,
-    calgaryNow: formatWallClock(now),
-    queryRangeCalgary: { from: fromKey, to: toKey },
+    timezone,
+    venueNow: formatWallClock(now),
+    queryRangeVenue: { from: fromKey, to: toKey },
     queryRangeUtc: { from: fromIso, to: toIso },
     rowCount: existingBookings.length,
     bookings: existingBookings.map((b) => ({
@@ -132,5 +158,5 @@ export async function loadBusinessBookingContext(
     })),
   })
 
-  return { operatingHours, bookingSettings, existingBookings, zones, activities }
+  return { operatingHours, bookingSettings, existingBookings, zones, activities, timezone }
 }

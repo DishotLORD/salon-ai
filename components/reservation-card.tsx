@@ -3,7 +3,8 @@
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { useState } from 'react'
 
-import { formatCalgaryTimeParts } from '@/lib/booking-wall-clock'
+import { formatVenueTimeParts } from '@/lib/booking-wall-clock'
+import type { CanadianBusinessTimezone } from '@/lib/business-timezone'
 import { oceanTransition } from '@/lib/ocean-motion'
 import { t } from '@/lib/dashboard-theme'
 
@@ -32,6 +33,8 @@ export type Reservation = {
 
 export type ReservationCardProps = {
   reservation: Reservation
+  /** Venue IANA zone — the card's time is cut in it, never the browser's. */
+  timeZone: CanadianBusinessTimezone
   /**
    * panel  — full card with detail rows and inline action buttons (day panel)
    * compact — single row for list/grid views; actions live in a popover menu
@@ -247,6 +250,7 @@ function StatusBadge({ status }: { status: ResStatus }) {
 
 export function ReservationCard({
   reservation: r,
+  timeZone,
   variant = 'panel',
   isPast = false,
   onConfirm,
@@ -259,7 +263,7 @@ export function ReservationCard({
   const [activeAction, setActiveAction] = useState<string | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
 
-  const { hm, period } = formatCalgaryTimeParts(r.scheduledAt)
+  const { hm, period } = formatVenueTimeParts(r.scheduledAt, timeZone)
   const hasActions = !isPast && (onConfirm ?? onCancel ?? onDelete ?? onEdit)
   const canEdit = onEdit && r.status !== 'cancelled' && r.status !== 'no-show'
 

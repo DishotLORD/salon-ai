@@ -1,56 +1,52 @@
 /**
- * Wall-clock timestamps for reservations, interpreted in the restaurant's
- * timezone. Single-tenant deployments outside Alberta can set
- * NEXT_PUBLIC_BUSINESS_TIMEZONE (an IANA name like "America/Toronto") without
- * touching code — it must be NEXT_PUBLIC_ so the dashboard bundle and the
- * server agree. True per-business timezones (multi-tenant) remain future work.
- */
-
-const DEFAULT_TZ = 'America/Edmonton'
-
-/**
- * Every date function in this file feeds the IANA name straight to
- * `Intl.DateTimeFormat`, which throws a RangeError on anything it does not
- * recognise. Unchecked, one typo in NEXT_PUBLIC_BUSINESS_TIMEZONE ("Amercia/…",
- * "EST", a trailing space that survived a copy-paste) took down availability
- * checks, booking, rescheduling and the calendar at once — a whole restaurant
- * unable to take a reservation because of a config string.
+ * Wall-clock timestamps for reservations, interpreted in a venue IANA timezone.
  *
- * So it is validated once, here, and a bad value degrades to the default with a
- * loud warning instead of throwing on every request. `/api/health` reports which
- * name actually took effect.
+ * Appointments store UTC instants (`timestamptz`). Guest/staff digits are naive
+ * "YYYY-MM-DDTHH:mm:ss" in the business timezone.
+ *
+ * Every helper here that touches a venue calendar day, formats an appointment
+ * time, groups bookings, or converts wall-clock to UTC takes a REQUIRED
+ * `CanadianBusinessTimezone`. There is no optional parameter and no ambient
+ * default, so a call site physically cannot forget the zone and silently render
+ * Mountain Time for a Toronto venue.
+ *
+ * Resolve `businesses.timezone` exactly once, at the business-context boundary,
+ * with `resolveBusinessTimezone` (null → America/Edmonton for legacy Alberta
+ * rows), then pass the resolved value down. Never use the browser timezone.
  */
-function resolveVenueTimezone(): { timezone: string; configuredValue: string | null; valid: boolean } {
-  const configured = process.env.NEXT_PUBLIC_BUSINESS_TIMEZONE?.trim() || null
-  if (!configured) return { timezone: DEFAULT_TZ, configuredValue: null, valid: true }
-  try {
-    new Intl.DateTimeFormat('en-CA', { timeZone: configured }).format(new Date())
-    return { timezone: configured, configuredValue: configured, valid: true }
-  } catch {
-    console.error(
-      `[timezone] NEXT_PUBLIC_BUSINESS_TIMEZONE="${configured}" is not an IANA timezone name. ` +
-        `Falling back to ${DEFAULT_TZ}. Reservation times will be wrong until this is fixed — ` +
-        `use a name like "America/Toronto" or "Europe/Kyiv".`,
-    )
-    return { timezone: DEFAULT_TZ, configuredValue: configured, valid: false }
-  }
-}
 
-const resolvedTimezone = resolveVenueTimezone()
+import {
+  DEFAULT_BUSINESS_TIMEZONE,
+  isCanadianBusinessTimezone,
+  type CanadianBusinessTimezone,
+} from './business-timezone'
 
 /**
- * The venue's timezone. Named for Calgary because that is the default and every
- * call site below reads that way; it is whatever NEXT_PUBLIC_BUSINESS_TIMEZONE
- * says, provided that value is a real IANA name.
+ * Health/diagnostics only. The venue zone now comes from `businesses.timezone`
+ * per request, so `NEXT_PUBLIC_BUSINESS_TIMEZONE` no longer affects any booking
+ * math; it is reported purely so ops can see a stale env var still set and
+ * remove it.
  */
-export const CALGARY_TZ = resolvedTimezone.timezone
-
-/** For diagnostics: what was asked for, and whether we could honour it. */
 export const VENUE_TIMEZONE_STATUS = {
-  active: resolvedTimezone.timezone,
-  configured: resolvedTimezone.configuredValue,
-  valid: resolvedTimezone.valid,
+  mode: 'per-business' as const,
+  fallback: DEFAULT_BUSINESS_TIMEZONE,
+  legacyEnvOverride: process.env.NEXT_PUBLIC_BUSINESS_TIMEZONE?.trim() || null,
 } as const
+
+/**
+ * `Intl.DateTimeFormat` throws on an unrecognised zone name. Types make that
+ * unreachable from TypeScript call sites, but a value can still arrive from an
+ * untyped boundary (a JSON body, an old cached bundle). Fail loudly to the log
+ * and keep rendering rather than blanking a dashboard.
+ */
+function safeZone(timeZone: CanadianBusinessTimezone): CanadianBusinessTimezone {
+  if (isCanadianBusinessTimezone(timeZone)) return timeZone
+  console.error(
+    `[timezone] "${String(timeZone)}" is not a supported venue timezone. ` +
+      `Falling back to ${DEFAULT_BUSINESS_TIMEZONE}; times shown may be wrong until the caller is fixed.`,
+  )
+  return DEFAULT_BUSINESS_TIMEZONE
+}
 
 const WALL_CLOCK_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/
 
@@ -62,9 +58,13 @@ export type WallClockParts = {
   minute: number
 }
 
-export function getCalgaryPartsFromInstant(date: Date): WallClockParts {
+export function getVenuePartsFromInstant(
+  date: Date,
+  timeZone: CanadianBusinessTimezone,
+): WallClockParts {
+  const tz = safeZone(timeZone)
   const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: CALGARY_TZ,
+    timeZone: tz,
     year: 'numeric',
     month: 'numeric',
     day: 'numeric',
@@ -83,8 +83,8 @@ export function getCalgaryPartsFromInstant(date: Date): WallClockParts {
   }
 }
 
-export function getCalgaryNowParts(): WallClockParts {
-  return getCalgaryPartsFromInstant(new Date())
+export function getVenueNowParts(timeZone: CanadianBusinessTimezone): WallClockParts {
+  return getVenuePartsFromInstant(new Date(), timeZone)
 }
 
 export function parseWallClock(value: string): WallClockParts | null {
@@ -111,10 +111,13 @@ function hasExplicitTimezone(value: string): boolean {
 /**
  * Parse scheduled_at from Supabase/API.
  * - ISO with Z/offset → instant as stored
- * - Naive "YYYY-MM-DDTHH:mm:ss" without offset → UTC (Postgres timestamptz), NOT Calgary digits
- * - Fallback → literal Calgary wall-clock (legacy rows)
+ * - Naive "YYYY-MM-DDTHH:mm:ss" without offset → UTC (Postgres timestamptz)
+ * - Fallback → literal venue wall-clock (legacy rows)
  */
-export function parseDbTimestampToDate(raw: string): Date | null {
+export function parseDbTimestampToDate(
+  raw: string,
+  timeZone: CanadianBusinessTimezone,
+): Date | null {
   const trimmed = raw.trim()
   if (!trimmed) return null
 
@@ -128,8 +131,8 @@ export function parseDbTimestampToDate(raw: string): Date | null {
     if (!Number.isNaN(asUtc.getTime())) {
       return asUtc
     }
-    const calgary = wallClockInCalgaryToUtcDate(trimmed)
-    return Number.isNaN(calgary.getTime()) ? null : calgary
+    const venue = resolveWallClockToUtc(trimmed, timeZone)
+    return venue.ok ? venue.instant : null
   }
 
   const d = new Date(trimmed)
@@ -137,49 +140,162 @@ export function parseDbTimestampToDate(raw: string): Date | null {
 }
 
 /**
- * Normalize DB/API scheduled_at to Calgary wall-clock "YYYY-MM-DDTHH:mm:ss".
+ * Normalize DB/API scheduled_at to venue wall-clock "YYYY-MM-DDTHH:mm:ss".
  */
-export function scheduledAtToWallClock(raw: string): string | null {
+export function scheduledAtToWallClock(
+  raw: string,
+  timeZone: CanadianBusinessTimezone,
+): string | null {
   const trimmed = raw.trim()
   if (!trimmed) return null
 
-  const instant = parseDbTimestampToDate(trimmed)
+  const instant = parseDbTimestampToDate(trimmed, timeZone)
   if (instant) {
-    return formatWallClock(getCalgaryPartsFromInstant(instant))
+    return formatWallClock(getVenuePartsFromInstant(instant, timeZone))
   }
 
   const parts = parseWallClock(trimmed)
   return parts ? formatWallClock(parts) : null
 }
 
-/** UTC instant for a Calgary wall-clock moment (for timestamptz queries). */
-export function wallClockInCalgaryToUtcDate(wallClock: string): Date {
-  const target = parseWallClock(wallClock)
-  if (!target) return new Date(NaN)
+/**
+ * Guest-facing copy for a wall-clock time that the venue's clocks skip over.
+ * Spring-forward removes 02:00–03:00 local, so those digits name no instant.
+ */
+export const DST_GAP_MESSAGE =
+  'That local time does not exist because the clocks change that night. Please choose another time.'
 
+/** Guest-facing copy for digits we could not read at all. */
+export const MALFORMED_WALL_CLOCK_MESSAGE =
+  'That date and time could not be read. Please pick a time from the list.'
+
+export type WallClockResolution =
+  | {
+      ok: true
+      instant: Date
+      /** UTC ISO safe to write to a timestamptz column. */
+      iso: string
+      /**
+       * True on the fall-back repeat hour, where these digits name two
+       * instants. `instant` is the earlier of the two — see the policy note on
+       * `resolveWallClockToUtc`.
+       */
+      ambiguous: boolean
+    }
+  | {
+      ok: false
+      reason: 'malformed' | 'nonexistent_local_time'
+      /** Safe to show a guest verbatim. */
+      message: string
+    }
+
+/**
+ * UTC instant for a venue wall-clock moment, as a typed result.
+ *
+ * Uses a 1-minute iterative search from an offset guess, so Newfoundland's
+ * half-hour offset and every DST transition are covered without a table.
+ *
+ * DST policy:
+ * - Spring-forward gap (02:30 on the transition night): the digits name no
+ *   instant. Return `nonexistent_local_time` rather than inventing 01:30 or
+ *   03:30 — storing a reservation the guest never chose is worse than asking.
+ * - Fall-back repeat (01:30 twice): return the EARLIER instant, deterministically.
+ *   A table held from the earlier 01:30 covers both passes of that hour, so the
+ *   guest is seated whichever one they meant. The later instant would leave the
+ *   first 01:30 unserved. Erring early is also the recoverable direction: the
+ *   guest waits, staff seat them, instead of arriving to a table already given away.
+ */
+export function resolveWallClockToUtc(
+  wallClock: string,
+  timeZone: CanadianBusinessTimezone,
+): WallClockResolution {
+  const target = parseWallClock(wallClock)
+  if (!target) {
+    return { ok: false, reason: 'malformed', message: MALFORMED_WALL_CLOCK_MESSAGE }
+  }
+
+  const tz = safeZone(timeZone)
   const targetKey = wallClockDateKey(target)
   const targetMin = wallClockToMinutesOfDay(target)
 
-  let guessMs = Date.UTC(target.year, target.month - 1, target.day, target.hour + 7, target.minute, 0)
+  // Rough UTC guess: Canadian zones sit near UTC−2.5…−8. Start from UTC wall digits
+  // plus 6h so the first probe is usually west of the real instant, then walk.
+  let guessMs = Date.UTC(target.year, target.month - 1, target.day, target.hour + 6, target.minute, 0)
+  let matched: number | null = null
 
-  for (let i = 0; i < 96; i++) {
-    const p = getCalgaryPartsFromInstant(new Date(guessMs))
+  for (let i = 0; i < 24 * 60; i++) {
+    const p = getVenuePartsFromInstant(new Date(guessMs), tz)
     const key = wallClockDateKey(p)
     const min = wallClockToMinutesOfDay(p)
 
     if (key === targetKey && min === targetMin) {
-      return new Date(guessMs)
+      matched = guessMs
+      break
     }
 
     const keyCmp = key.localeCompare(targetKey)
     if (keyCmp < 0 || (keyCmp === 0 && min < targetMin)) {
-      guessMs += 15 * 60 * 1000
+      guessMs += 60 * 1000
     } else {
-      guessMs -= 15 * 60 * 1000
+      guessMs -= 60 * 1000
     }
   }
 
-  return new Date(guessMs)
+  if (matched == null) {
+    return { ok: false, reason: 'nonexistent_local_time', message: DST_GAP_MESSAGE }
+  }
+
+  // Walk back for an earlier instant carrying the same digits (fall-back). Scan a
+  // ±4h window rather than stopping at the first non-matching minute, because the
+  // two ambiguous occurrences are separated by a full non-matching hour.
+  let earliest = matched
+  let occurrences = 0
+  const windowStart = matched - 4 * 60 * 60 * 1000
+  const windowEnd = matched + 4 * 60 * 60 * 1000
+  for (let probe = windowStart; probe <= windowEnd; probe += 60 * 1000) {
+    const p = getVenuePartsFromInstant(new Date(probe), tz)
+    if (wallClockDateKey(p) === targetKey && wallClockToMinutesOfDay(p) === targetMin) {
+      occurrences += 1
+      if (probe < earliest) earliest = probe
+    }
+  }
+
+  const instant = new Date(earliest)
+  return { ok: true, instant, iso: instant.toISOString(), ambiguous: occurrences > 1 }
+}
+
+/**
+ * UTC ISO for a venue day boundary such as `${dateKey}T00:00:00`.
+ *
+ * Range queries need a string, not a result to branch on. Canadian DST shifts
+ * happen at 02:00 local, so midnight and 23:59:59 always exist — but rather
+ * than assume that forever, walk forward to the first minute that does exist.
+ * Never returns an invalid ISO, so callers can inline it into a query.
+ */
+export function venueBoundaryUtcIso(
+  wallClock: string,
+  timeZone: CanadianBusinessTimezone,
+): string {
+  const direct = resolveWallClockToUtc(wallClock, timeZone)
+  if (direct.ok) return direct.iso
+
+  const parts = parseWallClock(wallClock)
+  if (!parts) {
+    throw new Error(`venueBoundaryUtcIso: malformed wall clock "${wallClock}"`)
+  }
+  // Only reachable if a zone ever moves its transition onto a boundary minute.
+  for (let add = 1; add <= 180; add++) {
+    const min = wallClockToMinutesOfDay(parts) + add
+    const dayShift = Math.floor(min / (24 * 60))
+    const dateKey = addDaysToDateKey(wallClockDateKey(parts), dayShift)
+    const hh = String(Math.floor((min % (24 * 60)) / 60)).padStart(2, '0')
+    const mm = String(min % 60).padStart(2, '0')
+    const probe = resolveWallClockToUtc(`${dateKey}T${hh}:${mm}:00`, timeZone)
+    if (probe.ok) return probe.iso
+  }
+  throw new Error(
+    `venueBoundaryUtcIso: no valid instant near "${wallClock}" in ${timeZone}`,
+  )
 }
 
 export function wallClockDateKey(parts: WallClockParts): string {
@@ -216,7 +332,11 @@ export function addDaysToDateKey(dateKey: string, deltaDays: number): string {
   return `${t.getUTCFullYear()}-${pad2(t.getUTCMonth() + 1)}-${pad2(t.getUTCDate())}`
 }
 
-export function calgaryWeekdayIndex(parts: WallClockParts): number {
+/**
+ * Day of week (0=Sunday) for venue calendar digits. Pure arithmetic on the
+ * digits via a UTC anchor, so no timezone is involved or needed.
+ */
+export function weekdayIndexFromParts(parts: WallClockParts): number {
   const t = new Date(Date.UTC(parts.year, parts.month - 1, parts.day))
   return t.getUTCDay()
 }
@@ -246,13 +366,13 @@ export function formatWallClockLabel(parts: WallClockParts): string {
   return `${dayLabel} at ${dh}:${String(m).padStart(2, '0')} ${period}`
 }
 
-export function dateFromWallClockParts(parts: WallClockParts): Date {
-  return wallClockInCalgaryToUtcDate(formatWallClock(parts))
-}
-
-/** @deprecated Prefer getCalgaryPartsFromInstant. */
-export function wallClockFromDate(date: Date): WallClockParts {
-  return getCalgaryPartsFromInstant(date)
+/** Instant for venue calendar digits, or null when those digits do not exist. */
+export function dateFromWallClockParts(
+  parts: WallClockParts,
+  timeZone: CanadianBusinessTimezone,
+): Date | null {
+  const resolved = resolveWallClockToUtc(formatWallClock(parts), timeZone)
+  return resolved.ok ? resolved.instant : null
 }
 
 const MONTH_INDEX: Record<string, number> = {
@@ -352,22 +472,25 @@ function wallClockOnDateKey(dateKey: string, hour: number, minute: number): stri
   return formatWallClock({ year: y, month: m, day: d, hour, minute })
 }
 
-/** Default fallback when no time parsed: tonight 7pm Calgary (tomorrow if already past 7pm). */
-export function defaultReservationWallClock(): string {
-  const now = getCalgaryNowParts()
+/** Default fallback when no time parsed: tonight 7pm venue (tomorrow if already past 7pm). */
+export function defaultReservationWallClock(timeZone: CanadianBusinessTimezone): string {
+  const now = getVenueNowParts(timeZone)
   const todayKey = wallClockDateKey(now)
   const dateKey = now.hour >= 19 ? addDaysToDateKey(todayKey, 1) : todayKey
   return wallClockOnDateKey(dateKey, 19, 0)
 }
 
 /**
- * Parse guest/AI text into Calgary wall-clock "YYYY-MM-DDTHH:mm:ss".
+ * Parse guest/AI text into venue wall-clock "YYYY-MM-DDTHH:mm:ss".
  * Never uses server or browser local timezone.
  */
-export function parseScheduledAtToWallClock(text: string): string | null {
+export function parseScheduledAtToWallClock(
+  text: string,
+  timeZone: CanadianBusinessTimezone,
+): string | null {
   if (!text.trim()) return null
 
-  const now = getCalgaryNowParts()
+  const now = getVenueNowParts(timeZone)
   const cy = now.year
   const cm = now.month
   const cd = now.day
@@ -433,7 +556,7 @@ export function parseScheduledAtToWallClock(text: string): string | null {
     const targetWd = WEEKDAYS.indexOf(
       wdMatch[2].toLowerCase() as (typeof WEEKDAYS)[number],
     )
-    const todayWd = calgaryWeekdayIndex(now)
+    const todayWd = weekdayIndexFromParts(now)
     let daysAhead = targetWd - todayWd
     if (daysAhead < 0) daysAhead += 7
     // A bare weekday matching today's weekday means TODAY; only "next" jumps a week.
@@ -463,56 +586,79 @@ export function parseScheduledAtToWallClock(text: string): string | null {
     return wallClockOnDateKey(dateKey, timeOnly.hour, timeOnly.minute)
   }
 
+  // silence unused — kept for parity with prior signature shape
+  void cm
+  void cd
+
   return null
 }
 
 /** UTC instant for DB row or UI Date (handles naive wall-clock or ISO UTC). */
-export function appointmentInstantFromRaw(raw: string): Date {
-  const d = parseDbTimestampToDate(raw)
+export function appointmentInstantFromRaw(
+  raw: string,
+  timeZone: CanadianBusinessTimezone,
+): Date {
+  const d = parseDbTimestampToDate(raw, timeZone)
   return d ?? new Date(NaN)
 }
 
-/** Calendar cell YYYY-MM-DD (UI day label, not timezone-shifted). */
+/**
+ * Calendar cell YYYY-MM-DD from a Date that already represents a UI calendar day
+ * in the runtime's local getters. Prefer venueCalendarDayKey for appointments.
+ */
 export function calendarDateKey(d: Date): string {
   const pad2 = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
 }
 
-export function isSameCalgaryCalendarDay(scheduledAt: Date, calendarDay: Date): boolean {
+export function isSameVenueCalendarDay(
+  scheduledAt: Date,
+  calendarDay: Date,
+  timeZone: CanadianBusinessTimezone,
+): boolean {
   return (
-    wallClockDateKey(getCalgaryPartsFromInstant(scheduledAt)) ===
+    wallClockDateKey(getVenuePartsFromInstant(scheduledAt, timeZone)) ===
     calendarDateKey(calendarDay)
   )
 }
 
-export function formatCalgaryTime(date: Date): string {
+export function formatVenueTime(date: Date, timeZone: CanadianBusinessTimezone): string {
   return new Intl.DateTimeFormat('en-US', {
-    timeZone: CALGARY_TZ,
+    timeZone: safeZone(timeZone),
     hour: 'numeric',
     minute: '2-digit',
     hour12: true,
   }).format(date)
 }
 
-export function formatCalgaryTimeParts(date: Date): { hm: string; period: string } {
-  const str = formatCalgaryTime(date)
+export function formatVenueTimeParts(
+  date: Date,
+  timeZone: CanadianBusinessTimezone,
+): { hm: string; period: string } {
+  const str = formatVenueTime(date, timeZone)
   const match = str.match(/^(.+?)\s*([AP]M)$/i)
   if (match) return { hm: match[1].trim(), period: match[2].toUpperCase() }
   return { hm: str, period: '' }
 }
 
-export function calgaryTimeHmFromDate(d: Date): string {
-  const p = getCalgaryPartsFromInstant(d)
+export function venueTimeHmFromDate(d: Date, timeZone: CanadianBusinessTimezone): string {
+  const p = getVenuePartsFromInstant(d, timeZone)
   const pad2 = (n: number) => String(n).padStart(2, '0')
   return `${pad2(p.hour)}:${pad2(p.minute)}`
 }
 
-/** YYYY-MM-DD for grouping bookings on the calendar (always Calgary). */
-export function calgaryCalendarDayKey(d: Date): string {
-  return wallClockDateKey(getCalgaryPartsFromInstant(d))
+/** YYYY-MM-DD for grouping bookings on the calendar (venue timezone). */
+export function venueCalendarDayKey(d: Date, timeZone: CanadianBusinessTimezone): string {
+  return wallClockDateKey(getVenuePartsFromInstant(d, timeZone))
 }
 
-/** Infer YYYY-MM-DD date key from natural language (Calgary). */
+/** YYYY-MM for grouping bookings by venue month (analytics). */
+export function venueMonthKey(d: Date, timeZone: CanadianBusinessTimezone): string {
+  const p = getVenuePartsFromInstant(d, timeZone)
+  return `${p.year}-${String(p.month).padStart(2, '0')}`
+}
+
+/** Infer YYYY-MM-DD date key from natural language (venue calendar). */
 export function inferDateKeyFromText(text: string, now: WallClockParts): string {
   const combined = text.toLowerCase()
   const todayKey = wallClockDateKey(now)
@@ -528,7 +674,7 @@ export function inferDateKeyFromText(text: string, now: WallClockParts): string 
     const target = WEEKDAYS.indexOf(
       wdMatch[2] as (typeof WEEKDAYS)[number],
     )
-    const todayWd = calgaryWeekdayIndex(now)
+    const todayWd = weekdayIndexFromParts(now)
     let daysAhead = target - todayWd
     if (daysAhead < 0) daysAhead += 7
     // A bare weekday matching today's weekday means TODAY; only "next" jumps a week.
@@ -551,40 +697,35 @@ const DATE_HINT_RE =
  * Resolve booking time for chat.
  *
  * Strategy:
- * 1. Last user message with BOTH an explicit date hint AND a time (e.g. "tomorrow 7pm") — highest
- *    confidence, guest stated the full datetime explicitly in the most recent turn.
- * 2. Combine AI-confirmed TIME + user-stated DATE:
- *    - TIME comes from assistantText — the AI picked this from the available-slots list, so it is
- *      the most reliable source for the *agreed-upon* slot, especially after the guest changed their
- *      mind mid-conversation (e.g. asked for 4:20 PM, then accepted 7:00 PM).
- *    - DATE comes from user messages — the guest is authoritative on date; the AI sometimes writes
- *      "today" when the guest clearly said "tomorrow".
- * 3. Full parse of threadText (fallback — may contain the original requested time).
- * 4. Full parse of assistantText.
- * 5. Hard default.
+ * 1. Last user message with BOTH an explicit date hint AND a time
+ * 2. Combine AI-confirmed TIME + user-stated DATE
+ * 3. Full parse of threadText
+ * 4. Full parse of assistantText
+ * 5. Hard default
  */
 export function resolveReservationWallClock(params: {
   assistantText: string
   threadText: string
   lastUserContent: string
+  timeZone: CanadianBusinessTimezone
 }): string {
-  const now = getCalgaryNowParts()
+  const tz = params.timeZone
+  const now = getVenueNowParts(tz)
   const todayKey = wallClockDateKey(now)
 
-  // 1. Last user message has BOTH a date hint ("tomorrow", "Friday", etc.) AND a time
+  // 1. Last user message has BOTH a date hint AND a time
   if (
     params.lastUserContent.trim() &&
     DATE_HINT_RE.test(params.lastUserContent) &&
     parseTimeFromText(params.lastUserContent)
   ) {
-    const wc = parseScheduledAtToWallClock(params.lastUserContent)
+    const wc = parseScheduledAtToWallClock(params.lastUserContent, tz)
     if (wc) return wc
   }
 
   // 2. AI-confirmed time + user-stated date
   const confirmedTime = parseTimeFromText(params.assistantText)
   if (confirmedTime) {
-    // Prefer user's date over the AI's date — AI occasionally writes "today" for "tomorrow"
     let dateKey = todayKey
     for (const text of [params.lastUserContent, params.threadText]) {
       if (DATE_HINT_RE.test(text)) {
@@ -595,17 +736,31 @@ export function resolveReservationWallClock(params: {
     return wallClockOnDateKey(dateKey, confirmedTime.hour, confirmedTime.minute)
   }
 
-  // 3. Full parse of thread history (contains the original requested time)
+  // 3. Full parse of thread history
   if (params.threadText.trim() && parseTimeFromText(params.threadText)) {
-    const wc = parseScheduledAtToWallClock(params.threadText)
+    const wc = parseScheduledAtToWallClock(params.threadText, tz)
     if (wc) return wc
   }
 
   // 4. Full parse of assistant text
   if (params.assistantText.trim()) {
-    const wc = parseScheduledAtToWallClock(params.assistantText)
+    const wc = parseScheduledAtToWallClock(params.assistantText, tz)
     if (wc) return wc
   }
 
-  return defaultReservationWallClock()
+  return defaultReservationWallClock(tz)
+}
+
+/** Format a YYYY-MM-DD date key for emails (weekday) without server-local skew. */
+export function formatDateKeyLabel(dateKey: string, options?: Intl.DateTimeFormatOptions): string {
+  const [y, m, d] = dateKey.split('-').map(Number)
+  if (!y || !m || !d) return dateKey
+  const noonUtc = new Date(Date.UTC(y, m - 1, d, 12, 0, 0))
+  return noonUtc.toLocaleDateString('en-US', {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    timeZone: 'UTC',
+    ...options,
+  })
 }

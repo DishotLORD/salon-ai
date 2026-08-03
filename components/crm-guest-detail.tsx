@@ -4,7 +4,8 @@ import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { isCancelledStatus, isCompletedStatus, isNoShowStatus } from '@/lib/appointment-status'
-import { formatCalgaryTime } from '@/lib/booking-wall-clock'
+import { formatVenueTime, getVenueNowParts, getVenuePartsFromInstant } from '@/lib/booking-wall-clock'
+import type { CanadianBusinessTimezone } from '@/lib/business-timezone'
 import { parsePartySizeFromServiceName } from '@/lib/appointment-service-name'
 import { appointmentInstantFromRaw } from '@/lib/reservation-schedule'
 import { bk } from '@/lib/bookings-compact-ui'
@@ -215,26 +216,43 @@ function StatTrio({ customer }: { customer: CrmCustomer }) {
   )
 }
 
-function VisitSparkline({ appointments }: { appointments: AppointmentRow[] }) {
+const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+function VisitSparkline({
+  appointments,
+  timeZone,
+}: {
+  appointments: AppointmentRow[]
+  timeZone: CanadianBusinessTimezone
+}) {
   const months = useMemo(() => {
-    const now = new Date()
+    // Buckets are the venue's months. Browser-local months would move a booking
+    // made in the first or last hours of a month into the neighbouring bar.
+    const now = getVenueNowParts(timeZone)
     const result: { key: string; label: string; count: number }[] = []
     for (let i = 5; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+      let year = now.year
+      let month = now.month - i
+      while (month <= 0) {
+        month += 12
+        year -= 1
+      }
       result.push({
-        key: `${d.getFullYear()}-${d.getMonth()}`,
-        label: d.toLocaleDateString(undefined, { month: 'short' }),
+        key: `${year}-${month}`,
+        label: MONTH_SHORT[month - 1],
         count: 0,
       })
     }
     for (const a of appointments) {
-      const d = appointmentInstantFromRaw(a.scheduled_at)
-      const k = `${d.getFullYear()}-${d.getMonth()}`
-      const m = result.find((x) => x.key === k)
+      const parts = getVenuePartsFromInstant(
+        appointmentInstantFromRaw(a.scheduled_at, timeZone),
+        timeZone,
+      )
+      const m = result.find((x) => x.key === `${parts.year}-${parts.month}`)
       if (m) m.count += 1
     }
     return result
-  }, [appointments])
+  }, [appointments, timeZone])
 
   const max = Math.max(1, ...months.map((m) => m.count))
 
@@ -272,6 +290,7 @@ function OverviewTab({
   setNotes,
   saving,
   conversationId,
+  timeZone,
 }: {
   customer: CrmCustomer
   appointments: AppointmentRow[]
@@ -279,6 +298,7 @@ function OverviewTab({
   setNotes: (v: string) => void
   saving: boolean
   conversationId: string | null
+  timeZone: CanadianBusinessTimezone
 }) {
   return (
     <div style={{ display: 'grid', gap: 16 }}>
@@ -328,7 +348,7 @@ function OverviewTab({
 
       <div>
         <div style={{ ...sectionLabel, marginBottom: 8 }}>Visit rhythm</div>
-        <VisitSparkline appointments={appointments} />
+        <VisitSparkline appointments={appointments} timeZone={timeZone} />
       </div>
 
       <div style={{ display: 'flex', gap: 8 }}>
@@ -378,10 +398,12 @@ function HistoryTab({
   appointments,
   appointmentsLoading,
   zoneNameById,
+  timeZone,
 }: {
   appointments: AppointmentRow[]
   appointmentsLoading: boolean
   zoneNameById: Map<string, string>
+  timeZone: CanadianBusinessTimezone
 }) {
   const counts = appointments.reduce<Record<string, number>>((acc, a) => {
     const s = a.status ?? 'pending'
@@ -431,7 +453,7 @@ function HistoryTab({
       ) : (
         <div style={{ display: 'grid', gap: 0 }}>
           {appointments.map((a, i) => {
-            const d = appointmentInstantFromRaw(a.scheduled_at)
+            const d = appointmentInstantFromRaw(a.scheduled_at, timeZone)
             const party =
               a.party_size != null && a.party_size > 0
                 ? a.party_size
@@ -486,7 +508,7 @@ function HistoryTab({
                           day: 'numeric',
                           year: 'numeric',
                         })}{' '}
-                        · {formatCalgaryTime(d)}
+                        · {formatVenueTime(d, timeZone)}
                       </div>
                       {(party != null || zoneLabel) && (
                         <div style={{ fontSize: 11, color: 'var(--bk-body)', marginTop: 3 }}>
@@ -670,6 +692,8 @@ const sectionLabel: React.CSSProperties = {
 export type CrmGuestDetailProps = {
   customer: CrmCustomer
   businessId: string | null
+  /** Venue IANA zone — visit times and month buckets are cut in it. */
+  timeZone: CanadianBusinessTimezone
   onClose: () => void
   onNotesSaved: (id: string, notes: string) => void
   onDelete: (id: string) => void
@@ -678,6 +702,7 @@ export type CrmGuestDetailProps = {
 export function CrmGuestDetail({
   customer,
   businessId,
+  timeZone,
   onClose,
   onNotesSaved,
   onDelete,
@@ -1024,6 +1049,7 @@ export function CrmGuestDetail({
               setNotes={handleNotesChange}
               saving={notesSaving}
               conversationId={conversationId}
+              timeZone={timeZone}
             />
           )}
           {tab === 'Booking History' && (
@@ -1031,6 +1057,7 @@ export function CrmGuestDetail({
               appointments={appointments}
               appointmentsLoading={appointmentsLoading}
               zoneNameById={zoneNameById}
+              timeZone={timeZone}
             />
           )}
           {tab === 'Preferences' && <PreferencesTab guestPrefs={guestPrefs} />}

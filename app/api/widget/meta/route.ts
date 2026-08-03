@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 
+import { resolveBusinessTimezone } from '@/lib/business-timezone'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { DEFAULT_WIDGET_THEME, parseWidgetLauncherColor, parseWidgetTheme } from '@/lib/widget-theme'
 
@@ -43,6 +44,7 @@ export async function GET(request: Request) {
     agent_name?: unknown
     widget_theme?: unknown
     widget_launcher_color?: unknown
+    timezone?: unknown
   }
 
   /*
@@ -52,6 +54,7 @@ export async function GET(request: Request) {
    * unbranded widget.
    */
   const SELECTS = [
+    'name, agent_name, widget_theme, widget_launcher_color, timezone',
     'name, agent_name, widget_theme, widget_launcher_color',
     'name, agent_name, widget_theme',
     'name, agent_name',
@@ -84,9 +87,12 @@ export async function GET(request: Request) {
   // panel never has to decide what an unknown value means.
   const theme = data ? parseWidgetTheme(data.widget_theme) : DEFAULT_WIDGET_THEME
   const launcherColor = parseWidgetLauncherColor(data?.widget_launcher_color)
+  const timezone = resolveBusinessTimezone(
+    typeof data?.timezone === 'string' ? data.timezone : null,
+  )
 
   return NextResponse.json(
-    { name, agentName, theme, launcherColor },
+    { name, agentName, theme, launcherColor, timezone },
     {
       status: 200,
       headers: {

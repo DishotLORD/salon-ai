@@ -67,9 +67,7 @@ export async function GET() {
   // it cannot write a booking without the service-role key. Everything else
   // degrades: no Stripe means no deposits, no Resend means no confirmation mail.
   const critical = database.ok && configured.openai && configured.supabase_admin
-  // A rejected timezone is a silent wrong-answer bug — every reservation lands in
-  // the wrong hour — so it counts as degraded even though nothing has crashed.
-  const degraded = !configured.email || !configured.payments || !VENUE_TIMEZONE_STATUS.valid
+  const degraded = !configured.email || !configured.payments
 
   return NextResponse.json(
     {
@@ -78,9 +76,9 @@ export async function GET() {
       environment: process.env.VERCEL_ENV ?? process.env.NODE_ENV ?? 'unknown',
       region: process.env.VERCEL_REGION ?? null,
       commit: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? null,
-      // Which timezone reservations are actually being interpreted in. Worth
-      // seeing at a glance: a wrong one is invisible until a guest turns up an
-      // hour late.
+      // Reservations are interpreted per business (businesses.timezone), so
+      // there is no single deployment timezone any more. Reported so ops can
+      // spot a legacy NEXT_PUBLIC_BUSINESS_TIMEZONE still set and delete it.
       timezone: VENUE_TIMEZONE_STATUS,
       checks: { database },
       configured,

@@ -39,6 +39,12 @@ import {
   requestConfirmedDelete,
 } from '@/lib/bookings-compact-delete'
 import { computeBookingKpi, isInDisplayMonth } from '@/lib/booking-kpi'
+import {
+  DEFAULT_BUSINESS_TIMEZONE,
+  isTimezoneSchemaError,
+  resolveBusinessTimezone,
+  type CanadianBusinessTimezone,
+} from '@/lib/business-timezone'
 import { parsePartySizeFromServiceName } from '@/lib/appointment-service-name'
 import {
   activeActivities,
@@ -49,13 +55,16 @@ import {
 } from '@/lib/activity-resources'
 import { isLikelyDiningZoneLabel, parseDiningZoneRow, type DiningZone } from '@/lib/dining-zones'
 import {
-  calgaryCalendarDayKey,
-  calgaryTimeHmFromDate,
-  formatCalgaryTime,
-  getCalgaryPartsFromInstant,
-  isSameCalgaryCalendarDay,
+  formatDateKeyLabel,
+  formatVenueTime,
+  getVenueNowParts,
+  getVenuePartsFromInstant,
+  isSameVenueCalendarDay,
   scheduledAtToWallClock,
-  wallClockInCalgaryToUtcDate,
+  venueBoundaryUtcIso,
+  venueCalendarDayKey,
+  venueTimeHmFromDate,
+  wallClockDateKey,
 } from '@/lib/booking-wall-clock'
 import {
   appointmentInstantFromRaw,
@@ -135,6 +144,7 @@ function normalizeStatus(raw: string | null | undefined): ResStatus {
 // All segments after the first two are optional extras packed in for now (until schema updated).
 function parseReservation(
   row: DbRow,
+  timeZone: CanadianBusinessTimezone,
   customerName?: string,
   zoneNameById?: Map<string, string>,
   activityNameById?: Map<string, string>,
@@ -199,7 +209,7 @@ function parseReservation(
     // rows stay null so "Pool Table 1" never becomes "1 guest".
     partySize: partySize ?? (activityId ? null : 1),
     tableNumber,
-    scheduledAt: appointmentInstantFromRaw(row.scheduled_at),
+    scheduledAt: appointmentInstantFromRaw(row.scheduled_at, timeZone),
     status: normalizeStatus(row.status),
     specialRequests,
     customerId: row.customer_id ?? null,
@@ -211,8 +221,8 @@ function parseReservation(
   }
 }
 
-function isSameDay(a: Date, b: Date) {
-  return isSameCalgaryCalendarDay(a, b)
+function isSameDay(a: Date, b: Date, timeZone: CanadianBusinessTimezone) {
+  return isSameVenueCalendarDay(a, b, timeZone)
 }
 
 function startOfWeekMon(d: Date) {
@@ -222,8 +232,8 @@ function startOfWeekMon(d: Date) {
   return date
 }
 
-function fmtTime(d: Date) {
-  return formatCalgaryTime(d)
+function fmtTime(d: Date, timeZone: CanadianBusinessTimezone) {
+  return formatVenueTime(d, timeZone)
 }
 
 
@@ -250,11 +260,13 @@ const glass = card
 function DatePickerPopover({
   value,
   today,
+  timeZone,
   onPick,
   onClose,
 }: {
   value: Date
   today: Date
+  timeZone: CanadianBusinessTimezone
   onPick: (date: Date) => void
   onClose: () => void
 }) {
@@ -329,8 +341,8 @@ function DatePickerPopover({
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2 }}>
         {cells.map(({ date, inMonth }) => {
-          const selected = isSameDay(date, value)
-          const isToday = isSameDay(date, today)
+          const selected = isSameDay(date, value, timeZone)
+          const isToday = isSameDay(date, today, timeZone)
           return (
             <button
               key={date.toISOString()}
@@ -387,6 +399,7 @@ function MonthCalendar({
   onSelectDay,
   today,
   operatingHours,
+  timeZone,
   bare,
 }: {
   displayMonth: Date
@@ -395,6 +408,7 @@ function MonthCalendar({
   onSelectDay: (d: Date) => void
   today: Date
   operatingHours: OperatingHours
+  timeZone: CanadianBusinessTimezone
   bare?: boolean
 }) {
   const year = displayMonth.getFullYear()
@@ -419,7 +433,7 @@ function MonthCalendar({
   for (const r of reservations) {
     if (r.status === 'cancelled' || r.status === 'no-show') continue
     const rd = r.scheduledAt
-    const k = calgaryCalendarDayKey(rd)
+    const k = venueCalendarDayKey(rd, timeZone)
     const curr = dayStats.get(k) ?? { count: 0, covers: 0 }
     dayStats.set(k, { count: curr.count + 1, covers: curr.covers + (r.partySize ?? 0) })
   }
@@ -463,8 +477,8 @@ function MonthCalendar({
           const k = `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
           const { count, covers } = dayStats.get(k) ?? { count: 0, covers: 0 }
           const fillPct = count / maxCount
-          const isToday = isSameDay(date, today)
-          const isSelected = selectedDay ? isSameDay(date, selectedDay) : false
+          const isToday = isSameDay(date, today, timeZone)
+          const isSelected = selectedDay ? isSameDay(date, selectedDay, timeZone) : false
           const closed = inMonth && getDayHoursForDate(operatingHours, toDateIso(date)).closed
           const showTodayRing = isToday && !isSelected
 
@@ -559,6 +573,7 @@ function MonthCalendar({
 function DayPanel({
   day,
   reservations,
+  timeZone,
   onClose,
   onConfirm,
   onCancel,
@@ -569,6 +584,7 @@ function DayPanel({
 }: {
   day: Date
   reservations: Reservation[]
+  timeZone: CanadianBusinessTimezone
   onClose: () => void
   onConfirm: (id: string) => void
   onCancel: (id: string) => void
@@ -683,6 +699,7 @@ function DayPanel({
               <ReservationCard
                 key={r.id}
                 reservation={r}
+                timeZone={timeZone}
                 variant="panel"
                 onConfirm={onConfirm}
                 onCancel={onCancel}
@@ -702,6 +719,7 @@ function DayPanel({
 function ReservationListView({
   reservations,
   loading,
+  timeZone,
   onConfirm,
   onCancel,
   onDelete,
@@ -711,6 +729,7 @@ function ReservationListView({
 }: {
   reservations: Reservation[]
   loading: boolean
+  timeZone: CanadianBusinessTimezone
   onConfirm: (id: string) => void
   onCancel: (id: string) => void
   onDelete: (id: string) => void
@@ -744,6 +763,7 @@ function ReservationListView({
               <ReservationCard
                 key={r.id}
                 reservation={r}
+                timeZone={timeZone}
                 variant="panel"
                 onConfirm={onConfirm}
                 onCancel={onCancel}
@@ -834,7 +854,7 @@ function ReservationListView({
                           whiteSpace: 'nowrap',
                         }}
                       >
-                        {fmtTime(r.scheduledAt)}
+                        {fmtTime(r.scheduledAt, timeZone)}
                       </td>
                       <td
                         style={{
@@ -1124,6 +1144,7 @@ function ReservationModal({
   onUpdated,
   onOfferFreedSlot,
   initialDate,
+  timeZone,
 }: {
   mode: ModalMode
   editReservation: Reservation | null
@@ -1136,16 +1157,16 @@ function ReservationModal({
   /** Same waitlist path updateStatus uses — only after a successful edit save. */
   onOfferFreedSlot?: (request: SlotFreedRequest) => void
   initialDate?: string
+  timeZone: CanadianBusinessTimezone
 }) {
   const reduceMotion = useReducedMotion()
   const isEdit = mode === 'edit' && editReservation !== null
   const appointmentId = editReservation?.id ?? null
 
-  const nowDefault = new Date()
-  // toDateIso uses local date parts — toISOString() would flip to tomorrow's
-  // date every evening (UTC is ahead of Calgary).
-  const defaultDate = initialDate ?? toDateIso(nowDefault)
-  const defaultTime = `${String(Math.min(23, nowDefault.getHours() + 1)).padStart(2, '0')}:00`
+  const nowParts = getVenueNowParts(timeZone)
+  // Venue wall-clock day — never browser/UTC calendar day.
+  const defaultDate = initialDate ?? wallClockDateKey(nowParts)
+  const defaultTime = `${String(Math.min(23, nowParts.hour + 1)).padStart(2, '0')}:00`
 
   const [hydrating, setHydrating] = useState(isEdit)
   const [guestName, setGuestName] = useState('')
@@ -1186,13 +1207,26 @@ function ReservationModal({
     if (!businessId) return
     let cancelled = false
     void (async () => {
-      const { data } = await supabase
-        .from('businesses')
-        .select('operating_hours')
-        .eq('id', businessId)
-        .maybeSingle()
+      let data: Record<string, unknown> | null = null
+      {
+        const withTz = await supabase
+          .from('businesses')
+          .select('operating_hours, timezone')
+          .eq('id', businessId)
+          .maybeSingle()
+        if (withTz.error && isTimezoneSchemaError(withTz.error.message)) {
+          const fallback = await supabase
+            .from('businesses')
+            .select('operating_hours')
+            .eq('id', businessId)
+            .maybeSingle()
+          data = (fallback.data as Record<string, unknown> | null) ?? null
+        } else {
+          data = (withTz.data as Record<string, unknown> | null) ?? null
+        }
+      }
       if (cancelled || !data) return
-      setOperatingHours(parseOperatingHours((data as { operating_hours?: unknown }).operating_hours))
+      setOperatingHours(parseOperatingHours(data.operating_hours))
     })()
     return () => {
       cancelled = true
@@ -1201,7 +1235,7 @@ function ReservationModal({
 
   const applyReservation = useCallback(
     (r: Reservation) => {
-      const p = getCalgaryPartsFromInstant(r.scheduledAt)
+      const p = getVenuePartsFromInstant(r.scheduledAt, timeZone)
       const pad2 = (n: number) => String(n).padStart(2, '0')
       const dateStr = `${p.year}-${pad2(p.month)}-${pad2(p.day)}`
       const row = getDayHoursForDate(operatingHours, dateStr)
@@ -1212,7 +1246,7 @@ function ReservationModal({
       setTime(
         range
           ? snapToGrid(p.hour * 60 + p.minute, range)
-          : calgaryTimeHmFromDate(r.scheduledAt),
+          : venueTimeHmFromDate(r.scheduledAt, timeZone),
       )
       setTableNumber(r.tableNumber !== '—' ? r.tableNumber : '')
       setSpecialRequests(r.specialRequests)
@@ -1268,7 +1302,7 @@ function ReservationModal({
         applyReservation(editReservation!)
         setError(fetchError?.message ?? 'Could not load reservation.')
       } else {
-        applyReservation(parseReservation(data as DbRow))
+        applyReservation(parseReservation(data as DbRow, timeZone))
       }
       setHydrating(false)
     })()
@@ -1300,11 +1334,17 @@ function ReservationModal({
     setSaving(true)
 
     const wallClock = `${date}T${time}:00`
-    const scheduledAtIso = wallClockToDbIso(wallClock)
+    const resolved = wallClockToDbIso(wallClock, timeZone)
+    if (!resolved.ok) {
+      setError(resolved.message)
+      setSaving(false)
+      return
+    }
+    const scheduledAtIso = resolved.iso
     // Use the exact instant we persist so the optimistic UI matches the DB.
     // (appointmentInstantFromRaw treats a naive wall-clock as UTC, which would
-    // shift the displayed time by the Calgary offset.)
-    const scheduledAt = new Date(scheduledAtIso)
+    // shift the displayed time by the venue offset.)
+    const scheduledAt = resolved.instant
     const notesValue = specialRequests.trim() || null
     const serviceName = buildServiceName(guestName, partySize, tableNumber, specialRequests)
 
@@ -1329,7 +1369,7 @@ function ReservationModal({
         const row = r as Record<string, unknown>
         return {
           id: String(row.id),
-          scheduled_at: scheduledAtToWallClock(String(row.scheduled_at ?? '')) ?? '',
+          scheduled_at: scheduledAtToWallClock(String(row.scheduled_at ?? ''), timeZone) ?? '',
           status: row.status != null ? String(row.status) : null,
           duration_minutes: Number(row.duration_minutes) || selectedActivity.duration_minutes,
           party_size: null,
@@ -1469,7 +1509,7 @@ function ReservationModal({
 
     const zoneMap = new Map(diningZones.map((z) => [z.id, z.name]))
     const activityMap = new Map(activityResources.map((a) => [a.id, a.name]))
-    onAdded(parseReservation(data as DbRow, undefined, zoneMap, activityMap))
+    onAdded(parseReservation(data as DbRow, timeZone, undefined, zoneMap, activityMap))
   }
 
   const guestFloating = focusedField === 'guest' || guestName.length > 0
@@ -1850,7 +1890,7 @@ function ReservationModal({
                     ref={dateInputRef}
                     type="date"
                     value={date}
-                    min={isEdit ? undefined : toDateIso(new Date())}
+                    min={isEdit ? undefined : wallClockDateKey(nowParts)}
                     onChange={(e) => setDate(e.target.value)}
                     onFocus={() => setFocusedField('date')}
                     onBlur={() => setFocusedField(null)}
@@ -2080,10 +2120,12 @@ function nameHue(name: string): number {
 function GuestProfileDrawer({
   customerId,
   guestName,
+  timeZone,
   onClose,
 }: {
   customerId: string
   guestName: string
+  timeZone: CanadianBusinessTimezone
   onClose: () => void
 }) {
   const router = useRouter()
@@ -2205,7 +2247,15 @@ function GuestProfileDrawer({
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
               {[
                 { label: 'Total Visits', value: String(profile?.total_bookings ?? 0) },
-                { label: 'Last Visit', value: profile?.last_visit ? new Date(profile.last_visit).toLocaleDateString('en-CA', { month: 'short', day: 'numeric' }) : 'Never' },
+                {
+                  label: 'Last Visit',
+                  value: profile?.last_visit
+                    ? formatDateKeyLabel(
+                        venueCalendarDayKey(new Date(profile.last_visit), timeZone),
+                        { weekday: undefined, month: 'short', day: 'numeric' },
+                      )
+                    : 'Never',
+                },
               ].map(({ label, value }) => (
                 <div key={label} style={{ background: t.bgSurfaceMuted, borderRadius: 12, border: `1px solid ${t.borderSoft}`, padding: '13px 14px' }}>
                   <div style={{ fontSize: 11, color: t.textMuted, marginBottom: 4, fontWeight: 500 }}>{label}</div>
@@ -2249,6 +2299,8 @@ export default function BookingsPage() {
   const [reservations, setReservations] = useState<Reservation[]>([])
   const [loading, setLoading] = useState(true)
   const [businessId, setBusinessId] = useState<string | null>(null)
+  const [venueTimezone, setVenueTimezone] =
+    useState<CanadianBusinessTimezone>(DEFAULT_BUSINESS_TIMEZONE)
   const [showAddModal, setShowAddModal] = useState(false)
   const [editReservation, setEditReservation] = useState<Reservation | null>(null)
   const [prefilledDate, setPrefilledDate] = useState<string | undefined>(undefined)
@@ -2268,10 +2320,10 @@ export default function BookingsPage() {
   const datePickerRef = useRef<HTMLDivElement>(null)
   const realtimeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const [today] = useState(() => {
-    const n = new Date()
-    return new Date(n.getFullYear(), n.getMonth(), n.getDate())
-  })
+  const today = useMemo(() => {
+    const p = getVenueNowParts(venueTimezone)
+    return new Date(p.year, p.month - 1, p.day)
+  }, [venueTimezone])
   const displayMonth = useMemo(
     () => new Date(today.getFullYear(), today.getMonth() + monthOffset, 1),
     [today, monthOffset],
@@ -2299,8 +2351,8 @@ export default function BookingsPage() {
   )
 
   const dayPanelReservations = useMemo(
-    () => reservations.filter((r) => isSameDay(r.scheduledAt, effectiveDay)),
-    [reservations, effectiveDayIso],
+    () => reservations.filter((r) => isSameDay(r.scheduledAt, effectiveDay, venueTimezone)),
+    [reservations, effectiveDayIso, venueTimezone],
   )
 
   /** Move the page to a day, keeping monthOffset in step so the calendar and
@@ -2425,8 +2477,8 @@ export default function BookingsPage() {
         month === 12
           ? `${loadMonthYear + 1}-01-01`
           : `${loadMonthYear}-${p2(month + 1)}-01`
-      const startIso = wallClockInCalgaryToUtcDate(`${startKey}T00:00:00`).toISOString()
-      const endIso = wallClockInCalgaryToUtcDate(`${endKey}T00:00:00`).toISOString()
+      const startIso = venueBoundaryUtcIso(`${startKey}T00:00:00`, venueTimezone)
+      const endIso = venueBoundaryUtcIso(`${endKey}T00:00:00`, venueTimezone)
 
       const { data: rows, error } = await supabase
         .from('appointments')
@@ -2475,6 +2527,7 @@ export default function BookingsPage() {
         const next = typed.map((r) =>
           parseReservation(
             r,
+            venueTimezone,
             r.customer_id ? nameById.get(r.customer_id) : undefined,
             zoneNameById,
             activityNameById,
@@ -2498,7 +2551,7 @@ export default function BookingsPage() {
         if (!silent) setLoading(false)
       }
     },
-    [loadMonthYear, loadMonthIndex, zoneNameById, activityNameById],
+    [loadMonthYear, loadMonthIndex, zoneNameById, activityNameById, venueTimezone],
   )
 
   const fetchReservationsRef = useRef(fetchReservations)
@@ -2587,14 +2640,30 @@ export default function BookingsPage() {
     if (!businessId) return
     let cancelled = false
     void (async () => {
-      const { data } = await supabase
-        .from('businesses')
-        .select('operating_hours')
-        .eq('id', businessId)
-        .maybeSingle()
+      let data: Record<string, unknown> | null = null
+      {
+        const withTz = await supabase
+          .from('businesses')
+          .select('operating_hours, timezone')
+          .eq('id', businessId)
+          .maybeSingle()
+        if (withTz.error && isTimezoneSchemaError(withTz.error.message)) {
+          const fallback = await supabase
+            .from('businesses')
+            .select('operating_hours')
+            .eq('id', businessId)
+            .maybeSingle()
+          data = (fallback.data as Record<string, unknown> | null) ?? null
+        } else {
+          data = (withTz.data as Record<string, unknown> | null) ?? null
+        }
+      }
       if (!cancelled && data) {
-        setOperatingHours(
-          parseOperatingHours((data as { operating_hours?: unknown }).operating_hours),
+        setOperatingHours(parseOperatingHours(data.operating_hours))
+        setVenueTimezone(
+          resolveBusinessTimezone(
+            typeof data.timezone === 'string' ? data.timezone : null,
+          ),
         )
       }
     })()
@@ -2639,9 +2708,14 @@ export default function BookingsPage() {
     const slots = buildTimeSlots(timeRange)
     const snapped = snapToGrid(timeToTimelineMinutes(time, timeRange), timeRange, slots)
     const wallClock = toWallClock(dateIso, snapped)
-    const scheduledAtIso = wallClockToDbIso(wallClock)
+    const resolved = wallClockToDbIso(wallClock, venueTimezone)
+    if (!resolved.ok) {
+      setUpdateError(resolved.message)
+      return
+    }
+    const scheduledAtIso = resolved.iso
     // Match the persisted instant exactly (see note in handleSubmit).
-    const nextAt = new Date(scheduledAtIso)
+    const nextAt = resolved.instant
     const previous = reservations
     setReservations((prev) =>
       prev.map((r) => (r.id === id ? { ...r, scheduledAt: nextAt } : r)),
@@ -2693,7 +2767,7 @@ export default function BookingsPage() {
      */
     const deleted = reservations.find((r) => r.id === id)
     const freed = deleted
-      ? slotFreedRequestForDeletion(businessId, calgaryCalendarDayKey(deleted.scheduledAt))
+      ? slotFreedRequestForDeletion(businessId, venueCalendarDayKey(deleted.scheduledAt, venueTimezone))
       : null
 
     setReservations((prev) => prev.filter((r) => r.id !== id))
@@ -2738,19 +2812,20 @@ export default function BookingsPage() {
         selectedDay,
         monthOffset,
         today,
-        displayMonth,
-      }),
+      displayMonth,
+      timeZone: venueTimezone,
+    }),
     [reservations, selectedDay, monthOffset, today, displayMonth],
   )
 
   const monthScopedReservations = useMemo(
-    () => reservations.filter((r) => isInDisplayMonth(r.scheduledAt, displayMonth)),
-    [reservations, displayMonth],
+    () => reservations.filter((r) => isInDisplayMonth(r.scheduledAt, displayMonth, venueTimezone)),
+    [reservations, displayMonth, venueTimezone],
   )
 
   const tableScopeReservations = useMemo(() => {
     const base = selectedDay
-      ? reservations.filter((r) => isSameDay(r.scheduledAt, selectedDay))
+      ? reservations.filter((r) => isSameDay(r.scheduledAt, selectedDay, venueTimezone))
       : monthScopedReservations
     let list = base
     if (statusFilter !== 'all') {
@@ -2774,7 +2849,8 @@ export default function BookingsPage() {
 
   // ─── Right panel reservations ───────────────────────────────────────────────
   const rightReservations = useMemo(() => {
-    if (rightTab === 'day') return reservations.filter((r) => isSameDay(r.scheduledAt, effectiveDay))
+    if (rightTab === 'day')
+      return reservations.filter((r) => isSameDay(r.scheduledAt, effectiveDay, venueTimezone))
     if (rightTab === 'week') {
       const ws = startOfWeekMon(today)
       const we = new Date(ws)
@@ -2859,7 +2935,7 @@ export default function BookingsPage() {
       >
         <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' as const }}>
           <span style={{ fontSize: bk.body, fontWeight: 700, color: 'var(--bk-head)' }}>
-            {fmtTime(r.scheduledAt)}
+            {fmtTime(r.scheduledAt, venueTimezone)}
           </span>
         </td>
         <td style={{ padding: '7px 10px', maxWidth: 0 }}>
@@ -3072,7 +3148,7 @@ export default function BookingsPage() {
 
   function handleDaySelect(d: Date) {
     setSelectedDay((prev) => {
-      if (prev && isSameDay(prev, d)) return prev
+      if (prev && isSameDay(prev, d, venueTimezone)) return prev
       return d
     })
     setRightTab('day')
@@ -3253,6 +3329,7 @@ export default function BookingsPage() {
                       // Remount per day so the popover always opens on the
                       // month being viewed, not the one left from last time.
                       key={effectiveDayIso}
+                      timeZone={venueTimezone}
                       value={effectiveDay}
                       today={today}
                       onPick={(date) => {
@@ -3463,10 +3540,12 @@ export default function BookingsPage() {
                       onSelectDay={handleDaySelect}
                       today={today}
                       operatingHours={operatingHours}
+                      timeZone={venueTimezone}
                     />
                     <BookingsDayChips
                       date={effectiveDay}
                       reservations={dayPanelReservations}
+                      timeZone={venueTimezone}
                       loading={loading}
                       statusColors={lightStatusColors}
                       onEdit={(r) => setEditReservation(r)}
@@ -3481,6 +3560,7 @@ export default function BookingsPage() {
                     <BookingsDayTimeline
                       date={effectiveDay}
                       reservations={reservations}
+                      timeZone={venueTimezone}
                       range={timeRange}
                       peaks={dayPeaks}
                       loading={loading}
@@ -3505,6 +3585,7 @@ export default function BookingsPage() {
                 <ReservationListView
                   reservations={rightReservations}
                   loading={loading}
+                  timeZone={venueTimezone}
                   onConfirm={(id) => void updateStatus(id, 'confirmed')}
                   onCancel={(id) => void updateStatus(id, 'cancelled')}
                   onDelete={(id) => void deleteReservation(id)}
@@ -3630,10 +3711,12 @@ export default function BookingsPage() {
                     today={today}
                     operatingHours={operatingHours}
                     reduceMotion={reduceMotion}
+                    timeZone={venueTimezone}
                   />
                   <BookingsDayChips
                     date={effectiveDay}
                     reservations={dayPanelReservations}
+                    timeZone={venueTimezone}
                     loading={loading}
                     statusColors={lightStatusColors}
                     onEdit={(r) => setEditReservation(r)}
@@ -3709,13 +3792,14 @@ export default function BookingsPage() {
                         <button
                           type="button"
                           onClick={() => {
-                            const blob = new Blob([reservationsToCsv(filteredTableReservations)], {
-                              type: 'text/csv;charset=utf-8',
-                            })
+                            const blob = new Blob(
+                              [reservationsToCsv(filteredTableReservations, venueTimezone)],
+                              { type: 'text/csv;charset=utf-8' },
+                            )
                             const url = URL.createObjectURL(blob)
                             const link = document.createElement('a')
                             link.href = url
-                            link.download = reservationCsvFilename()
+                            link.download = reservationCsvFilename(venueTimezone)
                             link.click()
                             // Revoking immediately can cancel the download in Safari.
                             setTimeout(() => URL.revokeObjectURL(url), 1000)
@@ -3833,6 +3917,7 @@ export default function BookingsPage() {
             {businessId && (
               <div style={{ marginTop: 14 }}>
                 <WaitlistPanel
+                  timeZone={venueTimezone}
                   businessId={businessId}
                   zoneNameById={zoneNameById}
                   onConverted={() => void fetchReservationsRef.current(() => false, { silent: true })}
@@ -3848,6 +3933,7 @@ export default function BookingsPage() {
                   editReservation={editReservation}
                   diningZones={diningZones}
                   activityResources={activityResources}
+                  timeZone={venueTimezone}
                   initialDate={editReservation ? undefined : prefilledDate}
                   onClose={() => {
                     setShowAddModal(false)
@@ -3892,6 +3978,7 @@ export default function BookingsPage() {
             key={guestDrawer.customerId}
             customerId={guestDrawer.customerId}
             guestName={guestDrawer.guestName}
+            timeZone={venueTimezone}
             onClose={() => setGuestDrawer(null)}
           />
         )}

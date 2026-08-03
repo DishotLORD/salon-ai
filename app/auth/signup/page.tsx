@@ -7,9 +7,17 @@ import { BrandTransitionLink } from '@/components/brand-transition-link'
 import { OceanCoreLogoCompact } from '@/components/oceancore-logo'
 import { useState } from 'react'
 
+import { BusinessTimezoneSelect } from '@/components/business-timezone-select'
 import { WELCOME_SPLASH_FLAG } from '@/components/dashboard-splash'
 import { defaultSystemPrompt } from '@/lib/default-system-prompt'
 import { checkAuthEmail } from '@/lib/auth-email'
+import {
+  isTimezoneSchemaError,
+  parseBusinessTimezoneInput,
+  suggestTimezoneFromAddress,
+  timezoneLabel,
+  type CanadianBusinessTimezone,
+} from '@/lib/business-timezone'
 import { supabase } from '@/lib/supabase'
 import { VENUE_TYPE_OPTIONS, type VenueType } from '@/lib/venue-types'
 
@@ -367,12 +375,17 @@ export default function SignupPage() {
   const [businessName, setBusinessName] = useState('')
   const [businessType, setBusinessType] = useState<BusinessTypeValue>('restaurant')
   const [address, setAddress] = useState('')
+  const [timezone, setTimezone] = useState<CanadianBusinessTimezone | ''>('')
   const [phone, setPhone] = useState('')
   const [agentName, setAgentName] = useState('')
 
   const stepErrors: Record<number, string[]> = {
     1: [validate('email', authEmail), validate('password', password)].filter(Boolean),
-    2: [validate('businessName', businessName), address ? validate('address', address) : ''].filter(Boolean),
+    2: [
+      validate('businessName', businessName),
+      address ? validate('address', address) : '',
+      timezone ? '' : 'Confirm your timezone',
+    ].filter(Boolean),
     3: [validate('agentName', agentName), phone ? validate('phone', phone) : ''].filter(Boolean),
     4: [],
   }
@@ -382,7 +395,7 @@ export default function SignupPage() {
     (step === 1
       ? authEmail.trim().length > 0 && password.length > 0
       : step === 2
-        ? businessName.trim().length > 0
+        ? businessName.trim().length > 0 && Boolean(timezone)
         : step === 3
           ? agentName.trim().length > 0
           : true)
@@ -426,18 +439,30 @@ export default function SignupPage() {
       if (signUpErr) { setError(signUpErr.message); setLoading(false); return }
       const userId = signUpData.user?.id
       if (!userId) { setError('Could not create account. Please try again.'); setLoading(false); return }
-      const { error: bizErr } = await supabase.from('businesses').insert({
+      const tzParsed = parseBusinessTimezoneInput(timezone)
+      if (!tzParsed.ok) {
+        setError(tzParsed.message)
+        setLoading(false)
+        return
+      }
+      const bizPayload = {
         user_id: userId,
         name: businessName.trim(),
         business_type: businessType,
         address: address.trim() || null,
+        timezone: tzParsed.timezone,
         // The same normalized address the account was created with — this is
         // where owner notifications are sent.
         email: emailCheck.email,
         phone: phone.trim() || null,
         agent_name: agentName.trim(),
         system_prompt: defaultSystemPrompt(businessName, businessType, agentName.trim() || null),
-      })
+      }
+      let { error: bizErr } = await supabase.from('businesses').insert(bizPayload)
+      if (bizErr && isTimezoneSchemaError(bizErr.message)) {
+        const { timezone: _tz, ...withoutTz } = bizPayload
+        ;({ error: bizErr } = await supabase.from('businesses').insert(withoutTz))
+      }
       if (bizErr) { setError(bizErr.message); setLoading(false); return }
       try { sessionStorage.setItem(WELCOME_SPLASH_FLAG, '1') } catch { /* storage blocked */ }
       window.location.replace('/dashboard')
@@ -585,9 +610,24 @@ export default function SignupPage() {
                     options={businessTypeOptions}
                   />
                   <PField
-                    label="Address" value={address} onChange={setAddress}
+                    label="Address"
+                    value={address}
+                    onChange={(next) => {
+                      setAddress(next)
+                      if (!timezone) {
+                        const suggested = suggestTimezoneFromAddress(next)
+                        if (suggested) setTimezone(suggested)
+                      }
+                    }}
                     placeholder="123 Main St, Calgary, AB" optional
                     validateKey="address" forceError={forceErrors}
+                  />
+                  <BusinessTimezoneSelect
+                    id="signup-timezone"
+                    tone="dark"
+                    value={timezone}
+                    onChange={setTimezone}
+                    hint="Confirm where this restaurant operates. Alberta addresses suggest Mountain Time."
                   />
                 </>
               )}
@@ -635,6 +675,10 @@ export default function SignupPage() {
                     <SummaryRow label="Venue" value={businessName || '—'} />
                     <SummaryRow label="Type" value={businessTypeOptions.find((o) => o.value === businessType)?.label ?? businessType} />
                     {address && <SummaryRow label="Address" value={address} />}
+                    <SummaryRow
+                      label="Timezone"
+                      value={timezone ? timezoneLabel(timezone) : '—'}
+                    />
                     <SummaryRow label="Concierge" value={agentName || (businessName ? `${businessName} Concierge` : '—')} />
                     {phone && <SummaryRow label="Phone" value={phone} />}
                   </div>

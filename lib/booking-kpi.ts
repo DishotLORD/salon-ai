@@ -1,5 +1,10 @@
 import type { Reservation } from '@/components/reservation-card'
-import { formatCalgaryTime, isSameCalgaryCalendarDay } from '@/lib/booking-wall-clock'
+import type { CanadianBusinessTimezone } from '@/lib/business-timezone'
+import {
+  formatVenueTime,
+  getVenuePartsFromInstant,
+  isSameVenueCalendarDay,
+} from '@/lib/booking-wall-clock'
 
 export type KpiScope = 'day' | 'today' | 'month'
 
@@ -21,16 +26,25 @@ export type BookingKpi = {
   subtitle4: string
 }
 
-function isSameDay(a: Date, b: Date) {
-  return isSameCalgaryCalendarDay(a, b)
+function isSameDay(a: Date, b: Date, timeZone: CanadianBusinessTimezone) {
+  return isSameVenueCalendarDay(a, b, timeZone)
 }
 
-export function isInDisplayMonth(d: Date, displayMonth: Date) {
-  return d.getFullYear() === displayMonth.getFullYear() && d.getMonth() === displayMonth.getMonth()
+/** Month membership by venue calendar year/month of the instant. */
+export function isInDisplayMonth(
+  d: Date,
+  displayMonth: Date,
+  timeZone: CanadianBusinessTimezone,
+) {
+  const parts = getVenuePartsFromInstant(d, timeZone)
+  return (
+    parts.year === displayMonth.getFullYear() &&
+    parts.month === displayMonth.getMonth() + 1
+  )
 }
 
-function fmtTime(d: Date) {
-  return formatCalgaryTime(d)
+function fmtTime(d: Date, timeZone: CanadianBusinessTimezone) {
+  return formatVenueTime(d, timeZone)
 }
 
 export function computeBookingKpi(
@@ -40,9 +54,10 @@ export function computeBookingKpi(
     monthOffset: number
     today: Date
     displayMonth: Date
+    timeZone: CanadianBusinessTimezone
   },
 ): BookingKpi {
-  const { selectedDay, monthOffset, today, displayMonth } = opts
+  const { selectedDay, monthOffset, today, displayMonth, timeZone } = opts
   const now = new Date()
 
   let scope: KpiScope
@@ -51,15 +66,15 @@ export function computeBookingKpi(
 
   if (selectedDay) {
     scope = 'day'
-    pool = reservations.filter((r) => isSameDay(r.scheduledAt, selectedDay))
+    pool = reservations.filter((r) => isSameDay(r.scheduledAt, selectedDay, timeZone))
     card1Label = selectedDay.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
   } else if (monthOffset === 0) {
     scope = 'today'
-    pool = reservations.filter((r) => isSameDay(r.scheduledAt, today))
+    pool = reservations.filter((r) => isSameDay(r.scheduledAt, today, timeZone))
     card1Label = 'Today'
   } else {
     scope = 'month'
-    pool = reservations.filter((r) => isInDisplayMonth(r.scheduledAt, displayMonth))
+    pool = reservations.filter((r) => isInDisplayMonth(r.scheduledAt, displayMonth, timeZone))
     card1Label = displayMonth.toLocaleDateString(undefined, { month: 'short', year: 'numeric' })
   }
 
@@ -71,7 +86,7 @@ export function computeBookingKpi(
     .sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime())
   const upcomingCount = upcomingList.length
   const nextUpcomingTime =
-    upcomingList.length > 0 ? fmtTime(upcomingList[0].scheduledAt) : null
+    upcomingList.length > 0 ? fmtTime(upcomingList[0].scheduledAt, timeZone) : null
   const nextUpcomingId = upcomingList.length > 0 ? upcomingList[0].id : null
   const confirmedCount = pool.filter((r) => r.status === 'confirmed').length
   const confirmedPct = totalCount > 0 ? Math.round((confirmedCount / totalCount) * 100) : 0
@@ -86,7 +101,7 @@ export function computeBookingKpi(
     const yesterday = new Date(today)
     yesterday.setDate(yesterday.getDate() - 1)
     const yesterdayCount = reservations.filter((r) =>
-      isSameDay(r.scheduledAt, yesterday),
+      isSameDay(r.scheduledAt, yesterday, timeZone),
     ).length
     if (yesterdayCount > 0 && totalCount !== yesterdayCount) {
       const pct = Math.round(((totalCount - yesterdayCount) / yesterdayCount) * 100)
@@ -121,7 +136,7 @@ export function computeBookingKpi(
     const yesterday = new Date(today)
     yesterday.setDate(yesterday.getDate() - 1)
     const yCancelled = reservations.filter(
-      (r) => isSameDay(r.scheduledAt, yesterday) && r.status === 'cancelled',
+      (r) => isSameDay(r.scheduledAt, yesterday, timeZone) && r.status === 'cancelled',
     ).length
     if (yCancelled > 0 && cancelledCount !== yCancelled) {
       const pct = Math.round(((cancelledCount - yCancelled) / yCancelled) * 100)

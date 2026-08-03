@@ -1,6 +1,7 @@
 import type { CrmCustomer } from '@/lib/crm-customer'
 import type { Reservation } from '@/components/reservation-card'
-import { calgaryCalendarDayKey, calgaryTimeHmFromDate } from '@/lib/booking-wall-clock'
+import { venueCalendarDayKey, venueTimeHmFromDate } from '@/lib/booking-wall-clock'
+import type { CanadianBusinessTimezone } from '@/lib/business-timezone'
 import { parseGuestNotes } from '@/lib/guest-preferences'
 
 /**
@@ -41,14 +42,21 @@ function csvField(value: string | number | null | undefined): string {
   return `"${text.replace(/"/g, '""')}"`
 }
 
-/** ISO date only — a spreadsheet reads 2026-07-30 as a date, "Jul 30" as text. */
-function isoDate(raw: string | null): string {
+/**
+ * ISO date only — a spreadsheet reads 2026-07-30 as a date, "Jul 30" as text.
+ * Cut on the venue's calendar, not UTC: a 9pm Toronto booking is stored at
+ * 01:00Z the next day, and exporting that as tomorrow would be simply wrong.
+ */
+function isoDate(raw: string | null, timeZone: CanadianBusinessTimezone): string {
   if (!raw) return ''
   const parsed = new Date(raw)
-  return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString().slice(0, 10)
+  return Number.isNaN(parsed.getTime()) ? '' : venueCalendarDayKey(parsed, timeZone)
 }
 
-export function guestsToCsv(guests: CrmCustomer[]): string {
+export function guestsToCsv(
+  guests: CrmCustomer[],
+  timeZone: CanadianBusinessTimezone,
+): string {
   const rows = guests.map((guest) =>
     [
       csvField(guest.isUnknownGuest ? 'Unknown guest' : guest.name),
@@ -56,9 +64,9 @@ export function guestsToCsv(guests: CrmCustomer[]): string {
       // blank cell, which is what filters and pivots treat as missing.
       csvField(guest.phone === '—' ? '' : guest.phone),
       csvField(guest.email),
-      csvField(isoDate(guest.joinedRaw)),
+      csvField(isoDate(guest.joinedRaw, timeZone)),
       csvField(guest.bookingCount),
-      csvField(isoDate(guest.lastBookingRaw)),
+      csvField(isoDate(guest.lastBookingRaw, timeZone)),
       csvField(guest.avgPartySize != null ? guest.avgPartySize.toFixed(1) : ''),
       csvField(guest.tags.join(', ')),
       /*
@@ -89,9 +97,12 @@ export function guestsToCsv(guests: CrmCustomer[]): string {
   return `﻿${[COLUMNS.map(csvField).join(','), ...rows].join('\r\n')}\r\n`
 }
 
-/** `oceancore-guests-2026-07-30.csv` */
-export function guestCsvFilename(now = new Date()): string {
-  return `oceancore-guests-${now.toISOString().slice(0, 10)}.csv`
+/** `oceancore-guests-2026-07-30.csv`, dated on the venue's calendar. */
+export function guestCsvFilename(
+  timeZone: CanadianBusinessTimezone,
+  now = new Date(),
+): string {
+  return `oceancore-guests-${venueCalendarDayKey(now, timeZone)}.csv`
 }
 
 const RESERVATION_COLUMNS = [
@@ -105,7 +116,10 @@ const RESERVATION_COLUMNS = [
   'Special requests',
 ] as const
 
-export function reservationsToCsv(reservations: Reservation[]): string {
+export function reservationsToCsv(
+  reservations: Reservation[],
+  timeZone: CanadianBusinessTimezone,
+): string {
   // Chronological, which is how anyone reads a booking sheet — the dashboard's
   // own sort is for working a shift, not for filing.
   const ordered = [...reservations].sort(
@@ -116,8 +130,8 @@ export function reservationsToCsv(reservations: Reservation[]): string {
     [
       // The venue's own calendar day and clock time, not the reader's — a
       // reservation at 7pm is at 7pm regardless of where the spreadsheet opens.
-      csvField(calgaryCalendarDayKey(r.scheduledAt)),
-      csvField(calgaryTimeHmFromDate(r.scheduledAt)),
+      csvField(venueCalendarDayKey(r.scheduledAt, timeZone)),
+      csvField(venueTimeHmFromDate(r.scheduledAt, timeZone)),
       csvField(r.guestName),
       csvField(r.partySize ?? ''),
       csvField(r.activityName ?? r.zoneName ?? ''),
@@ -132,7 +146,10 @@ export function reservationsToCsv(reservations: Reservation[]): string {
   return `﻿${[RESERVATION_COLUMNS.map(csvField).join(','), ...rows].join('\r\n')}\r\n`
 }
 
-/** `oceancore-reservations-2026-07-30.csv` */
-export function reservationCsvFilename(now = new Date()): string {
-  return `oceancore-reservations-${now.toISOString().slice(0, 10)}.csv`
+/** `oceancore-reservations-2026-07-30.csv`, dated on the venue's calendar. */
+export function reservationCsvFilename(
+  timeZone: CanadianBusinessTimezone,
+  now = new Date(),
+): string {
+  return `oceancore-reservations-${venueCalendarDayKey(now, timeZone)}.csv`
 }

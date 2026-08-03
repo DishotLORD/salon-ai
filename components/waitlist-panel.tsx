@@ -4,7 +4,8 @@ import { useCallback, useEffect, useState } from 'react'
 
 import { bk, bkCard } from '@/lib/bookings-compact-ui'
 import { supabase } from '@/lib/supabase'
-import { wallClockInCalgaryToUtcDate } from '@/lib/booking-wall-clock'
+import { getVenueNowParts, resolveWallClockToUtc, wallClockDateKey } from '@/lib/booking-wall-clock'
+import type { CanadianBusinessTimezone } from '@/lib/business-timezone'
 
 export const WAITLIST_MIGRATION_HINT =
   'To enable the waitlist, run supabase/migrations/015_waitlist.sql in Supabase Dashboard → SQL Editor, then reload this page.'
@@ -26,6 +27,8 @@ type WaitlistEntry = {
 type WaitlistPanelProps = {
   businessId: string
   zoneNameById: Map<string, string>
+  /** Venue IANA timezone for day keys and wall→UTC conversion. */
+  timeZone: CanadianBusinessTimezone
   /** Called after an entry is converted into a reservation so the calendar refreshes. */
   onConverted?: () => void
 }
@@ -57,7 +60,7 @@ const STATUS_STYLE: Record<'waiting' | 'contacted', { bg: string; color: string;
   contacted: { bg: 'rgba(14,165,233,0.12)', color: 'var(--bk-accent)', label: 'Contacted' },
 }
 
-export function WaitlistPanel({ businessId, zoneNameById, onConverted }: WaitlistPanelProps) {
+export function WaitlistPanel({ businessId, zoneNameById, timeZone, onConverted }: WaitlistPanelProps) {
   const [entries, setEntries] = useState<WaitlistEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [schemaReady, setSchemaReady] = useState(true)
@@ -65,7 +68,7 @@ export function WaitlistPanel({ businessId, zoneNameById, onConverted }: Waitlis
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
-    const todayKey = new Date().toISOString().slice(0, 10)
+    const todayKey = wallClockDateKey(getVenueNowParts(timeZone))
     const { data, error: err } = await supabase
       .from('waitlist_entries')
       .select('id, customer_id, guest_name, phone, email, requested_date, requested_time, party_size, zone_id, status, notes')
@@ -82,7 +85,7 @@ export function WaitlistPanel({ businessId, zoneNameById, onConverted }: Waitlis
       setEntries((data ?? []) as WaitlistEntry[])
     }
     setLoading(false)
-  }, [businessId])
+  }, [businessId, timeZone])
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- async fetch syncs external Supabase state
@@ -108,7 +111,13 @@ export function WaitlistPanel({ businessId, zoneNameById, onConverted }: Waitlis
     setBusyId(entry.id)
     setError(null)
     const wallClock = `${entry.requested_date}T${entry.requested_time.padStart(5, '0')}:00`
-    const scheduledAtIso = wallClockInCalgaryToUtcDate(wallClock).toISOString()
+    const resolved = resolveWallClockToUtc(wallClock, timeZone)
+    if (!resolved.ok) {
+      setBusyId(null)
+      setError(resolved.message)
+      return
+    }
+    const scheduledAtIso = resolved.iso
     const { error: insertErr } = await supabase.from('appointments').insert({
       business_id: businessId,
       customer_id: entry.customer_id,

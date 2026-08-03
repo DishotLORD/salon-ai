@@ -15,6 +15,8 @@ export type Database = {
           email: string | null
           phone: string | null
           address: string | null
+          /** IANA venue TZ (Canadian set). Null → America/Edmonton at runtime; never rewrite scheduled_at. */
+          timezone: string | null
           business_type: string
           agent_name: string | null
           system_prompt: string | null
@@ -33,6 +35,7 @@ export type Database = {
           email?: string | null
           phone?: string | null
           address?: string | null
+          timezone?: string | null
           business_type?: string
           agent_name?: string | null
           system_prompt?: string | null

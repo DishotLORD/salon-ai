@@ -3,7 +3,8 @@
 import type { CSSProperties } from 'react'
 
 import type { Reservation, ResStatus } from '@/components/reservation-card'
-import { formatCalgaryTime } from '@/lib/booking-wall-clock'
+import { formatVenueTime } from '@/lib/booking-wall-clock'
+import type { CanadianBusinessTimezone } from '@/lib/business-timezone'
 import { bk } from '@/lib/bookings-compact-ui'
 
 const MAX_VISIBLE = 6
@@ -16,13 +17,15 @@ const STATUS_LABEL: Record<ResStatus, string> = {
   'no-show': 'No-show',
 }
 
-function fmtTime(d: Date) {
-  return formatCalgaryTime(d)
+function fmtTime(d: Date, timeZone: CanadianBusinessTimezone) {
+  return formatVenueTime(d, timeZone)
 }
 
 export type BookingsDayChipsProps = {
   date: Date
   reservations: Reservation[]
+  /** Venue IANA zone — chip times are cut in it, never the browser's. */
+  timeZone: CanadianBusinessTimezone
   loading: boolean
   statusColors: Record<ResStatus, { bg: string; color: string }>
   onEdit: (r: Reservation) => void
@@ -76,6 +79,7 @@ export function BookingsDayEmptyStrip({
 
 export function BookingsDayChips({
   reservations,
+  timeZone,
   loading,
   statusColors,
   onEdit,
@@ -138,7 +142,7 @@ export function BookingsDayChips({
             }}
           >
             <span style={{ fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
-              {fmtTime(r.scheduledAt)}
+              {fmtTime(r.scheduledAt, timeZone)}
             </span>
             <span style={{ color: 'var(--bk-border-strong)' }}>|</span>
             <span
