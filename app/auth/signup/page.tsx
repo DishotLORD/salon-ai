@@ -8,7 +8,6 @@ import { OceanCoreLogoCompact } from '@/components/oceancore-logo'
 import { useState } from 'react'
 
 import { BusinessTimezoneSelect } from '@/components/business-timezone-select'
-import { WELCOME_SPLASH_FLAG } from '@/components/dashboard-splash'
 import { defaultSystemPrompt } from '@/lib/default-system-prompt'
 import { checkAuthEmail } from '@/lib/auth-email'
 import {
@@ -18,6 +17,7 @@ import {
   timezoneLabel,
   type CanadianBusinessTimezone,
 } from '@/lib/business-timezone'
+import { savePendingVenueDraft } from '@/lib/pending-venue'
 import { supabase } from '@/lib/supabase'
 import { VENUE_TYPE_OPTIONS, type VenueType } from '@/lib/venue-types'
 
@@ -464,8 +464,9 @@ export default function SignupPage() {
         ;({ error: bizErr } = await supabase.from('businesses').insert(withoutTz))
       }
       if (bizErr) { setError(bizErr.message); setLoading(false); return }
-      try { sessionStorage.setItem(WELCOME_SPLASH_FLAG, '1') } catch { /* storage blocked */ }
-      window.location.replace('/dashboard')
+      // Identity is saved — finish hours + seating on the shared onboarding path
+      // before the public widget can take reservations.
+      window.location.replace('/onboarding')
     } catch {
       setError('Something went wrong. Please try again.')
       setLoading(false)
@@ -475,6 +476,17 @@ export default function SignupPage() {
   const handleGoogle = async () => {
     setError('')
     setLoading(true)
+    // Preserve any venue fields already entered so Google OAuth does not lose them.
+    if (businessName.trim()) {
+      savePendingVenueDraft({
+        businessName: businessName.trim(),
+        businessType,
+        address: address.trim(),
+        timezone,
+        phone: phone.trim(),
+        agentName: agentName.trim(),
+      })
+    }
     const { error: oauthError } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: { redirectTo: `${window.location.origin}/auth/callback` },

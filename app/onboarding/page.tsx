@@ -7,20 +7,35 @@ import { useRouter } from 'next/navigation'
 import { BusinessTimezoneSelect } from '@/components/business-timezone-select'
 import { WELCOME_SPLASH_FLAG } from '@/components/dashboard-splash'
 import {
+  evaluateBusinessReadiness,
+  loadBusinessReadiness,
+  validateZoneCapacityInput,
+} from '@/lib/business-readiness'
+import {
   isTimezoneSchemaError,
   parseBusinessTimezoneInput,
   suggestTimezoneFromAddress,
   type CanadianBusinessTimezone,
 } from '@/lib/business-timezone'
 import { defaultSystemPrompt } from '@/lib/default-system-prompt'
+import { slugifyZoneName } from '@/lib/dining-zones'
+import {
+  clearPendingVenueDraft,
+  readPendingVenueDraft,
+} from '@/lib/pending-venue'
+import {
+  DAY_ORDER,
+  DEFAULT_OPERATING_HOURS,
+  parseOperatingHours,
+  validateOperatingHours,
+  type DayKey,
+  type OperatingHours,
+} from '@/lib/operating-hours'
 import { supabase } from '@/lib/supabase'
 import { tabContent } from '@/lib/ocean-motion'
 import { VENUE_TYPE_OPTIONS, type VenueType } from '@/lib/venue-types'
 
-const TOTAL_STEPS = 3
-
-const businessTypeOptions = VENUE_TYPE_OPTIONS
-type BusinessTypeValue = VenueType
+type Phase = 'identity' | 'hours' | 'seating' | 'done'
 
 const labelStyle = {
   display: 'block' as const,
@@ -46,148 +61,409 @@ const inputStyle = {
   boxSizing: 'border-box' as const,
 }
 
-const STEPS = [
-  { title: 'Your venue', subtitle: 'Tell us where you are — your concierge will use this to help guests.' },
-  { title: 'Contact & notifications', subtitle: 'Where should we reach you when a new reservation comes in?' },
-  { title: "You're all set!", subtitle: 'Everything looks good. You can update any of this in Settings anytime.' },
-]
-
 export default function OnboardingPage() {
   const router = useRouter()
-  const [step, setStep] = useState(1)
+  const [phase, setPhase] = useState<Phase>('identity')
   const [dir, setDir] = useState(1)
   const [authChecked, setAuthChecked] = useState(false)
+  const [businessId, setBusinessId] = useState<string | null>(null)
 
-  // Step 1
+  // Identity
   const [businessName, setBusinessName] = useState('')
-  const [businessType, setBusinessType] = useState<BusinessTypeValue>('restaurant')
+  const [businessType, setBusinessType] = useState<VenueType>('restaurant')
   const [address, setAddress] = useState('')
   const [timezone, setTimezone] = useState<CanadianBusinessTimezone | ''>('')
-
-  // Step 2
   const [email, setEmail] = useState('')
   const [phone, setPhone] = useState('')
   const [agentName, setAgentName] = useState('')
+  const [identityStep, setIdentityStep] = useState(1)
+
+  // Hours — editor starts from defaults but is labeled Not configured until saved
+  const [hours, setHours] = useState<OperatingHours>(() => ({
+    ...DEFAULT_OPERATING_HOURS,
+  }))
+  const [hoursConfirmed, setHoursConfirmed] = useState(false)
+
+  // First zone
+  const [zoneName, setZoneName] = useState('Main Dining')
+  const [capacity, setCapacity] = useState('40')
+  const [minParty, setMinParty] = useState('1')
+  const [maxParty, setMaxParty] = useState('8')
 
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     let cancelled = false
-    async function checkAuth() {
-      const { data: { user } } = await supabase.auth.getUser()
+    async function boot() {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
       if (cancelled) return
-      if (!user) { router.replace('/auth/login'); return }
-      // Pre-fill email from OAuth
+      if (!user) {
+        router.replace('/auth/login')
+        return
+      }
       if (user.email) setEmail(user.email)
+
+      const draft = readPendingVenueDraft()
+      if (draft) {
+        setBusinessName(draft.businessName)
+        setBusinessType(draft.businessType)
+        setAddress(draft.address)
+        setTimezone(draft.timezone)
+        setPhone(draft.phone)
+        if (draft.agentName) setAgentName(draft.agentName)
+      }
+
+      const { data: existing } = await supabase
+        .from('businesses')
+        .select(
+          'id, name, business_type, address, timezone, email, phone, agent_name, operating_hours, operating_hours_confirmed_at, menu_pdf_text',
+        )
+        .eq('user_id', user.id)
+        .maybeSingle()
+
+      if (cancelled) return
+
+      if (existing?.id) {
+        setBusinessId(existing.id)
+        setBusinessName(existing.name ?? '')
+        if (existing.business_type) {
+          setBusinessType(existing.business_type as VenueType)
+        }
+        setAddress(existing.address ?? '')
+        if (
+          typeof existing.timezone === 'string' &&
+          existing.timezone.trim()
+        ) {
+          setTimezone(existing.timezone as CanadianBusinessTimezone)
+        }
+        if (existing.email) setEmail(existing.email)
+        setPhone(existing.phone ?? '')
+        setAgentName(existing.agent_name ?? '')
+        setHours(parseOperatingHours(existing.operating_hours))
+        const confirmed = Boolean(existing.operating_hours_confirmed_at)
+        setHoursConfirmed(confirmed)
+
+        // Pre-migration column missing → select may error; fall back without it
+        let readiness
+        try {
+          readiness = await loadBusinessReadiness(supabase, existing.id)
+        } catch {
+          readiness = evaluateBusinessReadiness({
+            timezone: existing.timezone,
+            operatingHours: existing.operating_hours,
+            operatingHoursConfirmedAt: existing.operating_hours_confirmed_at,
+            zones: [],
+            menuItemCount: 0,
+            menuPdfText: existing.menu_pdf_text,
+          })
+        }
+
+        if (readiness.bookingReady) {
+          router.replace('/dashboard')
+          return
+        }
+        if (!readiness.hoursConfirmed) {
+          setPhase('hours')
+        } else if (!readiness.hasUsableZone) {
+          setPhase('seating')
+        } else {
+          setPhase('hours')
+        }
+      } else {
+        setPhase('identity')
+      }
+
       setAuthChecked(true)
     }
-    void checkAuth()
-    return () => { cancelled = true }
+    void boot()
+    return () => {
+      cancelled = true
+    }
   }, [router])
 
-  const progressPercent = (step / TOTAL_STEPS) * 100
+  const createBusinessIfNeeded = async (): Promise<string | null> => {
+    if (businessId) return businessId
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) {
+      router.replace('/auth/login')
+      return null
+    }
 
-  const canNext = step === 1
-    ? businessName.trim().length > 0 && Boolean(timezone)
-    : step === 2
-      ? email.trim().length > 0 && agentName.trim().length > 0
-      : true
+    // Never create a duplicate if another tab already inserted.
+    const { data: existing } = await supabase
+      .from('businesses')
+      .select('id')
+      .eq('user_id', user.id)
+      .maybeSingle()
+    if (existing?.id) {
+      setBusinessId(existing.id)
+      clearPendingVenueDraft()
+      return existing.id
+    }
 
-  const goNext = () => {
-    setError('')
-    if (!canNext) return
-    setDir(1)
-    setStep((s) => Math.min(s + 1, TOTAL_STEPS))
+    const tzParsed = parseBusinessTimezoneInput(timezone)
+    if (!tzParsed.ok) {
+      setError(tzParsed.message)
+      return null
+    }
+
+    const insertPayload = {
+      user_id: user.id,
+      name: businessName.trim(),
+      business_type: businessType,
+      address: address.trim() || null,
+      timezone: tzParsed.timezone,
+      email: email.trim() || null,
+      phone: phone.trim() || null,
+      agent_name: agentName.trim() || `${businessName.trim()} Concierge`,
+      system_prompt: defaultSystemPrompt(
+        businessName,
+        businessType,
+        agentName.trim() || `${businessName.trim()} Concierge`,
+      ),
+    }
+    let { data: created, error: insertError } = await supabase
+      .from('businesses')
+      .insert(insertPayload)
+      .select('id')
+      .maybeSingle()
+    if (insertError && isTimezoneSchemaError(insertError.message)) {
+      const { timezone: _tz, ...withoutTz } = insertPayload
+      ;({ data: created, error: insertError } = await supabase
+        .from('businesses')
+        .insert(withoutTz)
+        .select('id')
+        .maybeSingle())
+    }
+    if (insertError || !created?.id) {
+      setError(insertError?.message ?? 'Could not save. Please try again.')
+      return null
+    }
+    setBusinessId(created.id)
+    clearPendingVenueDraft()
+    return created.id
   }
 
-  const goBack = () => {
-    setError('')
-    setDir(-1)
-    setStep((s) => Math.max(s - 1, 1))
-  }
-
-  const handleFinish = async () => {
+  const saveHours = async () => {
     setError('')
     setSaving(true)
     try {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) { router.replace('/auth/login'); return }
+      const hoursError = validateOperatingHours(hours)
+      if (hoursError) {
+        setError(hoursError)
+        setSaving(false)
+        return
+      }
+      if (!DAY_ORDER.some(({ key }) => !hours[key].closed)) {
+        setError('Keep at least one day open for reservations.')
+        setSaving(false)
+        return
+      }
+
+      const bizId = await createBusinessIfNeeded()
+      if (!bizId) {
+        setSaving(false)
+        return
+      }
 
       const tzParsed = parseBusinessTimezoneInput(timezone)
-      if (!tzParsed.ok) {
-        setError(tzParsed.message)
+      const payload: Record<string, unknown> = {
+        operating_hours: hours,
+        operating_hours_confirmed_at: new Date().toISOString(),
+      }
+      if (tzParsed.ok) payload.timezone = tzParsed.timezone
+
+      let { error: upErr } = await supabase
+        .from('businesses')
+        .update(payload)
+        .eq('id', bizId)
+      if (upErr && /operating_hours_confirmed_at/i.test(upErr.message)) {
+        const { operating_hours_confirmed_at: _c, ...without } = payload
+        ;({ error: upErr } = await supabase
+          .from('businesses')
+          .update(without)
+          .eq('id', bizId))
+      }
+      if (upErr) {
+        setError(upErr.message)
+        setSaving(false)
+        return
+      }
+      setHoursConfirmed(true)
+      setDir(1)
+      setPhase('seating')
+    } catch {
+      setError('Something went wrong. Please try again.')
+    }
+    setSaving(false)
+  }
+
+  const saveSeating = async () => {
+    setError('')
+    setSaving(true)
+    try {
+      const validated = validateZoneCapacityInput({
+        name: zoneName,
+        capacity,
+        minPartySize: minParty,
+        maxPartySize: maxParty,
+      })
+      if (!validated.ok) {
+        setError(validated.message)
         setSaving(false)
         return
       }
 
-      const insertPayload = {
-        user_id: user.id,
-        name: businessName.trim(),
-        business_type: businessType,
-        address: address.trim() || null,
-        timezone: tzParsed.timezone,
-        email: email.trim() || null,
-        phone: phone.trim() || null,
-        agent_name: agentName.trim() || `${businessName.trim()} Concierge`,
-        system_prompt: defaultSystemPrompt(
-          businessName,
-          businessType,
-          agentName.trim() || `${businessName.trim()} Concierge`,
-        ),
-      }
-      let { error: insertError } = await supabase.from('businesses').insert(insertPayload)
-      if (insertError && isTimezoneSchemaError(insertError.message)) {
-        const { timezone: _tz, ...withoutTz } = insertPayload
-        ;({ error: insertError } = await supabase.from('businesses').insert(withoutTz))
-      }
-
-      if (insertError) {
-        setError(insertError.message ?? 'Could not save. Please try again.')
+      const bizId = await createBusinessIfNeeded()
+      if (!bizId) {
         setSaving(false)
         return
       }
 
-      try { sessionStorage.setItem(WELCOME_SPLASH_FLAG, '1') } catch { /* storage blocked */ }
+      // Hours must be confirmed before seating completes launch readiness.
+      if (!hoursConfirmed) {
+        setDir(-1)
+        setPhase('hours')
+        setError('Save your operating hours before adding seating.')
+        setSaving(false)
+        return
+      }
+
+      const { data: existingZones } = await supabase
+        .from('dining_zones')
+        .select('id')
+        .eq('business_id', bizId)
+        .limit(1)
+      if ((existingZones ?? []).length === 0) {
+        const { error: zErr } = await supabase.from('dining_zones').insert({
+          business_id: bizId,
+          name: validated.name,
+          slug: slugifyZoneName(validated.name),
+          max_concurrent_parties: validated.capacity,
+          min_party_size: validated.minParty,
+          max_party_size: validated.maxParty,
+          turnover_minutes: 90,
+          is_active: true,
+          sort_order: 0,
+        })
+        if (zErr) {
+          setError(zErr.message)
+          setSaving(false)
+          return
+        }
+      }
+
+      const readiness = await loadBusinessReadiness(supabase, bizId)
+      if (!readiness.bookingReady) {
+        setError(
+          readiness.missingSteps
+            .filter((s) => s.id !== 'menu')
+            .map((s) => s.title)
+            .join(' · ') || 'Finish the required setup steps.',
+        )
+        setSaving(false)
+        return
+      }
+
+      try {
+        sessionStorage.setItem(WELCOME_SPLASH_FLAG, '1')
+      } catch {
+        /* storage blocked */
+      }
+      setPhase('done')
       router.replace('/dashboard')
     } catch {
       setError('Something went wrong. Please try again.')
-      setSaving(false)
     }
+    setSaving(false)
+  }
+
+  const identityCanNext =
+    identityStep === 1
+      ? businessName.trim().length > 0 && Boolean(timezone)
+      : email.trim().length > 0 && agentName.trim().length > 0
+
+  const goIdentityNext = async () => {
+    setError('')
+    if (!identityCanNext) return
+    if (identityStep === 1) {
+      setDir(1)
+      setIdentityStep(2)
+      return
+    }
+    setSaving(true)
+    const id = await createBusinessIfNeeded()
+    setSaving(false)
+    if (!id) return
+    setDir(1)
+    setPhase('hours')
   }
 
   if (!authChecked) {
     return (
-      <div style={{
-        minHeight: '100vh', display: 'grid', placeItems: 'center',
-        background: 'var(--ocean-deep)', color: 'var(--ocean-text-muted)', fontSize: 14,
-      }}>
+      <div
+        style={{
+          minHeight: '100vh',
+          display: 'grid',
+          placeItems: 'center',
+          background: 'var(--ocean-deep)',
+          color: 'var(--ocean-text-muted)',
+          fontSize: 14,
+        }}
+      >
         Loading…
       </div>
     )
   }
 
-  const stepMeta = STEPS[step - 1]
+  const phaseTitle =
+    phase === 'identity'
+      ? identityStep === 1
+        ? 'Your venue'
+        : 'Contact & concierge'
+      : phase === 'hours'
+        ? 'Confirm opening hours'
+        : phase === 'seating'
+          ? 'Add seating & capacity'
+          : 'You are ready'
+
+  const phaseSubtitle =
+    phase === 'identity'
+      ? identityStep === 1
+        ? 'Tell us where you are — your concierge will use this for guests.'
+        : 'Where should we reach you, and what should guests call your host?'
+      : phase === 'hours'
+        ? 'Defaults below are not live. Review, edit if needed, then save to confirm.'
+        : phase === 'seating'
+          ? 'Enter real capacity — we will not invent covers or party limits for you.'
+          : 'Online reservations can now accept guests.'
 
   return (
-    <div style={{
-      minHeight: '100vh',
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      justifyContent: 'center',
-      padding: '32px 20px 40px',
-      background: 'var(--ocean-canvas)',
-      backgroundColor: 'var(--ocean-deep)',
-      color: 'var(--ocean-text)',
-    }}>
+    <div
+      style={{
+        minHeight: '100vh',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '32px 20px 40px',
+        background: 'var(--ocean-canvas)',
+        backgroundColor: 'var(--ocean-deep)',
+        color: 'var(--ocean-text)',
+      }}
+    >
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
         style={{
           width: '100%',
-          maxWidth: 500,
+          maxWidth: 560,
           borderRadius: 20,
           border: '1px solid var(--ocean-border)',
           background: 'var(--ocean-card)',
@@ -197,206 +473,215 @@ export default function OnboardingPage() {
           WebkitBackdropFilter: 'blur(12px)',
         }}
       >
-        {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 22 }}>
-          <div style={{
-            width: 44, height: 44, borderRadius: 12, flexShrink: 0,
-            background: 'linear-gradient(145deg, rgba(14,165,233,0.22) 0%, rgba(5,13,26,0.85) 100%)',
-            border: '1px solid rgba(56,189,248,0.24)',
-            display: 'grid', placeItems: 'center',
-          }}>
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M2 12c4-4 6-4 10 0s6 4 10 0" />
-            </svg>
+        <div style={{ marginBottom: 18 }}>
+          <div
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              letterSpacing: '0.1em',
+              textTransform: 'uppercase',
+              color: 'var(--ocean-text-muted)',
+              marginBottom: 8,
+            }}
+          >
+            Launch setup
           </div>
-          <div>
-            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.2em', color: 'var(--ocean-sky)' }}>OCEANCORE</div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--ocean-text)', marginTop: 1 }}>Setup</div>
-          </div>
+          <h1
+            style={{
+              margin: 0,
+              fontSize: 24,
+              fontWeight: 700,
+              letterSpacing: '-0.02em',
+            }}
+          >
+            {phaseTitle}
+          </h1>
+          <p
+            style={{
+              margin: '8px 0 0',
+              fontSize: 14,
+              lineHeight: 1.45,
+              color: 'var(--ocean-text-muted)',
+            }}
+          >
+            {phaseSubtitle}
+          </p>
         </div>
 
-        {/* Progress */}
-        <div style={{ marginBottom: 24 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 7 }}>
-            <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--ocean-text-muted)', letterSpacing: '0.06em' }}>
-              STEP {step} OF {TOTAL_STEPS}
-            </span>
-            <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--ocean-text-subtle)' }}>
-              {Math.round(progressPercent)}%
-            </span>
-          </div>
-          {/* Step dots */}
-          <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
-            {Array.from({ length: TOTAL_STEPS }).map((_, i) => (
-              <div key={i} style={{
-                flex: i < step ? 1 : undefined,
-                width: i < step ? undefined : 8,
-                height: 4,
-                borderRadius: 99,
-                background: i < step
-                  ? 'linear-gradient(90deg, var(--ocean-sky), #0ea5e9)'
-                  : 'var(--ocean-surface)',
-                transition: 'all 0.35s cubic-bezier(0.4,0,0.2,1)',
-              }} />
-            ))}
-          </div>
-        </div>
-
-        {/* Step content */}
         <AnimatePresence mode="wait" custom={dir}>
           <motion.div
-            key={step}
+            key={`${phase}-${identityStep}`}
             custom={dir}
             variants={tabContent}
             initial="initial"
             animate="animate"
             exit="exit"
           >
-            <h1 style={{ margin: 0, fontSize: 24, lineHeight: 1.15, letterSpacing: '-0.02em', fontWeight: 700, color: 'var(--ocean-text)' }}>
-              {stepMeta.title}
-            </h1>
-            <p style={{ margin: '8px 0 22px', fontSize: 13.5, color: 'var(--ocean-text-muted)', lineHeight: 1.5 }}>
-              {stepMeta.subtitle}
-            </p>
-
-            {step === 1 && (
-              <div style={{ display: 'grid', gap: 16 }}>
-                <div>
-                  <label style={labelStyle}>Venue name <span style={{ color: 'var(--ocean-sky)' }}>*</span></label>
+            {phase === 'identity' && identityStep === 1 && (
+              <div style={{ display: 'grid', gap: 14 }}>
+                <label>
+                  <span style={labelStyle}>Restaurant name</span>
                   <input
-                    type="text"
+                    style={inputStyle}
                     value={businessName}
                     onChange={(e) => setBusinessName(e.target.value)}
-                    placeholder="e.g. The Garage"
-                    style={inputStyle}
-                    onFocus={e => (e.target.style.borderColor = 'rgba(56,189,248,0.5)')}
-                    onBlur={e => (e.target.style.borderColor = 'var(--ocean-border)')}
-                    autoFocus
+                    placeholder="The Garage"
                   />
-                </div>
-                <div>
-                  <label style={labelStyle}>Venue type</label>
+                </label>
+                <label>
+                  <span style={labelStyle}>Type</span>
                   <select
+                    style={inputStyle}
                     value={businessType}
-                    onChange={(e) => setBusinessType(e.target.value as BusinessTypeValue)}
-                    style={{ ...inputStyle, cursor: 'pointer' }}
+                    onChange={(e) =>
+                      setBusinessType(e.target.value as VenueType)
+                    }
                   >
-                    {businessTypeOptions.map((opt) => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    {VENUE_TYPE_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
                     ))}
                   </select>
-                </div>
-                <div>
-                  <label style={labelStyle}>Address <span style={{ color: 'var(--ocean-text-subtle)', fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>optional</span></label>
+                </label>
+                <label>
+                  <span style={labelStyle}>Address</span>
                   <input
-                    type="text"
+                    style={inputStyle}
                     value={address}
                     onChange={(e) => {
-                      const next = e.target.value
-                      setAddress(next)
-                      if (!timezone) {
-                        const suggested = suggestTimezoneFromAddress(next)
-                        if (suggested) setTimezone(suggested)
-                      }
+                      setAddress(e.target.value)
+                      const suggested = suggestTimezoneFromAddress(e.target.value)
+                      if (suggested && !timezone) setTimezone(suggested)
                     }}
-                    placeholder="e.g. 123 Main St, Calgary, AB"
-                    style={inputStyle}
-                    onFocus={e => (e.target.style.borderColor = 'rgba(56,189,248,0.5)')}
-                    onBlur={e => (e.target.style.borderColor = 'var(--ocean-border)')}
+                    placeholder="City, Province"
+                  />
+                </label>
+                <div>
+                  <span style={labelStyle}>Timezone</span>
+                  <BusinessTimezoneSelect
+                    value={timezone}
+                    onChange={setTimezone}
                   />
                 </div>
-                <BusinessTimezoneSelect
-                  id="onboarding-timezone"
-                  value={timezone}
-                  onChange={setTimezone}
-                  hint="Confirm the timezone where this restaurant operates. Alberta addresses default to Mountain Time."
-                />
               </div>
             )}
 
-            {step === 2 && (
-              <div style={{ display: 'grid', gap: 16 }}>
-                <div>
-                  <label style={labelStyle}>Your email <span style={{ color: 'var(--ocean-sky)' }}>*</span></label>
+            {phase === 'identity' && identityStep === 2 && (
+              <div style={{ display: 'grid', gap: 14 }}>
+                <label>
+                  <span style={labelStyle}>Owner email</span>
                   <input
-                    type="email"
+                    style={inputStyle}
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder="you@yourvenue.com"
-                    style={inputStyle}
-                    onFocus={e => (e.target.style.borderColor = 'rgba(56,189,248,0.5)')}
-                    onBlur={e => (e.target.style.borderColor = 'var(--ocean-border)')}
+                    type="email"
                   />
-                  <p style={{ margin: '5px 0 0', fontSize: 12, color: 'var(--ocean-text-subtle)', lineHeight: 1.4 }}>
-                    We&apos;ll send reservation confirmations here.
-                  </p>
-                </div>
-                <div>
-                  <label style={labelStyle}>Phone <span style={{ color: 'var(--ocean-text-subtle)', fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>optional</span></label>
+                </label>
+                <label>
+                  <span style={labelStyle}>Phone (optional)</span>
                   <input
-                    type="tel"
+                    style={inputStyle}
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
-                    placeholder="e.g. (403) 555-0100"
-                    style={inputStyle}
-                    onFocus={e => (e.target.style.borderColor = 'rgba(56,189,248,0.5)')}
-                    onBlur={e => (e.target.style.borderColor = 'var(--ocean-border)')}
                   />
-                </div>
-                <div>
-                  <label style={labelStyle}>Concierge name <span style={{ color: 'var(--ocean-sky)' }}>*</span></label>
+                </label>
+                <label>
+                  <span style={labelStyle}>Concierge name</span>
                   <input
-                    type="text"
+                    style={inputStyle}
                     value={agentName}
                     onChange={(e) => setAgentName(e.target.value)}
-                    placeholder={businessName ? `${businessName} Concierge` : 'e.g. Marea Concierge'}
-                    style={inputStyle}
-                    onFocus={e => (e.target.style.borderColor = 'rgba(56,189,248,0.5)')}
-                    onBlur={e => (e.target.style.borderColor = 'var(--ocean-border)')}
+                    placeholder={`${businessName.trim() || 'Venue'} Concierge`}
                   />
-                  <p style={{ margin: '5px 0 0', fontSize: 12, color: 'var(--ocean-text-subtle)', lineHeight: 1.4 }}>
-                    How the AI introduces itself to guests.
-                  </p>
-                </div>
+                </label>
               </div>
             )}
 
-            {step === 3 && (
-              <div>
-                {/* Summary card */}
-                <div style={{
-                  borderRadius: 14,
-                  border: '1px solid var(--ocean-border)',
-                  background: 'var(--ocean-surface)',
-                  overflow: 'hidden',
-                }}>
-                  {[
-                    { label: 'Venue', value: businessName.trim() },
-                    { label: 'Type', value: businessTypeOptions.find((o) => o.value === businessType)?.label ?? businessType },
-                    ...(address.trim() ? [{ label: 'Address', value: address.trim() }] : []),
-                    { label: 'Email', value: email.trim() },
-                    ...(phone.trim() ? [{ label: 'Phone', value: phone.trim() }] : []),
-                    { label: 'Concierge name', value: agentName.trim() || `${businessName.trim()} Concierge` },
-                  ].map((row, i) => (
-                    <div key={row.label} style={{
-                      display: 'flex', alignItems: 'baseline', gap: 12,
-                      padding: '13px 16px',
-                      borderTop: i === 0 ? 'none' : '1px solid var(--ocean-border)',
-                    }}>
-                      <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--ocean-text-subtle)', letterSpacing: '0.06em', minWidth: 96, flexShrink: 0 }}>
-                        {row.label.toUpperCase()}
-                      </span>
-                      <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--ocean-text)' }}>{row.value}</span>
-                    </div>
-                  ))}
+            {phase === 'hours' && (
+              <div style={{ display: 'grid', gap: 12 }}>
+                <div
+                  style={{
+                    padding: '10px 12px',
+                    borderRadius: 12,
+                    background: hoursConfirmed
+                      ? 'rgba(56, 161, 105, 0.12)'
+                      : 'rgba(214, 158, 46, 0.14)',
+                    border: `1px solid ${
+                      hoursConfirmed
+                        ? 'rgba(56, 161, 105, 0.35)'
+                        : 'rgba(214, 158, 46, 0.35)'
+                    }`,
+                    fontSize: 13,
+                    color: 'var(--ocean-text)',
+                  }}
+                >
+                  {hoursConfirmed
+                    ? 'Hours confirmed and saved.'
+                    : 'Not configured — these are editor defaults only. Guests cannot book until you save.'}
                 </div>
+                {DAY_ORDER.map(({ key, label }) => (
+                  <DayRow
+                    key={key}
+                    dayKey={key}
+                    label={label}
+                    value={hours[key]}
+                    onChange={(next) =>
+                      setHours((prev) => ({ ...prev, [key]: next }))
+                    }
+                  />
+                ))}
+              </div>
+            )}
 
-                <div style={{
-                  marginTop: 16, padding: '12px 14px', borderRadius: 10,
-                  background: 'rgba(56,189,248,0.06)', border: '1px solid rgba(56,189,248,0.15)',
-                  fontSize: 12.5, color: 'var(--ocean-text-muted)', lineHeight: 1.5,
-                }}>
-                  💡 A default system prompt will be generated for your AI Concierge. You can customise it anytime in Settings → AI.
+            {phase === 'seating' && (
+              <div style={{ display: 'grid', gap: 14 }}>
+                <label>
+                  <span style={labelStyle}>Seating area name</span>
+                  <input
+                    style={inputStyle}
+                    value={zoneName}
+                    onChange={(e) => setZoneName(e.target.value)}
+                    placeholder="Main Dining"
+                  />
+                </label>
+                <label>
+                  <span style={labelStyle}>Total capacity (guests)</span>
+                  <input
+                    style={inputStyle}
+                    type="number"
+                    min={1}
+                    value={capacity}
+                    onChange={(e) => setCapacity(e.target.value)}
+                  />
+                </label>
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr',
+                    gap: 12,
+                  }}
+                >
+                  <label>
+                    <span style={labelStyle}>Min party size</span>
+                    <input
+                      style={inputStyle}
+                      type="number"
+                      min={1}
+                      value={minParty}
+                      onChange={(e) => setMinParty(e.target.value)}
+                    />
+                  </label>
+                  <label>
+                    <span style={labelStyle}>Max party size</span>
+                    <input
+                      style={inputStyle}
+                      type="number"
+                      min={1}
+                      value={maxParty}
+                      onChange={(e) => setMaxParty(e.target.value)}
+                    />
+                  </label>
                 </div>
               </div>
             )}
@@ -404,84 +689,155 @@ export default function OnboardingPage() {
         </AnimatePresence>
 
         {error ? (
-          <p style={{ color: 'var(--ocean-danger)', margin: '14px 0 0', fontSize: 13.5, lineHeight: 1.45 }}>{error}</p>
+          <p
+            style={{
+              margin: '14px 0 0',
+              color: '#f6ad55',
+              fontSize: 13,
+              lineHeight: 1.4,
+            }}
+          >
+            {error}
+          </p>
         ) : null}
 
-        {/* Navigation */}
-        <div style={{
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          gap: 12, marginTop: 24,
-        }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            gap: 10,
+            marginTop: 22,
+          }}
+        >
           <button
             type="button"
-            onClick={goBack}
-            disabled={step === 1 || saving}
+            disabled={saving || (phase === 'identity' && identityStep === 1)}
+            onClick={() => {
+              setError('')
+              setDir(-1)
+              if (phase === 'identity' && identityStep === 2) {
+                setIdentityStep(1)
+              } else if (phase === 'hours' && businessId) {
+                /* stay — identity already saved */
+              } else if (phase === 'seating') {
+                setPhase('hours')
+              }
+            }}
             style={{
-              borderRadius: 10, border: '1px solid var(--ocean-border)',
-              background: 'var(--ocean-surface)', color: 'var(--ocean-text)',
-              fontWeight: 600, fontSize: 14, padding: '11px 20px',
-              cursor: step === 1 || saving ? 'not-allowed' : 'pointer',
-              opacity: step === 1 ? 0.4 : 1,
-              fontFamily: 'inherit',
+              borderRadius: 12,
+              border: '1px solid var(--ocean-border)',
+              background: 'transparent',
+              color: 'var(--ocean-text-muted)',
+              padding: '11px 16px',
+              fontSize: 14,
+              fontWeight: 600,
+              cursor: 'pointer',
+              opacity: phase === 'identity' && identityStep === 1 ? 0.4 : 1,
             }}
           >
             Back
           </button>
 
-          {step < TOTAL_STEPS ? (
+          {phase === 'identity' && (
             <button
               type="button"
-              onClick={goNext}
-              disabled={!canNext || saving}
-              style={{
-                border: 'none', borderRadius: 10,
-                background: canNext
-                  ? 'linear-gradient(135deg, var(--ocean-sky) 0%, #0ea5e9 100%)'
-                  : 'var(--ocean-surface)',
-                color: canNext ? 'var(--ocean-black)' : 'var(--ocean-text-subtle)',
-                fontWeight: 700, fontSize: 14, padding: '11px 24px',
-                cursor: canNext ? 'pointer' : 'not-allowed',
-                marginLeft: 'auto', fontFamily: 'inherit',
-              }}
+              disabled={saving || !identityCanNext}
+              onClick={() => void goIdentityNext()}
+              style={primaryBtn}
             >
-              Continue →
+              {saving ? 'Saving…' : identityStep === 1 ? 'Continue' : 'Save & continue'}
             </button>
-          ) : (
+          )}
+          {phase === 'hours' && (
             <button
               type="button"
-              onClick={() => void handleFinish()}
               disabled={saving}
-              style={{
-                border: 'none', borderRadius: 10,
-                background: saving
-                  ? 'var(--ocean-surface)'
-                  : 'linear-gradient(135deg, var(--ocean-sky) 0%, #0ea5e9 100%)',
-                color: saving ? 'var(--ocean-text-subtle)' : 'var(--ocean-black)',
-                fontWeight: 700, fontSize: 14, padding: '11px 24px',
-                cursor: saving ? 'not-allowed' : 'pointer',
-                marginLeft: 'auto', fontFamily: 'inherit',
-              }}
+              onClick={() => void saveHours()}
+              style={primaryBtn}
             >
-              {saving ? 'Launching…' : 'Launch Dashboard →'}
+              {saving ? 'Saving…' : 'Save hours & continue'}
+            </button>
+          )}
+          {phase === 'seating' && (
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => void saveSeating()}
+              style={primaryBtn}
+            >
+              {saving ? 'Saving…' : 'Enable reservations'}
             </button>
           )}
         </div>
       </motion.div>
-
-      <p style={{ marginTop: 24, fontSize: 11, color: 'var(--ocean-text-subtle)', letterSpacing: '0.02em' }}>
-        © {new Date().getFullYear()} OceanCore
-      </p>
     </div>
   )
 }
 
-function SummaryRow({ label, value }: { label: string; value: string }) {
+const primaryBtn: React.CSSProperties = {
+  borderRadius: 12,
+  border: 'none',
+  background: 'linear-gradient(135deg, #3d8bfd, #2563eb)',
+  color: '#fff',
+  padding: '11px 18px',
+  fontSize: 14,
+  fontWeight: 700,
+  cursor: 'pointer',
+}
+
+function DayRow({
+  dayKey,
+  label,
+  value,
+  onChange,
+}: {
+  dayKey: DayKey
+  label: string
+  value: OperatingHours[DayKey]
+  onChange: (next: OperatingHours[DayKey]) => void
+}) {
   return (
-    <div>
-      <p style={{ margin: 0, fontSize: 11, fontWeight: 700, color: 'var(--ocean-text-subtle)', letterSpacing: '0.06em' }}>
-        {label.toUpperCase()}
-      </p>
-      <p style={{ margin: '5px 0 0', fontSize: 15, fontWeight: 600, color: 'var(--ocean-text)' }}>{value}</p>
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: '88px 1fr 1fr auto',
+        gap: 8,
+        alignItems: 'center',
+      }}
+    >
+      <span style={{ fontSize: 13, fontWeight: 600 }}>{label}</span>
+      <input
+        type="time"
+        disabled={value.closed}
+        style={{ ...inputStyle, padding: '8px 10px', opacity: value.closed ? 0.45 : 1 }}
+        value={value.open}
+        onChange={(e) => onChange({ ...value, open: e.target.value })}
+      />
+      <input
+        type="time"
+        disabled={value.closed}
+        style={{ ...inputStyle, padding: '8px 10px', opacity: value.closed ? 0.45 : 1 }}
+        value={value.close}
+        onChange={(e) => onChange({ ...value, close: e.target.value })}
+      />
+      <label
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          fontSize: 12,
+          color: 'var(--ocean-text-muted)',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={value.closed}
+          onChange={(e) => onChange({ ...value, closed: e.target.checked })}
+        />
+        Closed
+      </label>
+      <span style={{ display: 'none' }}>{dayKey}</span>
     </div>
   )
 }

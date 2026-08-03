@@ -52,6 +52,10 @@ import {
 import type { CanadianBusinessTimezone } from "@/lib/business-timezone";
 import { loadBusinessBookingContext } from "@/lib/booking-load";
 import {
+  loadBusinessReadiness,
+  SETUP_INCOMPLETE_GUEST_MESSAGE,
+} from "@/lib/business-readiness";
+import {
   bookingHorizonPromptSection,
   evaluateBookableWindow,
 } from "@/lib/booking-window";
@@ -1115,6 +1119,9 @@ type ToolContext = {
   conversation_id: string;
   customer_id: string;
   bookingCtx: BookingEngineContext;
+  /** Derived from real DB config — false blocks all public booking tools. */
+  bookingReady: boolean;
+  hasMenu: boolean;
   nowParts: WallClockParts;
   chatMessages: ChatMessage[];
   ownerEmail: string | null;
@@ -3686,11 +3693,34 @@ async function runEscalateToManager(
   };
 }
 
+const BOOKING_GATE_TOOLS = new Set<ToolName>([
+  "check_availability",
+  "find_next_available",
+  "create_reservation",
+  "reschedule_reservation",
+  "join_waitlist",
+  "check_activity_availability",
+  "book_activity",
+]);
+
+function setupIncompleteToolResult(): ToolOutcome {
+  return {
+    result: {
+      ok: false,
+      error: "setup_incomplete",
+      message: `${SETUP_INCOMPLETE_GUEST_MESSAGE} Do not invent hours, seating capacity, open times, or a booking confirmation. Relay this kindly and offer to take a message for the team if helpful.`,
+    },
+  };
+}
+
 async function executeTool(
   name: string,
   args: Record<string, unknown>,
   ctx: ToolContext,
 ): Promise<ToolOutcome> {
+  if (BOOKING_GATE_TOOLS.has(name as ToolName) && !ctx.bookingReady) {
+    return setupIncompleteToolResult();
+  }
   switch (name as ToolName) {
     case "check_availability":
       return runCheckAvailability(args, ctx);
@@ -4717,6 +4747,7 @@ export async function POST(request: Request) {
       supabaseAdmin,
       business_id,
     );
+    const readiness = await loadBusinessReadiness(supabaseAdmin, business_id);
 
     const nowParts = getVenueNowParts(bookingCtx.timezone);
     const todayLabel = new Date(
@@ -4733,7 +4764,7 @@ export async function POST(request: Request) {
       (business as Record<string, unknown>).notification_settings,
     );
 
-    const systemPrompt = buildSystemPrompt(
+    let systemPrompt = buildSystemPrompt(
       conciergeName,
       restaurantName,
       business.system_prompt,
@@ -4756,6 +4787,12 @@ export async function POST(request: Request) {
       bookingCtx.bookingSettings.slot_interval_minutes,
       bookingCtx.bookingSettings.max_advance_days,
     );
+    if (!readiness.bookingReady) {
+      systemPrompt += `\n\nSETUP INCOMPLETE: online reservations are not available yet for this restaurant. If a guest asks to book, reschedule, check open times, or join a waitlist, tell them kindly to contact the restaurant directly — never invent hours, seating capacity, open times, or a booking confirmation. Do not call create_reservation, reschedule_reservation, check_availability, find_next_available, or join_waitlist as if the venue were ready.`;
+    }
+    if (!readiness.hasMenu) {
+      systemPrompt += `\n\nNO MENU ON FILE: do not invent dishes, prices, ingredients, dietary claims, or allergens. If asked about the menu, say menu details are not available yet and offer to note the question for the restaurant.`;
+    }
     if (
       isNewConversation &&
       resolvedCustomerId &&
@@ -4910,6 +4947,8 @@ export async function POST(request: Request) {
           conversation_id: resolvedConversationId,
           customer_id: resolvedCustomerId ?? "",
           bookingCtx,
+          bookingReady: readiness.bookingReady,
+          hasMenu: readiness.hasMenu,
           nowParts,
           chatMessages,
           ownerEmail: business.email ?? null,

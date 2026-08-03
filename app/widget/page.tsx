@@ -501,6 +501,7 @@ function WidgetPageInner() {
   const [venueTimezone, setVenueTimezone] =
     useState<CanadianBusinessTimezone>(DEFAULT_BUSINESS_TIMEZONE)
   const [widgetTheme, setWidgetTheme] = useState<WidgetTheme>(DEFAULT_WIDGET_THEME)
+  const [setupIncomplete, setSetupIncomplete] = useState(false)
   const [launcherColor, setLauncherColor] = useState<string | null>(null)
 
   const [isOpen, setIsOpen] = useState(isEmbed)
@@ -779,6 +780,8 @@ function WidgetPageInner() {
           theme?: unknown
           launcherColor?: unknown
           timezone?: unknown
+          bookingReady?: unknown
+          setupIncomplete?: unknown
         }
         if (cancelled) return
 
@@ -796,6 +799,9 @@ function WidgetPageInner() {
         }
         setWidgetTheme(parseWidgetTheme(meta.theme))
         setLauncherColor(parseWidgetLauncherColor(meta.launcherColor))
+        setSetupIncomplete(
+          meta.setupIncomplete === true || meta.bookingReady === false,
+        )
         setMessages((prev) =>
           prev.length === 1 && prev[0].id === 'welcome'
             ? [buildWelcome(nextName, nextConcierge)]
@@ -1449,6 +1455,24 @@ function WidgetPageInner() {
                 </motion.g>
               </svg>
             </header>
+
+            {setupIncomplete ? (
+              <div
+                role="status"
+                style={{
+                  padding: '10px 14px',
+                  background: 'rgba(214, 158, 46, 0.14)',
+                  borderBottom: '1px solid rgba(214, 158, 46, 0.35)',
+                  color: CHAT_TEXT,
+                  fontSize: 12.5,
+                  fontWeight: 650,
+                  lineHeight: 1.4,
+                }}
+              >
+                Draft / Setup incomplete — online reservations are not live yet.
+                Guests should contact the restaurant directly to book.
+              </div>
+            ) : null}
 
             {/* ── Messages ── */}
             <div

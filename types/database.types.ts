@@ -23,6 +23,8 @@ export type Database = {
           language: string | null
           menu_pdf_text: string | null
           operating_hours: Json
+          /** Set when the owner explicitly saves hours. Null → not launch-ready. */
+          operating_hours_confirmed_at: string | null
           booking_settings: Json
           notification_settings: Json
           created_at: string
@@ -42,6 +44,7 @@ export type Database = {
           language?: string | null
           menu_pdf_text?: string | null
           operating_hours?: Json
+          operating_hours_confirmed_at?: string | null
           booking_settings?: Json
           notification_settings?: Json
           created_at?: string

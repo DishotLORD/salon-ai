@@ -10,7 +10,6 @@ import {
   type CanadianBusinessTimezone,
 } from '@/lib/business-timezone'
 import {
-  defaultMainDiningZone,
   parseDiningZoneRow,
   type DiningZone,
 } from '@/lib/dining-zones'
@@ -73,32 +72,11 @@ export async function loadBusinessBookingContext(
     .eq('business_id', businessId)
     .order('sort_order', { ascending: true })
 
-  let zones: DiningZone[] = (zoneRows ?? []).map((r) =>
+  // Never invent seating capacity. Zones exist only after the owner saves them
+  // (onboarding or Settings). Empty list → booking readiness fails upstream.
+  const zones: DiningZone[] = (zoneRows ?? []).map((r) =>
     parseDiningZoneRow(r as Record<string, unknown>),
   )
-
-  if (zones.length === 0) {
-    const seed = defaultMainDiningZone(businessId, bookingSettings)
-    const { data: inserted } = await supabase
-      .from('dining_zones')
-      .insert({
-        business_id: seed.business_id,
-        name: seed.name,
-        slug: seed.slug,
-        max_concurrent_parties: seed.max_concurrent_parties,
-        min_party_size: seed.min_party_size,
-        max_party_size: seed.max_party_size,
-        turnover_minutes: seed.turnover_minutes,
-        is_active: seed.is_active,
-        sort_order: seed.sort_order,
-      })
-      .select('*')
-      .maybeSingle()
-
-    if (inserted) {
-      zones = [parseDiningZoneRow(inserted as Record<string, unknown>)]
-    }
-  }
 
   const now = getVenueNowParts(timezone)
   const todayKey = wallClockDateKey(now)
