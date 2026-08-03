@@ -1,5 +1,12 @@
 import { redirect } from 'next/navigation'
 
+import { isTimezoneSchemaError, resolveBusinessTimezone } from '@/lib/business-timezone'
+import {
+  addDaysToDateKey,
+  getVenueNowParts,
+  venueBoundaryUtcIso,
+  wallClockDateKey,
+} from '@/lib/booking-wall-clock'
 import { getDashboardContext } from '@/lib/dashboard-context'
 
 import { DashboardClient, type RecentActivity, type ZoneOccupancy } from './dashboard-client'
@@ -26,40 +33,54 @@ export default async function Dashboard() {
 
   const businessId = access.businessId
 
-  // One clock reading for the whole page, so every window below lines up.
-  const now = new Date()
-  const todayStart = new Date(now)
-  todayStart.setHours(0, 0, 0, 0)
-  const todayStartISO = todayStart.toISOString()
-  const todayEnd = new Date(now)
-  todayEnd.setHours(23, 59, 59, 999)
-  const todayEndISO = todayEnd.toISOString()
+  let business: Record<string, unknown> | null = null
+  {
+    const withTz = await supabase
+      .from('businesses')
+      .select('id, name, agent_name, operating_hours, menu_pdf_text, timezone')
+      .eq('id', businessId)
+      .maybeSingle()
+    if (withTz.error && isTimezoneSchemaError(withTz.error.message)) {
+      const fallback = await supabase
+        .from('businesses')
+        .select('id, name, agent_name, operating_hours, menu_pdf_text')
+        .eq('id', businessId)
+        .maybeSingle()
+      business = (fallback.data as Record<string, unknown> | null) ?? null
+    } else {
+      business = (withTz.data as Record<string, unknown> | null) ?? null
+    }
+  }
 
-  // The stat cards used to carry hardcoded deltas ("+18%", "-0.6s"). A restaurant
-  // owner reads those as measurements. These are the windows the real ones come
-  // from — the same clock time yesterday, so a half-finished day is compared
-  // against half a day.
-  const yesterdayStart = new Date(todayStart)
-  yesterdayStart.setDate(yesterdayStart.getDate() - 1)
-  const yesterdayStartISO = yesterdayStart.toISOString()
-  const yesterdaySameTime = new Date(now)
-  yesterdaySameTime.setDate(yesterdaySameTime.getDate() - 1)
-  const yesterdaySameTimeISO = yesterdaySameTime.toISOString()
+  if (!business) {
+    redirect('/onboarding')
+  }
+
+  const timeZone = resolveBusinessTimezone(
+    typeof business.timezone === 'string' ? business.timezone : null,
+  )
+
+  // Venue calendar day windows — never server-local setHours / browser TZ.
+  const nowParts = getVenueNowParts(timeZone)
+  const todayKey = wallClockDateKey(nowParts)
+  const yesterdayKey = addDaysToDateKey(todayKey, -1)
+  const todayStartISO = venueBoundaryUtcIso(`${todayKey}T00:00:00`, timeZone)
+  const todayEndISO = venueBoundaryUtcIso(`${todayKey}T23:59:59`, timeZone)
+  const yesterdayStartISO = venueBoundaryUtcIso(`${yesterdayKey}T00:00:00`, timeZone)
+  // Same clock time yesterday in the venue (for half-day comparisons).
+  const yesterdaySameTimeISO = venueBoundaryUtcIso(
+    `${yesterdayKey}T${String(nowParts.hour).padStart(2, '0')}:${String(nowParts.minute).padStart(2, '0')}:00`,
+    timeZone,
+  )
 
   // None of these depend on each other, so they go out together: run as a
   // waterfall they cost the sum of five round trips before the page can paint.
   const [
-    { data: business },
     { count: activeChatsCount, error: conversationsCountError },
     { data: conversationRows, error: conversationIdsError },
     { data: zonesData },
     { data: todayAppts },
   ] = await Promise.all([
-    supabase
-      .from('businesses')
-      .select('id, name, agent_name, operating_hours, menu_pdf_text')
-      .eq('id', businessId)
-      .maybeSingle(),
     supabase
       .from('conversations')
       .select('*', { count: 'exact', head: true })
@@ -81,12 +102,14 @@ export default async function Dashboard() {
       .lte('scheduled_at', todayEndISO),
   ])
 
-  if (!business) {
-    redirect('/onboarding')
-  }
-
-  const businessDisplayName = business.name?.trim() || 'your restaurant'
-  const conciergeName = business.agent_name?.trim() || 'AI Concierge'
+  const businessDisplayName =
+    typeof business.name === 'string' && business.name.trim()
+      ? business.name.trim()
+      : 'your restaurant'
+  const conciergeName =
+    typeof business.agent_name === 'string' && business.agent_name.trim()
+      ? business.agent_name.trim()
+      : 'AI Concierge'
 
   const activeChats = conversationsCountError ? 0 : (activeChatsCount ?? 0)
 

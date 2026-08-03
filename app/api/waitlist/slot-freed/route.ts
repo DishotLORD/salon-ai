@@ -1,5 +1,10 @@
 import { NextResponse } from 'next/server'
 
+import {
+  isTimezoneSchemaError,
+  resolveBusinessTimezone,
+  type CanadianBusinessTimezone,
+} from '@/lib/business-timezone'
 import { scheduledAtToWallClock } from '@/lib/booking-wall-clock'
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
 import { createClient } from '@/lib/supabase-server'
@@ -63,7 +68,8 @@ export async function POST(request: Request) {
   }
 
   let businessId: string
-  let dateKey: string
+  let dateKey = ''
+  let freedScheduledAt: string | null = null
 
   if (appointmentId) {
     /*
@@ -89,9 +95,7 @@ export async function POST(request: Request) {
     }
 
     businessId = String(appt.business_id)
-    // scheduled_at is a UTC timestamp; the queue is keyed on the venue's own
-    // calendar date, which is what scheduledAtToWallClock produces.
-    dateKey = wallClockDateOf(String(appt.scheduled_at ?? ''))
+    freedScheduledAt = String(appt.scheduled_at ?? '')
   } else {
     businessId = deletedBusinessId
     dateKey = deletedDateKey
@@ -102,14 +106,37 @@ export async function POST(request: Request) {
    * readable only for a business the caller belongs to, so a row coming back is
    * proof of membership. For the appointment shape it was already proven above.
    */
-  const { data: business } = await supabase
-    .from('businesses')
-    .select('name, email')
-    .eq('id', businessId)
-    .maybeSingle()
+  let business: Record<string, unknown> | null = null
+  {
+    const withTz = await supabase
+      .from('businesses')
+      .select('name, email, timezone')
+      .eq('id', businessId)
+      .maybeSingle()
+    if (withTz.error && isTimezoneSchemaError(withTz.error.message)) {
+      const fallback = await supabase
+        .from('businesses')
+        .select('name, email')
+        .eq('id', businessId)
+        .maybeSingle()
+      business = (fallback.data as Record<string, unknown> | null) ?? null
+    } else {
+      business = (withTz.data as Record<string, unknown> | null) ?? null
+    }
+  }
 
   if (!business) {
     return NextResponse.json({ error: 'not_found' }, { status: 404 })
+  }
+
+  const timeZone = resolveBusinessTimezone(
+    typeof business.timezone === 'string' ? business.timezone : null,
+  )
+
+  if (freedScheduledAt != null) {
+    // scheduled_at is a UTC timestamp; the queue is keyed on the venue's own
+    // calendar date, which is what scheduledAtToWallClock produces.
+    dateKey = wallClockDateOf(freedScheduledAt, timeZone)
   }
 
   // Admin client from here: the queue holds other guests' contact details, which
@@ -119,7 +146,7 @@ export async function POST(request: Request) {
     businessId,
     dateKey,
     restaurantName: business.name ? String(business.name) : 'the restaurant',
-    ownerEmail: business.email ? String(business.email) : null,
+    ownerEmail: typeof business.email === 'string' ? business.email : null,
   })
 
   return NextResponse.json(outcome, { headers: { 'Cache-Control': 'no-store' } })
@@ -127,7 +154,10 @@ export async function POST(request: Request) {
 
 const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/
 
-function wallClockDateOf(scheduledAt: string): string {
-  const wallClock = scheduledAtToWallClock(scheduledAt) ?? scheduledAt
+function wallClockDateOf(
+  scheduledAt: string,
+  timeZone: CanadianBusinessTimezone,
+): string {
+  const wallClock = scheduledAtToWallClock(scheduledAt, timeZone) ?? scheduledAt
   return wallClock.slice(0, 10)
 }

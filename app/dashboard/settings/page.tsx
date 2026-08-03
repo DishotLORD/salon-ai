@@ -7,6 +7,15 @@ import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
 
 import { DashboardOceanNav } from '@/components/dashboard-ocean-nav'
 import { AddressAutocompleteField } from '@/components/address-autocomplete-field'
+import { BusinessTimezoneSelect } from '@/components/business-timezone-select'
+import {
+  isTimezoneSchemaError,
+  parseBusinessTimezoneInput,
+  resolveBusinessTimezone,
+  suggestTimezoneFromAddress,
+  type CanadianBusinessTimezone,
+} from '@/lib/business-timezone'
+import { assertTimezoneChangeAllowed } from '@/lib/business-timezone-change'
 import {
   SETTINGS_CATEGORIES,
   settingsIndexFont,
@@ -86,10 +95,16 @@ import {
 import { ColorSwatchPicker } from '@/components/color-swatch-picker'
 
 const BUSINESS_SELECT_WITH_BOOKING =
+  'id, name, email, phone, business_type, address, timezone, system_prompt, agent_name, language, menu_pdf_text, operating_hours, booking_settings, notification_settings'
+const BUSINESS_SELECT_WITH_BOOKING_NO_TZ =
   'id, name, email, phone, business_type, address, system_prompt, agent_name, language, menu_pdf_text, operating_hours, booking_settings, notification_settings'
 const BUSINESS_SELECT_WITH_HOURS =
+  'id, name, email, phone, business_type, address, timezone, system_prompt, agent_name, language, menu_pdf_text, operating_hours, notification_settings'
+const BUSINESS_SELECT_WITH_HOURS_NO_TZ =
   'id, name, email, phone, business_type, address, system_prompt, agent_name, language, menu_pdf_text, operating_hours, notification_settings'
 const BUSINESS_SELECT_BASE =
+  'id, name, email, phone, business_type, address, timezone, system_prompt, agent_name, language, menu_pdf_text, notification_settings'
+const BUSINESS_SELECT_BASE_NO_TZ =
   'id, name, email, phone, business_type, address, system_prompt, agent_name, language, menu_pdf_text, notification_settings'
 
 type TabId = 'general' | 'ai' | 'menu' | 'notifications' | 'widget' | 'billing'
@@ -533,6 +548,9 @@ function SettingsPageInner() {
   const [businessPhone, setBusinessPhone] = useState('')
   const [businessEmail, setBusinessEmail] = useState('')
   const [businessAddress, setBusinessAddress] = useState('')
+  const [businessTimezone, setBusinessTimezone] = useState<CanadianBusinessTimezone | ''>('')
+  const [initialTimezone, setInitialTimezone] = useState<string | null>(null)
+  const [timezoneSchemaReady, setTimezoneSchemaReady] = useState(true)
   const [hours, setHours] = useState<OperatingHours>(DEFAULT_OPERATING_HOURS)
   const [hoursSchemaReady, setHoursSchemaReady] = useState(true)
   const [bookingSettings, setBookingSettings] = useState<BookingSettings>({
@@ -616,11 +634,22 @@ function SettingsPageInner() {
       let data: Record<string, unknown> | null = null
       let schemaReady = true
 
-      const withBooking = await supabase
+      let withBooking = await supabase
         .from('businesses')
         .select(BUSINESS_SELECT_WITH_BOOKING)
         .eq('user_id', userId)
         .maybeSingle()
+
+      if (isTimezoneSchemaError(withBooking.error?.message)) {
+        setTimezoneSchemaReady(false)
+        withBooking = await supabase
+          .from('businesses')
+          .select(BUSINESS_SELECT_WITH_BOOKING_NO_TZ)
+          .eq('user_id', userId)
+          .maybeSingle()
+      } else if (!withBooking.error) {
+        setTimezoneSchemaReady(true)
+      }
 
       if (!isMounted) return
 
@@ -630,14 +659,22 @@ function SettingsPageInner() {
         setBookingSettings(parseBookingSettings(data.booking_settings))
       } else if (isBookingSettingsSchemaError(withBooking.error?.message)) {
         setBookingSettingsSchemaReady(false)
-        const withHours = await supabase
+        let withHours = await supabase
           .from('businesses')
           .select(BUSINESS_SELECT_WITH_HOURS)
           .eq('user_id', userId)
           .maybeSingle()
+        if (isTimezoneSchemaError(withHours.error?.message)) {
+          setTimezoneSchemaReady(false)
+          withHours = await supabase
+            .from('businesses')
+            .select(BUSINESS_SELECT_WITH_HOURS_NO_TZ)
+            .eq('user_id', userId)
+            .maybeSingle()
+        }
         if (!isMounted) return
         if (!withHours.error && withHours.data) {
-          data = withHours.data as Record<string, unknown>
+          data = withHours.data as unknown as Record<string, unknown>
         } else if (isOperatingHoursSchemaError(withHours.error?.message)) {
           schemaReady = false
           const fallback = await supabase
@@ -647,10 +684,10 @@ function SettingsPageInner() {
             .maybeSingle()
           if (!isMounted) return
           if (!fallback.error && fallback.data) {
-            data = fallback.data as Record<string, unknown>
+            data = fallback.data as unknown as Record<string, unknown>
           }
         } else if (withHours.data) {
-          data = withHours.data as Record<string, unknown>
+          data = withHours.data as unknown as Record<string, unknown>
         }
       } else if (isOperatingHoursSchemaError(withBooking.error?.message)) {
         schemaReady = false
@@ -662,7 +699,7 @@ function SettingsPageInner() {
           .maybeSingle()
         if (!isMounted) return
         if (!fallback.error && fallback.data) {
-          data = fallback.data as Record<string, unknown>
+          data = fallback.data as unknown as Record<string, unknown>
         }
       }
 
@@ -674,6 +711,22 @@ function SettingsPageInner() {
         setBusinessPhone((data.phone as string) ?? '')
         setBusinessType((data.business_type as BusinessType) ?? 'restaurant')
         setBusinessAddress((data.address as string) ?? '')
+        {
+          const tz = resolveBusinessTimezone(
+            typeof data.timezone === 'string' ? data.timezone : null,
+          )
+          // Show empty until confirmed when DB null and address is not clearly Alberta
+          const stored = typeof data.timezone === 'string' ? data.timezone : null
+          setInitialTimezone(stored)
+          if (stored) {
+            setBusinessTimezone(tz)
+          } else {
+            const suggested = suggestTimezoneFromAddress(
+              typeof data.address === 'string' ? data.address : null,
+            )
+            setBusinessTimezone(suggested ?? '')
+          }
+        }
         if (data.system_prompt) setSystemPrompt(data.system_prompt as string)
         if (data.agent_name) setAgentName(data.agent_name as string)
         setLanguage(normalizeLanguagePreference(data.language))
@@ -1077,7 +1130,29 @@ function SettingsPageInner() {
       return
     }
 
-    const basePayload = {
+    const tzParsed = parseBusinessTimezoneInput(businessTimezone)
+    if (!tzParsed.ok) {
+      setSaveError(tzParsed.message)
+      setIsSaving(false)
+      return
+    }
+
+    // Changing the venue zone must not silently reinterpret live future bookings
+    // or waitlist rows. scheduled_at is never rewritten.
+    if (timezoneSchemaReady && businessRowId) {
+      const tzGate = await assertTimezoneChangeAllowed(supabase, {
+        businessId: businessRowId,
+        currentTimezone: initialTimezone,
+        nextTimezone: tzParsed.timezone,
+      })
+      if (!tzGate.ok) {
+        setSaveError(tzGate.message)
+        setIsSaving(false)
+        return
+      }
+    }
+
+    const basePayload: Record<string, unknown> = {
       user_id: userId,
       name: businessName,
       email: businessEmail,
@@ -1089,13 +1164,16 @@ function SettingsPageInner() {
       language,
       notification_settings: notificationSettings,
     }
+    if (timezoneSchemaReady) {
+      basePayload.timezone = tzParsed.timezone
+    }
 
     const payloadWithHours = { ...basePayload, operating_hours: hours }
 
     let requestError: { message?: string } | null = null
     let hoursSaveSkipped = false
 
-    const persist = async (payload: typeof basePayload & { operating_hours?: OperatingHours }) => {
+    const persist = async (payload: Record<string, unknown>) => {
       if (businessRowId) {
         return supabase.from('businesses').update(payload).eq('id', businessRowId)
       }
@@ -1165,6 +1243,9 @@ function SettingsPageInner() {
     }
 
     setHoursSchemaReady(true)
+    if (timezoneSchemaReady) {
+      setInitialTimezone(tzParsed.timezone)
+    }
 
     setSaveSucceeded(true)
     if (saveSuccessTimerRef.current) {
@@ -1493,8 +1574,25 @@ function SettingsPageInner() {
 
           <AddressAutocompleteField
             value={businessAddress}
-            onChange={setBusinessAddress}
+            onChange={(next) => {
+              setBusinessAddress(next)
+              if (!businessTimezone) {
+                const suggested = suggestTimezoneFromAddress(next)
+                if (suggested) setBusinessTimezone(suggested)
+              }
+            }}
             hint="Start typing an address in Canada, or enter it manually."
+          />
+
+          <BusinessTimezoneSelect
+            id="settings-business-timezone"
+            value={businessTimezone}
+            onChange={setBusinessTimezone}
+            hint={
+              initialTimezone && businessTimezone && businessTimezone !== initialTimezone
+                ? 'Timezone can only change when there are no upcoming reservations and no live waitlist guests. Existing bookings keep their absolute time and are never rewritten.'
+                : 'Use the timezone where this restaurant operates. Never the timezone of the device you are using.'
+            }
           />
 
           <div style={{ ...glassCard, padding: 16 }}>

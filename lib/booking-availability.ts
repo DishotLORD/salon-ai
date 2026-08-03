@@ -9,17 +9,17 @@ import {
   addDaysToDateKey,
   formatWallClock,
   formatWallClockLabel,
-  getCalgaryNowParts,
   inferDateKeyFromText,
   isNaiveWallClock,
   parseTimeFromText,
   parseWallClock,
-  scheduledAtToWallClock,
+  resolveWallClockToUtc,
   snapWallClockToSlotInterval,
   wallClockDateKey,
   wallClockToMinutesOfDay,
   type WallClockParts,
 } from '@/lib/booking-wall-clock'
+import type { CanadianBusinessTimezone } from '@/lib/business-timezone'
 import {
   BOOKING_SLOT_MINUTES,
   formatHoursRangeLabel,
@@ -63,7 +63,7 @@ export function logAvailabilityDebug(
     '[booking-availability]',
     event,
     JSON.stringify({
-      businessTz: 'America/Edmonton',
+      venueTimezone: payload.timeZone ?? payload.timezone ?? null,
       ...payload,
     }),
   )
@@ -107,15 +107,14 @@ export function bookingToInterval(
   scheduledAt: string,
   durationMinutes: number,
 ): BookingInterval | null {
-  // A naive string here is ALREADY a Calgary wall clock — every `existing`
-  // list is pre-normalized by loadBusinessBookingContext / loadFreshBookingsForDay.
-  // Re-running it through scheduledAtToWallClock would re-interpret the digits
-  // as UTC and shift every booking 6-7 hours earlier, corrupting capacity
-  // counts (phantom free tables at busy times, phantom blocks at quiet ones).
-  const normalized = isNaiveWallClock(scheduledAt)
-    ? scheduledAt.trim()
-    : scheduledAtToWallClock(scheduledAt) ?? scheduledAt
-  const parts = parseWallClock(normalized)
+  // `scheduledAt` here is ALREADY venue wall-clock digits — every `existing`
+  // list is pre-normalized in the venue zone by loadBusinessBookingContext /
+  // loadFreshBookingsForDay. So this stays pure digit arithmetic and needs no
+  // timezone of its own: re-interpreting the digits here would shift every
+  // booking by the venue offset and corrupt capacity counts (phantom free
+  // tables at busy times, phantom blocks at quiet ones).
+  if (!isNaiveWallClock(scheduledAt)) return null
+  const parts = parseWallClock(scheduledAt.trim())
   if (!parts) return null
   const startMin = wallClockToMinutesOfDay(parts)
   return {
@@ -229,6 +228,18 @@ function slotPassesNowFilter(
   return true
 }
 
+/**
+ * Skip a slot whose wall clock the venue's clocks jump over on a spring-forward
+ * night. Offering 02:30 and then refusing to book it would be a dead end, so the
+ * hour is simply absent from the list — which is what actually happens locally.
+ */
+function slotExistsInVenue(
+  parts: WallClockParts,
+  timeZone: CanadianBusinessTimezone,
+): boolean {
+  return resolveWallClockToUtc(formatWallClock(parts), timeZone).ok
+}
+
 function collectSlotsForZone(params: {
   dateKey: string
   range: TimelineRange
@@ -237,10 +248,21 @@ function collectSlotsForZone(params: {
   settings: BookingSettings
   zone: DiningZone
   partySize: number
+  timeZone: CanadianBusinessTimezone
   now?: WallClockParts
   excludeAppointmentId?: string
 }): AvailableSlot[] {
-  const { dateKey, range, existing, settings, zone, partySize, now, excludeAppointmentId } = params
+  const {
+    dateKey,
+    range,
+    existing,
+    settings,
+    zone,
+    partySize,
+    timeZone,
+    now,
+    excludeAppointmentId,
+  } = params
   const durationMinutes = zone.turnover_minutes || settings.default_duration_minutes
   const slots = buildTimeSlots({ ...range, step: settings.slot_interval_minutes })
   const open: AvailableSlot[] = []
@@ -254,6 +276,7 @@ function collectSlotsForZone(params: {
     if (!slotPassesNowFilter(dateKey, startMin, now, settings.min_notice_minutes)) continue
 
     const parts = wallClockPartsForSlot(dateKey, startMin)
+    if (!slotExistsInVenue(parts, timeZone)) continue
     const candidate: BookingInterval = {
       dateKey,
       startMin,
@@ -288,6 +311,7 @@ export function getOpenSlotsForDate(params: {
   existing: ExistingBooking[]
   settings: BookingSettings
   durationMinutes?: number
+  timeZone: CanadianBusinessTimezone
   now?: WallClockParts
   excludeAppointmentId?: string
   zones?: DiningZone[]
@@ -300,6 +324,7 @@ export function getOpenSlotsForDate(params: {
     existing,
     settings,
     durationMinutes = settings.default_duration_minutes,
+    timeZone,
     now,
     excludeAppointmentId,
     zones,
@@ -323,7 +348,7 @@ export function getOpenSlotsForDate(params: {
   if (!range) {
     logAvailabilityDebug('no_operating_hours', {
       queryDateKey: dateKey,
-      calgaryNow: now ? wallClockDateKey(now) : getCalgaryNowParts(),
+      venueNow: now ? wallClockDateKey(now) : null,
     })
     return []
   }
@@ -359,6 +384,7 @@ export function getOpenSlotsForDate(params: {
         settings,
         zone,
         partySize,
+        timeZone,
         now,
         excludeAppointmentId,
       })) {
@@ -372,13 +398,13 @@ export function getOpenSlotsForDate(params: {
     merged.sort((a, b) => a.startMinutes - b.startMinutes || (a.zoneName ?? '').localeCompare(b.zoneName ?? ''))
     logAvailabilityDebug('open_slots', {
       queryDateKey: dateKey,
-      calgaryNow: now ? formatWallClock(now) : formatWallClock(getCalgaryNowParts()),
+      venueNow: now ? formatWallClock(now) : null,
       partySize: params.partySize,
       zoneId: params.zoneId ?? null,
       existingBookings: existing.map((b) => ({
         id: b.id,
         raw: b.scheduled_at,
-        wallClock: scheduledAtToWallClock(b.scheduled_at),
+        wallClock: b.scheduled_at,
         status: b.status,
         zone_id: b.zone_id ?? null,
       })),
@@ -397,6 +423,7 @@ export function getOpenSlotsForDate(params: {
     if (!slotPassesNowFilter(dateKey, startMin, now, settings.min_notice_minutes)) continue
 
     const parts = wallClockPartsForSlot(dateKey, startMin)
+    if (!slotExistsInVenue(parts, timeZone)) continue
     const candidate: BookingInterval = {
       dateKey,
       startMin,
@@ -415,12 +442,12 @@ export function getOpenSlotsForDate(params: {
 
   logAvailabilityDebug('open_slots', {
     queryDateKey: dateKey,
-    calgaryNow: now ? formatWallClock(now) : formatWallClock(getCalgaryNowParts()),
+    venueNow: now ? formatWallClock(now) : null,
     partySize: params.partySize,
     existingBookings: existing.map((b) => ({
       id: b.id,
       raw: b.scheduled_at,
-      wallClock: scheduledAtToWallClock(b.scheduled_at),
+      wallClock: b.scheduled_at,
       status: b.status,
     })),
     openSlotCount: open.length,
@@ -436,6 +463,7 @@ export function isSlotAvailable(params: {
   operatingHours: OperatingHours
   existing: ExistingBooking[]
   settings: BookingSettings
+  timeZone: CanadianBusinessTimezone
   durationMinutes?: number
   now?: WallClockParts
   excludeAppointmentId?: string
@@ -454,6 +482,7 @@ export function isSlotAvailable(params: {
     existing: params.existing,
     settings: params.settings,
     durationMinutes: params.durationMinutes,
+    timeZone: params.timeZone,
     now: params.now,
     excludeAppointmentId: params.excludeAppointmentId,
     zones: params.zones,
@@ -474,6 +503,7 @@ export function pickZoneForSlot(
   operatingHours: OperatingHours,
   existing: ExistingBooking[],
   settings: BookingSettings,
+  timeZone: CanadianBusinessTimezone,
   preferredZoneId?: string | null,
   now?: WallClockParts,
 ): DiningZone | null {
@@ -487,6 +517,7 @@ export function pickZoneForSlot(
     settings,
     zones,
     partySize,
+    timeZone,
     now,
   })
   const startMin = wallClockToMinutesOfDay(parts)
@@ -509,6 +540,7 @@ export function findNearestOpenSlots(params: {
   operatingHours: OperatingHours
   existing: ExistingBooking[]
   settings: BookingSettings
+  timeZone: CanadianBusinessTimezone
   durationMinutes?: number
   limit?: number
   now?: WallClockParts
@@ -545,6 +577,7 @@ export function findNearestOpenSlots(params: {
       existing: params.existing,
       settings: params.settings,
       durationMinutes: duration,
+      timeZone: params.timeZone,
       now: params.now,
       zones: params.zones,
       partySize: params.partySize,
@@ -608,6 +641,7 @@ export function buildAvailabilityPromptSection(params: {
   settings: BookingSettings
   targetDateKey: string
   partySize: number
+  timeZone: CanadianBusinessTimezone
   /** When false, partySize is only a placeholder for slot math — guest has not said a number yet. */
   partySizeKnown?: boolean
   preferredWallClock?: string | null
@@ -626,6 +660,7 @@ export function buildAvailabilityPromptSection(params: {
     existing: params.existing,
     settings: params.settings,
     durationMinutes: duration,
+    timeZone: params.timeZone,
     now: params.now,
     zones: hasZones ? zones : undefined,
     partySize: params.partySize,
@@ -707,6 +742,7 @@ export function buildAvailabilityPromptSection(params: {
       operatingHours: params.operatingHours,
       existing: params.existing,
       settings: params.settings,
+      timeZone: params.timeZone,
       durationMinutes: duration,
       now: params.now,
       zones: hasZones ? zones : undefined,
@@ -736,6 +772,7 @@ export function buildAvailabilityPromptSection(params: {
         operatingHours: params.operatingHours,
         existing: params.existing,
         settings: params.settings,
+        timeZone: params.timeZone,
         durationMinutes: duration,
         limit: 8,
         now: params.now,

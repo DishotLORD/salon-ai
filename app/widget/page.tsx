@@ -5,6 +5,11 @@ import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 
 import { supabase } from '@/lib/supabase'
+import {
+  DEFAULT_BUSINESS_TIMEZONE,
+  resolveBusinessTimezone,
+  type CanadianBusinessTimezone,
+} from '@/lib/business-timezone'
 import { formatPhoneInput, validatePhoneInput } from '@/lib/phone-input'
 import {
   DEFAULT_WIDGET_THEME,
@@ -38,7 +43,11 @@ type WidgetMessage = {
 }
 
 /** Google Calendar link for a confirmed booking (restaurant-local times). */
-function googleCalendarUrl(card: BookingCard, businessName: string | null): string | null {
+function googleCalendarUrl(
+  card: BookingCard,
+  businessName: string | null,
+  timeZone: string,
+): string | null {
   if (!card.rawDate || !card.rawTime) return null
   const dateDigits = card.rawDate.replace(/-/g, '')
   const [h, m] = card.rawTime.split(':').map(Number)
@@ -75,7 +84,7 @@ function googleCalendarUrl(card: BookingCard, businessName: string | null): stri
     action: 'TEMPLATE',
     text: title,
     dates: `${start}/${end}`,
-    ctz: 'America/Edmonton',
+    ctz: timeZone,
     ...(details ? { details } : {}),
     ...(businessName ? { location: businessName } : {}),
   })
@@ -489,6 +498,8 @@ function WidgetPageInner() {
   const isEmbed = searchParams.get('embed') === '1'
   const [businessName, setBusinessName] = useState<string | null>(null)
   const [conciergeName, setConciergeName] = useState<string>(DEFAULT_CONCIERGE_NAME)
+  const [venueTimezone, setVenueTimezone] =
+    useState<CanadianBusinessTimezone>(DEFAULT_BUSINESS_TIMEZONE)
   const [widgetTheme, setWidgetTheme] = useState<WidgetTheme>(DEFAULT_WIDGET_THEME)
   const [launcherColor, setLauncherColor] = useState<string | null>(null)
 
@@ -767,6 +778,7 @@ function WidgetPageInner() {
           agentName?: unknown
           theme?: unknown
           launcherColor?: unknown
+          timezone?: unknown
         }
         if (cancelled) return
 
@@ -779,6 +791,9 @@ function WidgetPageInner() {
 
         setBusinessName(nextName)
         setConciergeName(nextConcierge)
+        if (typeof meta.timezone === 'string' && meta.timezone.trim()) {
+          setVenueTimezone(resolveBusinessTimezone(meta.timezone.trim()))
+        }
         setWidgetTheme(parseWidgetTheme(meta.theme))
         setLauncherColor(parseWidgetLauncherColor(meta.launcherColor))
         setMessages((prev) =>
@@ -1539,7 +1554,7 @@ function WidgetPageInner() {
                             </div>
                           ))}
                           {(() => {
-                            const calUrl = googleCalendarUrl(c, businessName)
+                            const calUrl = googleCalendarUrl(c, businessName, venueTimezone)
                             return calUrl ? (
                               <a
                                 href={calUrl}

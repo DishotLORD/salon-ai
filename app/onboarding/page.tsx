@@ -4,7 +4,14 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 
+import { BusinessTimezoneSelect } from '@/components/business-timezone-select'
 import { WELCOME_SPLASH_FLAG } from '@/components/dashboard-splash'
+import {
+  isTimezoneSchemaError,
+  parseBusinessTimezoneInput,
+  suggestTimezoneFromAddress,
+  type CanadianBusinessTimezone,
+} from '@/lib/business-timezone'
 import { defaultSystemPrompt } from '@/lib/default-system-prompt'
 import { supabase } from '@/lib/supabase'
 import { tabContent } from '@/lib/ocean-motion'
@@ -55,6 +62,7 @@ export default function OnboardingPage() {
   const [businessName, setBusinessName] = useState('')
   const [businessType, setBusinessType] = useState<BusinessTypeValue>('restaurant')
   const [address, setAddress] = useState('')
+  const [timezone, setTimezone] = useState<CanadianBusinessTimezone | ''>('')
 
   // Step 2
   const [email, setEmail] = useState('')
@@ -81,7 +89,7 @@ export default function OnboardingPage() {
   const progressPercent = (step / TOTAL_STEPS) * 100
 
   const canNext = step === 1
-    ? businessName.trim().length > 0
+    ? businessName.trim().length > 0 && Boolean(timezone)
     : step === 2
       ? email.trim().length > 0 && agentName.trim().length > 0
       : true
@@ -106,11 +114,19 @@ export default function OnboardingPage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) { router.replace('/auth/login'); return }
 
-      const { error: insertError } = await supabase.from('businesses').insert({
+      const tzParsed = parseBusinessTimezoneInput(timezone)
+      if (!tzParsed.ok) {
+        setError(tzParsed.message)
+        setSaving(false)
+        return
+      }
+
+      const insertPayload = {
         user_id: user.id,
         name: businessName.trim(),
         business_type: businessType,
         address: address.trim() || null,
+        timezone: tzParsed.timezone,
         email: email.trim() || null,
         phone: phone.trim() || null,
         agent_name: agentName.trim() || `${businessName.trim()} Concierge`,
@@ -119,7 +135,12 @@ export default function OnboardingPage() {
           businessType,
           agentName.trim() || `${businessName.trim()} Concierge`,
         ),
-      })
+      }
+      let { error: insertError } = await supabase.from('businesses').insert(insertPayload)
+      if (insertError && isTimezoneSchemaError(insertError.message)) {
+        const { timezone: _tz, ...withoutTz } = insertPayload
+        ;({ error: insertError } = await supabase.from('businesses').insert(withoutTz))
+      }
 
       if (insertError) {
         setError(insertError.message ?? 'Could not save. Please try again.')
@@ -270,13 +291,26 @@ export default function OnboardingPage() {
                   <input
                     type="text"
                     value={address}
-                    onChange={(e) => setAddress(e.target.value)}
+                    onChange={(e) => {
+                      const next = e.target.value
+                      setAddress(next)
+                      if (!timezone) {
+                        const suggested = suggestTimezoneFromAddress(next)
+                        if (suggested) setTimezone(suggested)
+                      }
+                    }}
                     placeholder="e.g. 123 Main St, Calgary, AB"
                     style={inputStyle}
                     onFocus={e => (e.target.style.borderColor = 'rgba(56,189,248,0.5)')}
                     onBlur={e => (e.target.style.borderColor = 'var(--ocean-border)')}
                   />
                 </div>
+                <BusinessTimezoneSelect
+                  id="onboarding-timezone"
+                  value={timezone}
+                  onChange={setTimezone}
+                  hint="Confirm the timezone where this restaurant operates. Alberta addresses default to Mountain Time."
+                />
               </div>
             )}
 

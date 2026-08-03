@@ -5,7 +5,8 @@ import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
 import { useCallback, useMemo, useRef, useState } from 'react'
 
 import type { Reservation, ResStatus } from '@/components/reservation-card'
-import { formatCalgaryTime, isSameCalgaryCalendarDay } from '@/lib/booking-wall-clock'
+import { formatVenueTime, isSameVenueCalendarDay } from '@/lib/booking-wall-clock'
+import type { CanadianBusinessTimezone } from '@/lib/business-timezone'
 import { bk, bkCard } from '@/lib/bookings-compact-ui'
 import { timeFromDate, toDateIso } from '@/lib/reservation-schedule'
 import {
@@ -38,8 +39,8 @@ const STATUS_STYLE: Record<ResStatus, { bg: string; border: string; color: strin
   'no-show': { bg: 'var(--bk-surface)', border: 'var(--bk-border)', color: 'var(--bk-body)' },
 }
 
-function fmtTime(d: Date) {
-  return formatCalgaryTime(d)
+function fmtTime(d: Date, timeZone: CanadianBusinessTimezone) {
+  return formatVenueTime(d, timeZone)
 }
 
 type PlacedReservation = {
@@ -54,12 +55,13 @@ function placeReservations(
   list: Reservation[],
   range: TimelineRange,
   slots: ReturnType<typeof buildTimeSlots>,
+  timeZone: CanadianBusinessTimezone,
 ): PlacedReservation[] {
   const active = list.filter((r) => r.status !== 'cancelled')
   const bySlot = new Map<string, Reservation[]>()
 
   for (const r of active) {
-    const tv = timeFromDate(r.scheduledAt)
+    const tv = timeFromDate(r.scheduledAt, timeZone)
     const snapped = snapToGrid(timeToTimelineMinutes(tv, range), range, slots)
     const arr = bySlot.get(snapped) ?? []
     arr.push(r)
@@ -70,7 +72,7 @@ function placeReservations(
   for (const [, group] of bySlot) {
     const sorted = [...group].sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime())
     const laneCount = sorted.length
-    const tv = timeFromDate(sorted[0].scheduledAt)
+    const tv = timeFromDate(sorted[0].scheduledAt, timeZone)
     const snapped = snapToGrid(timeToTimelineMinutes(tv, range), range, slots)
     const topPct = timelinePercent(timeToTimelineMinutes(snapped, range), range)
     sorted.forEach((reservation, lane) => {
@@ -85,6 +87,8 @@ export type BookingsDayTimelineProps = {
   date: Date
   reservations: Reservation[]
   range: TimelineRange | null
+  /** Venue IANA zone — appointment times and the day filter are cut in it. */
+  timeZone: CanadianBusinessTimezone
   peaks?: PeakBand[]
   loading: boolean
   reduceMotion: boolean | null
@@ -97,6 +101,7 @@ export function BookingsDayTimeline({
   date,
   reservations,
   range,
+  timeZone,
   loading,
   reduceMotion,
   onReschedule,
@@ -120,13 +125,13 @@ export function BookingsDayTimeline({
 
   const dayReservations = useMemo(
     () =>
-      reservations.filter((r) => isSameCalgaryCalendarDay(r.scheduledAt, date)),
+      reservations.filter((r) => isSameVenueCalendarDay(r.scheduledAt, date, timeZone)),
     [reservations, date],
   )
 
   const placed = useMemo(
-    () => (range ? placeReservations(dayReservations, range, slots) : []),
-    [dayReservations, range, slots],
+    () => (range ? placeReservations(dayReservations, range, slots, timeZone) : []),
+    [dayReservations, range, slots, timeZone],
   )
 
   const pickTimeFromClientY = useCallback(
@@ -365,7 +370,7 @@ export function BookingsDayTimeline({
                     <div style={{ fontSize: bk.caption, fontWeight: 700, color: 'var(--bk-head)' }}>
                       {isDragging && dragTime
                         ? dragTime
-                        : fmtTime(r.scheduledAt)}{' '}
+                        : fmtTime(r.scheduledAt, timeZone)}{' '}
                       · {r.guestName}
                     </div>
                     <div

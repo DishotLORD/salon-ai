@@ -3,7 +3,7 @@ import { Resend } from 'resend'
 
 import { isSlotAvailable } from '@/lib/booking-availability'
 import { loadBusinessBookingContext } from '@/lib/booking-load'
-import { getCalgaryNowParts } from '@/lib/booking-wall-clock'
+import { formatDateKeyLabel, getVenueNowParts } from '@/lib/booking-wall-clock'
 import { escapeHtml } from '@/lib/escape-html'
 
 /**
@@ -54,11 +54,7 @@ function toWallClock(dateKey: string, time: string): string | null {
 }
 
 function formatDate(dateKey: string): string {
-  return new Date(`${dateKey}T12:00:00`).toLocaleDateString('en-US', {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
-  })
+  return formatDateKeyLabel(dateKey)
 }
 
 function formatTime(time: string): string {
@@ -101,7 +97,7 @@ export async function notifyWaitlistForFreedSlot(params: {
     // Loaded after the cancellation has been written, so the freed slot really
     // does read as free.
     const ctx = await loadBusinessBookingContext(supabase, businessId)
-    const now = getCalgaryNowParts()
+    const now = getVenueNowParts(ctx.timezone)
 
     const winner = entries.find((entry) => {
       const wallClock = toWallClock(entry.requested_date, entry.requested_time)
@@ -111,6 +107,7 @@ export async function notifyWaitlistForFreedSlot(params: {
         operatingHours: ctx.operatingHours,
         existing: ctx.existingBookings,
         settings: ctx.bookingSettings,
+        timeZone: ctx.timezone,
         now,
         zones: ctx.zones,
         partySize: entry.party_size ?? 2,

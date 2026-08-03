@@ -11,6 +11,11 @@ import {
   type AnalyticsZone,
 } from '@/lib/analytics'
 import { resolveBusinessAccess } from '@/lib/business-access'
+import { loadBusinessTimezone } from '@/lib/business-timezone-load'
+import {
+  DEFAULT_BUSINESS_TIMEZONE,
+  type CanadianBusinessTimezone,
+} from '@/lib/business-timezone'
 import { parseBookingSettings, type BookingSettings } from '@/lib/booking-settings'
 import { supabase } from '@/lib/supabase'
 
@@ -53,6 +58,9 @@ export default function AnalyticsPage() {
   const [settings, setSettings] = useState<BookingSettings | null>(null)
   const [conversationIds, setConversationIds] = useState<string[] | null>(null)
   const [messageStats, setMessageStats] = useState<MessageStats | null>(null)
+  const [timeZone, setTimeZone] = useState<CanadianBusinessTimezone>(
+    DEFAULT_BUSINESS_TIMEZONE,
+  )
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -83,6 +91,11 @@ export default function AnalyticsPage() {
         }
         return
       }
+
+      // Every bucket below is cut on the venue's calendar, so the zone has to
+      // be known before the report is built.
+      const venueTz = await loadBusinessTimezone(supabase, biz.id)
+      if (!cancelled) setTimeZone(venueTz)
 
       const [apptRes, zoneRes, convRes] = await Promise.all([
         supabase
@@ -153,7 +166,10 @@ export default function AnalyticsPage() {
     }
   }, [conversationIds, range])
 
-  const report = useMemo(() => buildAnalyticsReport(rows, zones, range), [rows, zones, range])
+  const report = useMemo(
+    () => buildAnalyticsReport(rows, zones, range, timeZone),
+    [rows, zones, range, timeZone],
+  )
   const avgCheck = settings?.average_check ?? 0
 
   const saveAvgCheck = useCallback(
