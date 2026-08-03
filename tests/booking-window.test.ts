@@ -16,6 +16,7 @@ import {
   evaluateBookableWindow,
   latestBookableDateKey,
 } from '../lib/booking-window.ts'
+import type { DiningZone } from '../lib/dining-zones.ts'
 import { parseOperatingHours } from '../lib/operating-hours.ts'
 
 const TODAY = '2026-08-03'
@@ -48,8 +49,15 @@ const SETTINGS_60 = parseBookingSettings({
   max_advance_days: 60,
 })
 
-const ZONE = {
+/**
+ * Annotated rather than inferred: the fixture is then checked against the real
+ * DiningZone on every build, so a column added to the production type shows up
+ * here as a compile error instead of silently making the test fixture a shape
+ * the code under test never actually receives.
+ */
+const ZONE: DiningZone = {
   id: 'zone-main',
+  business_id: 'biz-test-booking-window',
   name: 'Main dining',
   slug: 'main-dining',
   max_concurrent_parties: 50,

@@ -1,0 +1,22 @@
+{
+  "//": [
+    "Type configuration for the test suite only. The application build never reads this file.",
+    "",
+    "Two things differ from tsconfig.json, and only two. Tests are included, because the",
+    "app config excludes them. And `.ts` import specifiers are allowed, because the test",
+    "files name them explicitly ('../lib/foo.ts') — the app's bundler resolution rejects",
+    "that spelling, which is the reason tests were excluded there in the first place.",
+    "",
+    "Everything else, `paths` above all, is inherited. `@/*` therefore means the same",
+    "thing in a test as it does in the code under test, which is what lets the suite run",
+    "against production modules without any of them being rewritten for the runner's sake."
+  ],
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "incremental": false
+  },
+  "include": ["tests/**/*.ts", "lib/**/*.ts", "types/**/*.ts"],
+  "exclude": ["node_modules"]
+}
