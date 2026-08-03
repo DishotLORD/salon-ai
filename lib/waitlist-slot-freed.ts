@@ -52,6 +52,24 @@ export function slotFreedRequestForStatusChange(
 }
 
 /**
+ * Request only when a booking *becomes* a releasing status.
+ *
+ * The Edit → Save path can write `cancelled` onto a row that was already
+ * cancelled (or no-show). Calling slot-freed on every save would re-ask the
+ * queue. The quick Cancel button never had that problem — it always moved from
+ * a live status — so this transition gate is what makes Edit match that intent:
+ * previous must not already free a table, next must.
+ */
+export function slotFreedRequestForStatusTransition(
+  appointmentId: string | null | undefined,
+  previousStatus: string | null | undefined,
+  nextStatus: string | null | undefined,
+): SlotFreedByAppointment | null {
+  if (statusFreesATable(previousStatus)) return null
+  return slotFreedRequestForStatusChange(appointmentId, nextStatus)
+}
+
+/**
  * Request for a deletion. Null when the context was not captured — better no
  * notification than one aimed at the wrong venue or the wrong day.
  *
