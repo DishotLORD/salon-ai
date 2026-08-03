@@ -15,6 +15,7 @@ import {
   PasswordToggle,
 } from '@/components/auth-shell'
 import { WELCOME_SPLASH_FLAG } from '@/components/dashboard-splash'
+import { checkAuthEmail } from '@/lib/auth-email'
 import { NEXT_PARAM, safeNextPath } from '@/lib/auth-routes'
 import { supabase } from '@/lib/supabase'
 import { fs, radius } from '@/lib/marketing-scale'
@@ -37,10 +38,27 @@ function LoginContent() {
   const [loading, setLoading] = useState(false)
 
   const handleLogin = async () => {
-    setLoading(true)
     setError('')
     setInfo('')
-    const { data, error: signInError } = await supabase.auth.signInWithPassword({ email, password })
+
+    /*
+     * Normalize before Supabase sees it. The field used to be passed verbatim,
+     * so an address carrying a trailing space from a phone keyboard — or a
+     * zero-width space from a copy-paste — was rejected as malformed while
+     * looking perfectly correct on screen. Asking the guest to fix a character
+     * they cannot see is not a fix, so it is removed instead.
+     */
+    const emailCheck = checkAuthEmail(email)
+    if (!emailCheck.ok) {
+      setError(emailCheck.message ?? 'Enter your email address.')
+      return
+    }
+
+    setLoading(true)
+    const { data, error: signInError } = await supabase.auth.signInWithPassword({
+      email: emailCheck.email,
+      password,
+    })
     if (signInError) {
       setError(signInError.message)
       setLoading(false)
@@ -71,11 +89,21 @@ function LoginContent() {
   const handleForgotPassword = async () => {
     setError('')
     setInfo('')
-    if (!email.trim()) { setError('Enter your email above so we can send a reset link.'); return }
+    // Same normalization as sign-in: a reset link sent to an address with an
+    // invisible character in it goes nowhere.
+    const emailCheck = checkAuthEmail(email)
+    if (!emailCheck.email) {
+      setError('Enter your email above so we can send a reset link.')
+      return
+    }
+    if (!emailCheck.ok) {
+      setError(emailCheck.message ?? 'Enter a valid email address.')
+      return
+    }
     // Must land on the page that can actually set a new password. Pointed at
     // /auth/login, the link brought the owner back to a form they already could
     // not get past.
-    const { error: resetError } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+    const { error: resetError } = await supabase.auth.resetPasswordForEmail(emailCheck.email, {
       redirectTo: `${window.location.origin}/auth/reset-password`,
     })
     if (resetError) { setError(resetError.message); return }

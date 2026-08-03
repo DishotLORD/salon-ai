@@ -9,15 +9,24 @@ import { useState } from 'react'
 
 import { WELCOME_SPLASH_FLAG } from '@/components/dashboard-splash'
 import { defaultSystemPrompt } from '@/lib/default-system-prompt'
+import { checkAuthEmail } from '@/lib/auth-email'
 import { supabase } from '@/lib/supabase'
 import { VENUE_TYPE_OPTIONS, type VenueType } from '@/lib/venue-types'
 
 // ─── Validation ───────────────────────────────────────────────
 
 const RULES = {
+  /*
+   * Delegated to lib/auth-email.ts rather than matched here. The regex this
+   * replaces used `[^\s@]+`, and `\s` in JavaScript does not match a zero-width
+   * space, a word joiner or a directional mark — so an address carrying one of
+   * those out of a copy-paste passed this check and was then rejected by
+   * Supabase as malformed. An account could even be created with an invisible
+   * character in its address and never be signed into again.
+   */
   email: {
-    test: (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v.trim()),
-    message: 'Enter a valid email address',
+    test: (v: string) => checkAuthEmail(v).ok,
+    message: 'Enter a valid email address, like name@example.com.',
   },
   password: {
     test: (v: string) => v.length >= 6 && /^[\x20-\x7EÀ-ɏ]+$/.test(v),
@@ -398,7 +407,22 @@ export default function SignupPage() {
     setLoading(true)
     setError('')
     try {
-      const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({ email: authEmail, password })
+      /*
+       * Normalize before the account exists. Creating one with a stray
+       * zero-width space in the address is worse than being turned away: the
+       * account is real, the guest cannot type the address that opens it, and
+       * password reset goes to a mailbox that never receives it.
+       */
+      const emailCheck = checkAuthEmail(authEmail)
+      if (!emailCheck.ok) {
+        setError(emailCheck.message ?? 'Enter a valid email address.')
+        setLoading(false)
+        return
+      }
+      const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
+        email: emailCheck.email,
+        password,
+      })
       if (signUpErr) { setError(signUpErr.message); setLoading(false); return }
       const userId = signUpData.user?.id
       if (!userId) { setError('Could not create account. Please try again.'); setLoading(false); return }
@@ -407,7 +431,9 @@ export default function SignupPage() {
         name: businessName.trim(),
         business_type: businessType,
         address: address.trim() || null,
-        email: authEmail.trim(),
+        // The same normalized address the account was created with — this is
+        // where owner notifications are sent.
+        email: emailCheck.email,
         phone: phone.trim() || null,
         agent_name: agentName.trim(),
         system_prompt: defaultSystemPrompt(businessName, businessType, agentName.trim() || null),
