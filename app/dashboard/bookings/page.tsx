@@ -34,6 +34,10 @@ import { oceanTransition } from '@/lib/ocean-motion'
 import { supabase } from '@/lib/supabase'
 import { card, t } from '@/lib/dashboard-theme'
 import { bk, bkCard } from '@/lib/bookings-compact-ui'
+import {
+  compactRowAllowsDelete,
+  requestConfirmedDelete,
+} from '@/lib/bookings-compact-delete'
 import { computeBookingKpi, isInDisplayMonth } from '@/lib/booking-kpi'
 import { parsePartySizeFromServiceName } from '@/lib/appointment-service-name'
 import {
@@ -2969,6 +2973,28 @@ export default function BookingsPage() {
                 }}
               >
                 ✕
+              </button>
+            )}
+            {compactRowAllowsDelete(r.status) && (
+              <button
+                type="button"
+                title="Delete reservation"
+                aria-label={`Delete reservation for ${r.guestName}`}
+                onClick={() => {
+                  requestConfirmedDelete(r.id, deleteReservation)
+                }}
+                style={{
+                  padding: '3px 6px',
+                  borderRadius: 5,
+                  border: '1px solid var(--bk-danger-border)',
+                  background: 'var(--bk-danger-bg)',
+                  color: 'var(--bk-danger)',
+                  fontSize: 9,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                Delete
               </button>
             )}
             <button
