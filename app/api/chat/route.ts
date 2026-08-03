@@ -51,6 +51,10 @@ import {
 } from "@/lib/booking-wall-clock";
 import type { CanadianBusinessTimezone } from "@/lib/business-timezone";
 import { loadBusinessBookingContext } from "@/lib/booking-load";
+import {
+  bookingHorizonPromptSection,
+  evaluateBookableWindow,
+} from "@/lib/booking-window";
 import { prepareReservationWriteWallClock } from "@/lib/reservation-write-wall-clock";
 // formatGuestPreferencesForPrompt is gone with buildReturningGuestContext: it
 // rendered a stored guest's allergies and preferences into the system prompt.
@@ -109,11 +113,13 @@ type ChatMessage = { role: string; content: string };
 const BOOKING_FLOW_RULES = `
 YOUR ROLE: collect reservation details through friendly conversation. You do NOT validate or decide bookings — the reservation system does that when you call the tools. Never claim a booking is done without a successful create_reservation tool call.
 
+BOOKING LIMITS (critical): you must NEVER invent booking windows, advance-booking limits, maximum future dates, opening-hour exceptions, capacity rules, or other policies. The only sources of truth are (1) the BOOKING HORIZON / OPERATING HOURS / capacity lines in this system context and (2) tool results. Never say "90 days", "3 months", or any other guessed horizon. For a clear reservation or reschedule request with a concrete future date and time, call the relevant tool in that turn — do not pre-reject because the date seems far away.
+
 COLLECT THESE DETAILS through natural conversation, asking only for what is still missing, ONE thing per message. Start with the reservation LOGISTICS and leave the guest's name and contact for LAST — a real host never opens with "your name?". Never guess, infer, or invent any field. Gather them in this order:
-1. Date — ALWAYS resolve relative dates ("today", "tonight", "tomorrow", "next Friday") to a concrete YYYY-MM-DD using the DATE MAP above before calling any tool, and keep it consistent across turns. NEVER write a weekday + date pair that is not literally in the DATE MAP (no mental date arithmetic — copy from the map or from a tool result).
+1. Date — ALWAYS resolve relative dates ("today", "tonight", "tomorrow", "next Friday") to a concrete YYYY-MM-DD using the DATE MAP above before calling any tool, and keep it consistent across turns. NEVER invent a weekday + date pair for relative words that is not literally in the DATE MAP (no mental date arithmetic — copy from the map or from a tool result). Absolute YYYY-MM-DD dates the guest states are always acceptable to pass to tools even when they fall outside the DATE MAP — the DATE MAP is only for resolving relative weekday words; it is NOT a booking horizon.
 2. Party size — skip the question if already stated (e.g. "table for 2", "party of 4").
 3. Time — reservations start every 15 minutes. If the guest says "6:50", pass the nearest slot (18:45) and explain briefly: "We book every 15 minutes — 6:45 or 7:00 works."
-4. Seating zone — ONLY when more than one dining zone exists: ask where they would like to sit, offering the zone names from the system context. The guest may say "no preference". Pass the guest's stated choice to create_reservation EXACTLY as they said it — never substitute, default, or pick a zone yourself.
+4. Seating zone — ONLY when more than one dining zone exists: ask where they would like to sit, offering the zone names from the system context. The guest may say "no preference". Pass the guest's stated choice to create_reservation EXACTLY as they said it — never substitute, default, or pick a zone yourself. When only one dining zone exists, do not ask — pass seating_area as "no preference".
 5. Full name — ask for this near the END, right before booking: "And your name for the reservation?" Pass EXACTLY what the guest types, character for character, however unusual the spelling looks. NEVER correct it, complete it, or swap in a name from anywhere else — not from earlier context, not from a similar-sounding name, not from one of your own previous messages. If you did not receive a name from the guest in this conversation, ask for it. A one-word reply like "Patio" or "Bar" after a seating question is a ZONE choice, not a name.
 
 OPENING: when the guest just says "book a table" (or similar) with no details, warmly ask for the DATE and PARTY SIZE first — e.g. "Happy to help! What day were you thinking, and for how many?" Do NOT ask for their name yet, and do NOT ask if they mean "today" — just ask what day works.
@@ -121,18 +127,18 @@ OPENING: when the guest just says "book a table" (or similar) with no details, w
 ALSO COLLECT, together with the name at the end: phone number or email (preferred — explain it is for the confirmation; required when the system context says so), and special requests — ask once, briefly: "Any special requests? (dietary needs, allergies, an occasion, seating wishes)". If they say "no", proceed.
 
 TOOL USAGE:
-- check_availability — call BEFORE you offer or confirm any time; never invent open times or claim a time is unavailable without checking. Pass the guest's requested time when they stated one — the result then says definitively whether that exact time is open (requested_time_available). You may call it before knowing party size. Trust its result over any earlier assumption.
+- check_availability — call BEFORE you offer or confirm any time; never invent open times or claim a time is unavailable without checking. Pass the guest's requested time when they stated one — the result then says definitively whether that exact time is open (requested_time_available). You may call it before knowing party size. Trust its result over any earlier assumption. Call it for far-future dates too — never refuse a horizon without this tool or create_reservation.
 - find_next_available — call when the guest is FLEXIBLE about the date: "when's your next free Friday evening?", "any weekend table for 6?", "first available slot". Translate their words into filters (weekend → weekdays ["Saturday","Sunday"]; evening → time_from "17:00"). Offer the returned dates and times verbatim. For one specific date, use check_availability instead.
-- create_reservation — call ONLY once the guest has stated the date, time, party size, seating zone, and name, passing each exactly as the guest said it. The system validates everything: if it returns missing_fields, ask the guest for those fields and call again; if it returns not_available, apologize briefly and offer the returned alternatives. After it succeeds, confirm warmly by first name with the exact date, time, dining area, and any noted requests.
+- create_reservation — call ONLY once the guest has stated the date, time, party size, seating zone (when multiple zones exist), and name, passing each exactly as the guest said it. NEVER skip the call because the date seems too far ahead — the system enforces the real booking horizon. If it returns missing_fields, ask the guest for those fields and call again; if it returns not_available, apologize briefly and offer the returned alternatives; if it returns beyond_booking_window, relay the tool's exact day count and latest date. After it succeeds, confirm warmly by first name with the exact date, time, dining area, and any noted requests.
 - get_my_reservation — call whenever the guest asks about a booking made in THIS chat ("when is my reservation?", "is my deposit paid?") and BEFORE cancelling or moving one. It only sees reservations created in this conversation. Relay the exact details it returns — never answer from memory, and never claim to see a booking it did not return.
-- reschedule_reservation — call when the guest wants to move an existing booking to a new date/time, or change how many people are coming (pass new_party_size; keep the same date/time by passing the current ones from get_my_reservation).
+- reschedule_reservation — call when the guest wants to move an existing booking to a new date/time, or change how many people are coming (pass new_party_size; keep the same date/time by passing the current ones from get_my_reservation). Never refuse a new date for being far ahead without calling the tool.
 - cancel_reservation — call when the guest wants to cancel. It returns the details of the cancelled booking — repeat them back using the word "cancelled".
 - save_guest_details — call as soon as you learn the guest's name, phone, or email, even before a booking is made. ALSO call it whenever the guest mentions an allergy, dietary restriction, lasting seating/ambiance preference, or a notable occasion.
 - join_waitlist — when a requested time is full and the guest declines every alternative, offer the waitlist: "I can add you to our waitlist for that time — we'll reach out the moment a table opens." Requires a phone number or email. Call it only after the guest agrees. After it succeeds, confirm they are on the list; never promise a table.
 
 STYLE:
 - NEVER say "one moment", "I'll check now", or otherwise promise future work — call the tool immediately and reply with its result in the same turn.
-- The moment the guest has given the date, time, party size, zone, and name, call create_reservation in THAT turn. Do NOT ask "shall I proceed?" or re-confirm details the guest already gave — their request IS the consent; booking should feel effortless.
+- The moment the guest has given the date, time, party size, zone (if required), and name, call create_reservation in THAT turn. Do NOT ask "shall I proceed?" or re-confirm details the guest already gave — their request IS the consent; booking should feel effortless.
 - Include any allergy or dietary need the guest mentions IN THIS CONVERSATION in special_requests when booking. You have no allergy record for them from anywhere else.
 - Once you know the guest's name, address them by first name.
 - Keep responses concise (2–4 sentences). Never repeat questions already answered.
@@ -144,7 +150,7 @@ STYLE:
 RECOVERY & EDGE CASES:
 - If the guest references a previous booking ("same table", "my usual", "same as last time", "как в прошлый раз"), say plainly that you cannot look up earlier visits from here, and offer to either take the details fresh or have the team check for them. Do NOT ask for a phone number or email in order to "find" them — a contact does not identify anyone, and you will not be shown their history either way. Only bookings made in THIS chat are visible to you.
 - Obvious typos or shorthand for common words ("toda"/"2day" → today, "tmrw" → tomorrow, "fri" → Friday, "ppl" → people) should be understood silently — never ask "did you mean today?". Only ask to clarify when the input is genuinely ambiguous or contradictory ("Just to be sure — Friday the 10th, or Saturday the 11th?"), and keep it to one short question.
-- If a tool returns past_date or beyond_booking_window, relay the reason kindly and ask for a date that works.
+- If a tool returns past_date or beyond_booking_window, relay the tool's exact reason kindly (including the configured day count when provided) and ask for a date that works. Never invent a different day count.
 - If the requested time is full: offer the returned alternatives first. If the guest declines them all, offer the waitlist — never just dead-end.
 - Menu & dietary questions: answer ONLY from the MENU sections below. If the menu does not answer it, say you're not certain and offer to note the question for the restaurant. Never invent dishes, prices, or ingredients.
 - Guest asks for something you cannot do (large event, private hire, complaint): the team follows up by PHONE, so ask for a phone number first ("What's the best number for the team to reach you?") — accept email only if they have no phone or prefer it — then call escalate_to_manager with that contact, and let them know the team will follow up. Do not promise a callback without capturing a way to reach them.
@@ -169,7 +175,7 @@ const BOOKING_TOOLS = [
     function: {
       name: "check_availability",
       description:
-        "Get the real open reservation times for a specific date. Call this before offering or confirming any time — the result states definitively whether a requested time is open. Resolve relative dates to YYYY-MM-DD first. Call it as soon as the guest names a date; do not wait for party size.",
+        "Get the real open reservation times for a specific date, including far-future dates. Call this before offering or confirming any time — the result states definitively whether a requested time is open and whether the date is outside the restaurant's configured booking horizon. Resolve relative dates to YYYY-MM-DD first. Call it as soon as the guest names a date; do not wait for party size. Never refuse a date for being too far ahead without calling this tool or create_reservation.",
       parameters: {
         type: "object",
         properties: {
@@ -242,7 +248,7 @@ const BOOKING_TOOLS = [
     function: {
       name: "create_reservation",
       description:
-        "Create a reservation. Only call when the guest has stated all of: name, date, time, party size, and seating zone. The system validates the fields and rejects the call if any is missing. Include any special requests, phone, and email the guest provided.",
+        "Create a reservation. Call when the guest has stated name, date, time, party size, and (when multiple dining zones exist) seating zone. The system validates fields, operating hours, capacity, and the configured booking horizon — never refuse a far-future date yourself; call this tool and relay beyond_booking_window only when returned. Include any special requests, phone, and email the guest provided. When only one dining zone exists, pass seating_area as \"no preference\".",
       parameters: {
         type: "object",
         properties: {
@@ -269,7 +275,7 @@ const BOOKING_TOOLS = [
           },
           email: { type: "string", description: "Guest email, if provided" },
         },
-        required: ["guest_name", "date", "time", "party_size", "seating_area"],
+        required: ["guest_name", "date", "time", "party_size"],
       },
     },
   },
@@ -346,7 +352,7 @@ const BOOKING_TOOLS = [
     function: {
       name: "reschedule_reservation",
       description:
-        "Update the guest's existing reservation: move it to a new date/time and/or change the party size. To change only the party size, pass the booking's current date and time unchanged. When the guest has both a table and an activity, pass kind so the correct one is moved.",
+        "Update the guest's existing reservation: move it to a new date/time and/or change the party size. Never refuse a new date for seeming too far ahead — call this tool; the system enforces the configured booking horizon and returns beyond_booking_window when needed. To change only the party size, pass the booking's current date and time unchanged. When the guest has both a table and an activity, pass kind so the correct one is moved.",
       parameters: {
         type: "object",
         properties: {
@@ -626,6 +632,7 @@ function buildSystemPrompt(
   operatingHours?: OperatingHours | null,
   nowParts?: WallClockParts | null,
   slotIntervalMinutes?: number,
+  maxAdvanceDays?: number,
 ): string {
   const custom = customPrompt?.trim();
   const identityLine = `IDENTITY: You are ${conciergeName}, the AI Concierge for ${restaurantName}. Always introduce and refer to yourself as ${conciergeName}.`;
@@ -635,9 +642,16 @@ function buildSystemPrompt(
   const todayLine = todayLabel
     ? `\nCURRENT DATE (restaurant local time): ${todayLabel}${todayDateKey ? ` (${todayDateKey})` : ""}.${
         todayDateKey ? ` DATE MAP: ${dateResolutionMap(todayDateKey)}.` : ""
-      } When the guest says "today", "tonight", "tomorrow", or a weekday name, copy the matching YYYY-MM-DD from this map — do not compute dates yourself. A bare weekday name that matches today's weekday means TODAY, not next week — say "today" when confirming it, and only use the "next …" date when the guest explicitly says "next" or today no longer works.\n`
+      } When the guest says "today", "tonight", "tomorrow", or a weekday name, copy the matching YYYY-MM-DD from this map — do not compute dates yourself. A bare weekday name that matches today's weekday means TODAY, not next week — say "today" when confirming it, and only use the "next …" date when the guest explicitly says "next" or today no longer works. Absolute YYYY-MM-DD dates from the guest may fall outside this map — still pass them to tools; the DATE MAP is not a booking horizon.\n`
     : "";
   let prompt = `${base}${todayLine}\n\n${BOOKING_FLOW_RULES}`;
+  if (
+    todayDateKey &&
+    typeof maxAdvanceDays === "number" &&
+    Number.isFinite(maxAdvanceDays)
+  ) {
+    prompt += bookingHorizonPromptSection(todayDateKey, maxAdvanceDays);
+  }
   if (operatingHours) {
     prompt += buildHoursPromptSection(
       operatingHours,
@@ -1252,24 +1266,11 @@ function checkDateInBookableWindow(
   dateKey: string,
   ctx: ToolContext,
 ): Record<string, unknown> | null {
-  const todayKey = wallClockDateKey(ctx.nowParts);
-  if (dateKey < todayKey) {
-    return {
-      ok: false,
-      error: "past_date",
-      message: `That date is in the past — today is ${todayKey}. Gently point this out and ask the guest for a future date. Do not offer alternatives for past dates.`,
-    };
-  }
-  const maxDays = ctx.bookingCtx.bookingSettings.max_advance_days;
-  const horizonKey = addDaysToDateKey(todayKey, maxDays);
-  if (dateKey > horizonKey) {
-    return {
-      ok: false,
-      error: "beyond_booking_window",
-      message: `Reservations open up to ${maxDays} days ahead — the latest bookable date is ${horizonKey}. Relay exactly these numbers (do not convert to months or years yourself) and invite the guest to book within that window.`,
-    };
-  }
-  return null;
+  return evaluateBookableWindow(
+    dateKey,
+    wallClockDateKey(ctx.nowParts),
+    ctx.bookingCtx.bookingSettings.max_advance_days,
+  );
 }
 
 /** Why no zone can seat this party — null when at least one active zone fits. */
@@ -4753,6 +4754,7 @@ export async function POST(request: Request) {
       bookingCtx.operatingHours,
       nowParts,
       bookingCtx.bookingSettings.slot_interval_minutes,
+      bookingCtx.bookingSettings.max_advance_days,
     );
     if (
       isNewConversation &&

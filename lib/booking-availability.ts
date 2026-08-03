@@ -685,9 +685,9 @@ export function buildAvailabilityPromptSection(params: {
     const hrs = Math.floor(params.settings.min_notice_minutes / 60)
     const mins = params.settings.min_notice_minutes % 60
     const noticeLabel = hrs > 0 ? `${hrs}h${mins > 0 ? ` ${mins}m` : ''}` : `${mins}m`
-    section += `BOOKING WINDOW: requires at least ${noticeLabel} notice; guests may book up to ${params.settings.max_advance_days} days ahead.\n`
+    section += `BOOKING WINDOW (configured for this restaurant): requires at least ${noticeLabel} notice; guests may book up to ${params.settings.max_advance_days} days ahead. Never invent a different horizon.\n`
   } else {
-    section += `BOOKING WINDOW: guests may book up to ${params.settings.max_advance_days} days ahead.\n`
+    section += `BOOKING WINDOW (configured for this restaurant): guests may book up to ${params.settings.max_advance_days} days ahead. Never invent a different horizon.\n`
   }
 
   if (dayHours.closed) {
