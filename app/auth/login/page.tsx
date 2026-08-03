@@ -89,8 +89,13 @@ function LoginContent() {
   const handleForgotPassword = async () => {
     setError('')
     setInfo('')
-    // Same normalization as sign-in: a reset link sent to an address with an
-    // invisible character in it goes nowhere.
+    /*
+     * Same gate as sign-in: normalize (strip invisibles, trim, lowercase) then
+     * validate. The public Supabase `/recover` call used to run next, and it
+     * rejects a few placeholder addresses — notably `test@test.com` — as
+     * "invalid" even though that same address signs in. `/api/auth/forgot-password`
+     * uses the admin recovery link instead, after this same check.
+     */
     const emailCheck = checkAuthEmail(email)
     if (!emailCheck.email) {
       setError('Enter your email above so we can send a reset link.')
@@ -100,13 +105,21 @@ function LoginContent() {
       setError(emailCheck.message ?? 'Enter a valid email address.')
       return
     }
-    // Must land on the page that can actually set a new password. Pointed at
-    // /auth/login, the link brought the owner back to a form they already could
-    // not get past.
-    const { error: resetError } = await supabase.auth.resetPasswordForEmail(emailCheck.email, {
-      redirectTo: `${window.location.origin}/auth/reset-password`,
+    const res = await fetch('/api/auth/forgot-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: emailCheck.email }),
     })
-    if (resetError) { setError(resetError.message); return }
+    let payload: { error?: string } = {}
+    try {
+      payload = (await res.json()) as { error?: string }
+    } catch {
+      /* non-JSON — fall through to a generic message */
+    }
+    if (!res.ok) {
+      setError(payload.error ?? 'Could not send a reset link. Please try again.')
+      return
+    }
     setInfo('Reset link sent — check your inbox. It works once, and expires in an hour.')
   }
 

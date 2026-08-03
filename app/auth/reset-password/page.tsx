@@ -14,6 +14,7 @@ import {
   MailIcon,
   PasswordToggle,
 } from '@/components/auth-shell'
+import { checkAuthEmail } from '@/lib/auth-email'
 import { supabase } from '@/lib/supabase'
 import { fs, radius } from '@/lib/marketing-scale'
 
@@ -188,18 +189,36 @@ function ResetPasswordContent() {
   const handleResend = useCallback(async () => {
     setError('')
     setInfo('')
-    const address = resendEmail.trim()
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(address)) {
+    /*
+     * Same `checkAuthEmail` gate as login and signup — not a second regex on a
+     * bare trim(). The reset mail itself is sent by `/api/auth/forgot-password`,
+     * which uses the admin recovery link so placeholder addresses the public
+     * `/recover` endpoint rejects (e.g. `test@test.com`) still get a link.
+     */
+    const emailCheck = checkAuthEmail(resendEmail)
+    if (!emailCheck.email) {
       setError('Enter the email address on your account')
       return
     }
+    if (!emailCheck.ok) {
+      setError(emailCheck.message ?? 'Enter a valid email address, like name@example.com.')
+      return
+    }
     setResending(true)
-    const { error: resetError } = await supabase.auth.resetPasswordForEmail(address, {
-      redirectTo: `${window.location.origin}/auth/reset-password`,
+    const res = await fetch('/api/auth/forgot-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: emailCheck.email }),
     })
+    let payload: { error?: string } = {}
+    try {
+      payload = (await res.json()) as { error?: string }
+    } catch {
+      /* non-JSON */
+    }
     setResending(false)
-    if (resetError) {
-      setError(resetError.message)
+    if (!res.ok) {
+      setError(payload.error ?? 'Could not send a reset link. Please try again.')
       return
     }
     setInfo('New link sent. It is good for one hour.')
