@@ -1,7 +1,7 @@
 -- Owner-confirmed operating hours. DB defaults alone must not count as
 -- launch-ready: new businesses get NULL here until they explicitly Save hours.
--- Existing venues that already have seating or appointments are backfilled so
--- The Garage and other live restaurants stay operational without a rewrite.
+-- Existing venues that already have seating or appointments are backfilled, so
+-- restaurants already taking bookings stay operational without a rewrite.
 
 alter table public.businesses
   add column if not exists operating_hours_confirmed_at timestamptz;

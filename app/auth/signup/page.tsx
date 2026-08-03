@@ -613,7 +613,7 @@ export default function SignupPage() {
                   </div>
                   <PField
                     label="Venue name" value={businessName} onChange={setBusinessName}
-                    placeholder="e.g. The Garage" autoFocus
+                    placeholder="e.g. Riverstone Kitchen" autoFocus
                     validateKey="businessName" forceError={forceErrors}
                   />
                   <PSelectField

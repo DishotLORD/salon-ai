@@ -78,7 +78,7 @@ describe('launch readiness — valid configuration', () => {
     assert.ok(r.missingSteps.some((s) => s.id === 'menu'))
   })
 
-  it('null timezone still resolves and stays ready when otherwise configured (Garage)', () => {
+  it('null timezone still resolves and stays ready when otherwise configured (legacy Alberta venue)', () => {
     const r = evaluateBusinessReadiness({
       timezone: null,
       operatingHours: OPEN_HOURS,

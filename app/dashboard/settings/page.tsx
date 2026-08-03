@@ -60,6 +60,11 @@ import {
 } from '@/lib/default-system-prompt'
 import type { BusinessReadiness } from '@/lib/business-readiness'
 import { validateZoneCapacityInput } from '@/lib/business-readiness'
+import {
+  categorySave,
+  operatingHoursPatch,
+  WORKING_HOURS_SAVE,
+} from '@/lib/settings-save-policy'
 import { parseDiningZoneRow, slugifyZoneName } from '@/lib/dining-zones'
 import { MENU_PDF_MAX_BYTES, MENU_PDF_MAX_MB } from '@/lib/menu-pdf-limits'
 import { oceanTransition, settingsPanelHeavy } from '@/lib/ocean-motion'
@@ -555,6 +560,9 @@ function SettingsPageInner() {
   const [timezoneSchemaReady, setTimezoneSchemaReady] = useState(true)
   const [hours, setHours] = useState<OperatingHours>(DEFAULT_OPERATING_HOURS)
   const [hoursConfirmed, setHoursConfirmed] = useState(false)
+  const [isSavingHours, setIsSavingHours] = useState(false)
+  const [hoursSaveSucceeded, setHoursSaveSucceeded] = useState(false)
+  const hoursSaveTimerRef = useRef<number | null>(null)
   const [hoursSchemaReady, setHoursSchemaReady] = useState(true)
   const [launchReadiness, setLaunchReadiness] = useState<BusinessReadiness | null>(null)
   const [bookingSettings, setBookingSettings] = useState<BookingSettings>({
@@ -1222,11 +1230,16 @@ function SettingsPageInner() {
       basePayload.timezone = tzParsed.timezone
     }
 
+    /*
+     * Hours are deliberately absent here. This save runs for whichever category
+     * the owner is on, and none of them — not even Restaurant, which also holds
+     * the venue name, address and phone — is a statement about opening times.
+     * Only the Working Hours panel's own Save writes them; see
+     * lib/settings-save-policy.ts and saveWorkingHours below.
+     */
     const payloadWithHours = {
       ...basePayload,
-      operating_hours: hours,
-      // Explicit Save is what makes hours launch-ready — UI defaults alone do not.
-      operating_hours_confirmed_at: new Date().toISOString(),
+      ...operatingHoursPatch(categorySave(activeCategory), hours, new Date().toISOString()),
     }
 
     let requestError: { message?: string } | null = null
@@ -1283,9 +1296,12 @@ function SettingsPageInner() {
       return
     }
 
-    if (hoursSchemaReady && activeCategory === 'restaurant') {
-      setHoursConfirmed(true)
-    }
+    /*
+     * The badge used to be flipped to "confirmed" here on any Restaurant save,
+     * whether or not the database agreed. It is now only ever set from a value
+     * that was actually read back or actually written — see refreshHoursConfirmed
+     * and saveWorkingHours.
+     */
     if (businessRowId) {
       void fetch(`/api/business/readiness?business_id=${encodeURIComponent(businessRowId)}`)
         .then((r) => (r.ok ? r.json() : null))
@@ -1338,6 +1354,107 @@ function SettingsPageInner() {
     }, 2200)
 
     setIsSaving(false)
+  }
+
+  /**
+   * The one action that may write opening hours, and the one that confirms them.
+   *
+   * Confirmation is what makes a venue publicly bookable, so it has to be a
+   * deliberate act on the hours themselves — not a side effect of saving a phone
+   * number that happens to sit in the same tab.
+   */
+  const saveWorkingHours = async () => {
+    if (isSavingHours) return
+    setSaveError('')
+    setHoursSaveSucceeded(false)
+
+    const invalid = validateOperatingHours(hours)
+    if (invalid) {
+      setSaveError(invalid)
+      return
+    }
+    if (!hoursSchemaReady) {
+      setSaveError(OPERATING_HOURS_MIGRATION_HINT)
+      return
+    }
+
+    let bizId = businessRowId
+    if (!bizId) {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      const ownerId = currentUserId ?? user?.id ?? null
+      if (ownerId) {
+        const { data: row } = await supabase
+          .from('businesses')
+          .select('id')
+          .eq('user_id', ownerId)
+          .maybeSingle()
+        bizId = row?.id ?? null
+        if (bizId) setBusinessRowId(bizId)
+      }
+    }
+    if (!bizId) {
+      setSaveError('Save the restaurant profile first (Restaurant tab).')
+      return
+    }
+
+    setIsSavingHours(true)
+    const patch = operatingHoursPatch(WORKING_HOURS_SAVE, hours, new Date().toISOString())
+
+    let result = await supabase
+      .from('businesses')
+      .update(patch)
+      .eq('id', bizId)
+      .select('operating_hours_confirmed_at')
+      .maybeSingle()
+
+    // Deployments that have not run migration 024 have the hours column but not
+    // the confirmation column. Saving the hours is still worth doing; the venue
+    // simply stays unconfirmed until the migration lands.
+    if (result.error && /operating_hours_confirmed_at/i.test(result.error.message ?? '')) {
+      const { operating_hours_confirmed_at: _confirmed, ...hoursOnly } = patch
+      const retry = await supabase.from('businesses').update(hoursOnly).eq('id', bizId)
+      if (retry.error) {
+        setSaveError(retry.error.message)
+        setIsSavingHours(false)
+        return
+      }
+      setHoursConfirmed(false)
+      setSaveError(OPERATING_HOURS_MIGRATION_HINT)
+      setIsSavingHours(false)
+      return
+    }
+
+    if (result.error) {
+      if (isOperatingHoursSchemaError(result.error.message)) {
+        setHoursSchemaReady(false)
+        setSaveError(OPERATING_HOURS_MIGRATION_HINT)
+      } else {
+        setSaveError(result.error.message)
+      }
+      setIsSavingHours(false)
+      return
+    }
+
+    // Read back rather than assumed: the badge should describe the database.
+    setHoursConfirmed(Boolean(result.data?.operating_hours_confirmed_at))
+    setHoursSaveSucceeded(true)
+    if (hoursSaveTimerRef.current) window.clearTimeout(hoursSaveTimerRef.current)
+    hoursSaveTimerRef.current = window.setTimeout(() => {
+      setHoursSaveSucceeded(false)
+      hoursSaveTimerRef.current = null
+    }, 2200)
+    setIsSavingHours(false)
+
+    void fetch(`/api/business/readiness?business_id=${encodeURIComponent(bizId)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((ready) => {
+        if (ready && typeof ready.bookingReady === 'boolean') {
+          setLaunchReadiness(ready as BusinessReadiness)
+        }
+      })
+      .catch(() => {})
   }
 
   useEffect(() => {
@@ -1727,6 +1844,44 @@ function SettingsPageInner() {
               </div>
             ) : null}
             <WorkingHoursPanel hours={hours} onChange={setHours} reduceMotion={reduceMotion} />
+            {/*
+              Hours have their own Save. The page-level Save covers the venue's
+              name, address, phone and the rest of this tab; none of those is a
+              statement about when the restaurant opens, and confirming hours is
+              what lets guests book.
+            */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'flex-end',
+                gap: 10,
+                marginTop: 14,
+              }}
+            >
+              {hoursSaveSucceeded ? (
+                <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--bk-success, #38a169)' }}>
+                  Hours saved and confirmed
+                </span>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => void saveWorkingHours()}
+                disabled={isSavingHours || !hoursSchemaReady}
+                style={{
+                  padding: '9px 16px',
+                  borderRadius: 9,
+                  border: '1px solid rgba(56,189,248,0.5)',
+                  background: isSavingHours ? 'rgba(56,189,248,0.15)' : 'rgba(56,189,248,0.9)',
+                  color: isSavingHours ? t.text : '#03111c',
+                  fontSize: 12.5,
+                  fontWeight: 700,
+                  cursor: isSavingHours || !hoursSchemaReady ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {isSavingHours ? 'Saving hours…' : 'Save working hours'}
+              </button>
+            </div>
           </div>
         </div>
       )

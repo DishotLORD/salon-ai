@@ -11,6 +11,7 @@ import {
   loadBusinessReadiness,
   validateZoneCapacityInput,
 } from '@/lib/business-readiness'
+import { isDuplicateBusinessError } from '@/lib/duplicate-business'
 import {
   isTimezoneSchemaError,
   parseBusinessTimezoneInput,
@@ -85,10 +86,17 @@ export default function OnboardingPage() {
   const [hoursConfirmed, setHoursConfirmed] = useState(false)
 
   // First zone
+  /*
+   * A name and a minimum of one are safe assumptions about any restaurant.
+   * How many people it seats, and the largest party it will take, are not — and
+   * a prefilled "40" is indistinguishable from a number the owner chose. Both
+   * start blank so the owner has to state them before the venue can open for
+   * bookings.
+   */
   const [zoneName, setZoneName] = useState('Main Dining')
-  const [capacity, setCapacity] = useState('40')
+  const [capacity, setCapacity] = useState('')
   const [minParty, setMinParty] = useState('1')
-  const [maxParty, setMaxParty] = useState('8')
+  const [maxParty, setMaxParty] = useState('')
 
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
@@ -116,35 +124,71 @@ export default function OnboardingPage() {
         if (draft.agentName) setAgentName(draft.agentName)
       }
 
-      const { data: existing } = await supabase
+      /*
+       * The confirmation column arrives with migration 024. Asking for it on a
+       * deployment that has not run it fails the whole select, and the error was
+       * being discarded — so an owner who already had a venue looked like an
+       * owner who had none, landed on the first step, and the next save tried to
+       * insert a second business for the same user.
+       *
+       * The retry drops only that column. Confirmation is then treated as
+       * absent, which is the conservative reading: without the column there is
+       * no evidence the owner ever confirmed anything, so the venue stays
+       * incomplete rather than being assumed ready.
+       */
+      const SELECT_WITH_CONFIRMATION =
+        'id, name, business_type, address, timezone, email, phone, agent_name, operating_hours, operating_hours_confirmed_at, menu_pdf_text'
+      const SELECT_WITHOUT_CONFIRMATION =
+        'id, name, business_type, address, timezone, email, phone, agent_name, operating_hours, menu_pdf_text'
+
+      let loaded = await supabase
         .from('businesses')
-        .select(
-          'id, name, business_type, address, timezone, email, phone, agent_name, operating_hours, operating_hours_confirmed_at, menu_pdf_text',
-        )
+        .select(SELECT_WITH_CONFIRMATION)
         .eq('user_id', user.id)
         .maybeSingle()
+
+      let confirmationColumnPresent = true
+      if (loaded.error && /operating_hours_confirmed_at/i.test(loaded.error.message)) {
+        confirmationColumnPresent = false
+        loaded = await supabase
+          .from('businesses')
+          .select(SELECT_WITHOUT_CONFIRMATION)
+          .eq('user_id', user.id)
+          .maybeSingle()
+      }
+
+      const existing = loaded.data as
+        | (Record<string, unknown> & { id?: string })
+        | null
 
       if (cancelled) return
 
       if (existing?.id) {
+        const str = (value: unknown): string =>
+          typeof value === 'string' ? value : ''
+        // Present only when the column exists; otherwise deliberately null, so
+        // readiness reads it as "never confirmed".
+        const confirmedAt = confirmationColumnPresent
+          ? (existing.operating_hours_confirmed_at as string | null | undefined) ?? null
+          : null
+
         setBusinessId(existing.id)
-        setBusinessName(existing.name ?? '')
+        setBusinessName(str(existing.name))
         if (existing.business_type) {
           setBusinessType(existing.business_type as VenueType)
         }
-        setAddress(existing.address ?? '')
+        setAddress(str(existing.address))
         if (
           typeof existing.timezone === 'string' &&
           existing.timezone.trim()
         ) {
           setTimezone(existing.timezone as CanadianBusinessTimezone)
         }
-        if (existing.email) setEmail(existing.email)
-        setPhone(existing.phone ?? '')
-        setAgentName(existing.agent_name ?? '')
+        if (existing.email) setEmail(str(existing.email))
+        setPhone(str(existing.phone))
+        setAgentName(str(existing.agent_name))
         setHours(parseOperatingHours(existing.operating_hours))
-        const confirmed = Boolean(existing.operating_hours_confirmed_at)
-        setHoursConfirmed(confirmed)
+        setHoursConfirmed(Boolean(confirmedAt))
 
         // Pre-migration column missing → select may error; fall back without it
         let readiness
@@ -152,12 +196,12 @@ export default function OnboardingPage() {
           readiness = await loadBusinessReadiness(supabase, existing.id)
         } catch {
           readiness = evaluateBusinessReadiness({
-            timezone: existing.timezone,
+            timezone: str(existing.timezone) || null,
             operatingHours: existing.operating_hours,
-            operatingHoursConfirmedAt: existing.operating_hours_confirmed_at,
+            operatingHoursConfirmedAt: confirmedAt,
             zones: [],
             menuItemCount: 0,
-            menuPdfText: existing.menu_pdf_text,
+            menuPdfText: str(existing.menu_pdf_text) || null,
           })
         }
 
@@ -240,6 +284,27 @@ export default function OnboardingPage() {
         .select('id')
         .maybeSingle())
     }
+
+    /*
+     * The select above is a check, not a lock. Two tabs, a double-tapped button
+     * or a retried request can both pass it and both insert. The database is the
+     * only place that can actually decide, so when it refuses on the uniqueness
+     * of user_id the answer is not an error message — the venue this owner was
+     * trying to create already exists. Load it and carry on where they left off.
+     */
+    if (insertError && isDuplicateBusinessError(insertError)) {
+      const { data: raced } = await supabase
+        .from('businesses')
+        .select('id')
+        .eq('user_id', user.id)
+        .maybeSingle()
+      if (raced?.id) {
+        setBusinessId(raced.id)
+        clearPendingVenueDraft()
+        return raced.id
+      }
+    }
+
     if (insertError || !created?.id) {
       setError(insertError?.message ?? 'Could not save. Please try again.')
       return null
@@ -525,7 +590,7 @@ export default function OnboardingPage() {
                     style={inputStyle}
                     value={businessName}
                     onChange={(e) => setBusinessName(e.target.value)}
-                    placeholder="The Garage"
+                    placeholder="Riverstone Kitchen"
                   />
                 </label>
                 <label>
