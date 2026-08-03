@@ -1302,12 +1302,19 @@ function SettingsPageInner() {
     setMenuPdfError('')
 
     type PdfMenuResponse = { text?: string; pages?: number; error?: string; usedOcr?: boolean }
+    /*
+     * The venue id rides in the query string, not the form body: the server has
+     * to know whose upload this is before it reads the body at all, otherwise it
+     * buffers the whole file for someone who may have no right to send it.
+     */
     const postPdf = async (forceOcr: boolean) => {
       const fd = new FormData()
-      fd.append('business_id', businessRowId)
       fd.append('file', file)
       if (forceOcr) fd.append('force_ocr', '1')
-      return fetch('/api/menu/pdf', { method: 'POST', body: fd })
+      return fetch(`/api/menu/pdf?business_id=${encodeURIComponent(businessRowId)}`, {
+        method: 'POST',
+        body: fd,
+      })
     }
 
     /*
