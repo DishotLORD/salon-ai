@@ -51,6 +51,7 @@ import {
 } from "@/lib/booking-wall-clock";
 import type { CanadianBusinessTimezone } from "@/lib/business-timezone";
 import { loadBusinessBookingContext } from "@/lib/booking-load";
+import { prepareReservationWriteWallClock } from "@/lib/reservation-write-wall-clock";
 // formatGuestPreferencesForPrompt is gone with buildReturningGuestContext: it
 // rendered a stored guest's allergies and preferences into the system prompt.
 import {
@@ -1759,11 +1760,25 @@ async function runCreateReservation(
   if (windowError) return { result: windowError };
 
   const interval = ctx.bookingCtx.bookingSettings.slot_interval_minutes;
-  const snapped = snapWallClockToSlotInterval(wallClock, interval);
   const requestedTime = wallClock.slice(11, 16);
-  if (snapped && snapped !== wallClock) {
-    wallClock = snapped;
+  // Resolve venue wall-clock → UTC BEFORE availability. Spring-forward gaps
+  // must return DST_GAP_MESSAGE, not a generic not_available from a missing slot.
+  const writeWall = prepareReservationWriteWallClock(
+    wallClock,
+    ctx.bookingCtx.timezone,
+    interval,
+  );
+  if (!writeWall.ok) {
+    return {
+      result: {
+        ok: false,
+        error: writeWall.error,
+        message: writeWall.message,
+      },
+    };
   }
+  wallClock = writeWall.prepared.wallClock;
+  const scheduledAt = writeWall.prepared.resolved;
 
   // The guest's chosen zone is FINAL. "no preference" leaves it null so the
   // system may assign any zone with room; a named zone is never substituted.
@@ -1922,18 +1937,7 @@ async function runCreateReservation(
     };
   }
 
-  // A wall clock the venue's clocks skip over (spring-forward) names no instant.
-  // Tell the guest instead of writing an invalid timestamp.
-  const scheduledAt = resolveWallClockToUtc(wallClock, ctx.bookingCtx.timezone);
-  if (!scheduledAt.ok) {
-    return {
-      result: {
-        ok: false,
-        error: scheduledAt.reason,
-        message: scheduledAt.message,
-      },
-    };
-  }
+  // scheduledAt was resolved before availability — reuse it (no second conversion).
   const scheduledAtIso = scheduledAt.iso;
   const svcParts = [guestName, `Party of ${partySize}`];
   if (zoneLabel) svcParts.push(zoneLabel);
@@ -2612,24 +2616,42 @@ async function runBookActivity(
 ): Promise<ToolOutcome> {
   const guestName =
     typeof args.guest_name === "string" ? args.guest_name.trim() : "";
-  const wallClock = buildWallClock(args.date, args.time);
+  const rawActivityWall = buildWallClock(args.date, args.time);
   const missing: string[] = [];
   if (!guestName) missing.push("guest_name");
-  if (!wallClock) missing.push("date/time");
-  if (missing.length > 0) {
+  if (!rawActivityWall) missing.push("date/time");
+  if (missing.length > 0 || !rawActivityWall) {
     return {
       result: {
         ok: false,
         error: "missing_fields",
-        missing,
-        message: `Ask the guest for: ${missing.join(", ")}. Do not book until they answer.`,
+        missing: missing.length > 0 ? missing : ["date/time"],
+        message: `Ask the guest for: ${(missing.length > 0 ? missing : ["date/time"]).join(", ")}. Do not book until they answer.`,
       },
     };
   }
 
-  const dateKey = wallClock!.slice(0, 10);
+  const dateKey = rawActivityWall.slice(0, 10);
   const windowError = checkDateInBookableWindow(dateKey, ctx);
   if (windowError) return { result: windowError };
+
+  // Resolve before resource availability so spring-gap is never "taken".
+  const activityWriteWall = prepareReservationWriteWallClock(
+    rawActivityWall,
+    ctx.bookingCtx.timezone,
+    ctx.bookingCtx.bookingSettings.slot_interval_minutes,
+  );
+  if (!activityWriteWall.ok) {
+    return {
+      result: {
+        ok: false,
+        error: activityWriteWall.error,
+        message: activityWriteWall.message,
+      },
+    };
+  }
+  const wallClock = activityWriteWall.prepared.wallClock;
+  const activityScheduledAt = activityWriteWall.prepared.resolved;
 
   const request = resolveActivityRequest(args.activity, ctx);
   if (!request) return noActivitiesResult();
@@ -2647,7 +2669,7 @@ async function runBookActivity(
 
   const resource = firstFreeActivity(
     ctx.bookingCtx.activities,
-    wallClock!,
+    wallClock,
     ctx.bookingCtx.existingBookings,
     request.filter,
   );
@@ -2732,20 +2754,6 @@ async function runBookActivity(
   const svcParts = [guestName, resource.name];
   if (partySize) svcParts.push(`${partySize} players`);
   const serviceName = svcParts.join(" · ").slice(0, 500);
-
-  const activityScheduledAt = resolveWallClockToUtc(
-    wallClock!,
-    ctx.bookingCtx.timezone,
-  );
-  if (!activityScheduledAt.ok) {
-    return {
-      result: {
-        ok: false,
-        error: activityScheduledAt.reason,
-        message: activityScheduledAt.message,
-      },
-    };
-  }
 
   const { data: inserted, error } = await supabaseAdmin
     .from("appointments")
@@ -3002,14 +3010,23 @@ async function runRescheduleReservation(
   const windowError = checkDateInBookableWindow(wallClock.slice(0, 10), ctx);
   if (windowError) return { result: windowError };
 
-  // Snap to the configured slot grid, same as create_reservation.
-  const snappedReschedule = snapWallClockToSlotInterval(
+  // Resolve before availability so spring-gap returns DST_GAP_MESSAGE.
+  const writeWall = prepareReservationWriteWallClock(
     wallClock,
+    ctx.bookingCtx.timezone,
     ctx.bookingCtx.bookingSettings.slot_interval_minutes,
   );
-  if (snappedReschedule && snappedReschedule !== wallClock) {
-    wallClock = snappedReschedule;
+  if (!writeWall.ok) {
+    return {
+      result: {
+        ok: false,
+        error: writeWall.error,
+        message: writeWall.message,
+      },
+    };
   }
+  wallClock = writeWall.prepared.wallClock;
+  const rescheduledAt = writeWall.prepared.resolved;
 
   const currentPartySize =
     appt.party_size && appt.party_size > 0 ? appt.party_size : 2;
@@ -3151,16 +3168,7 @@ async function runRescheduleReservation(
     };
   }
 
-  const rescheduledAt = resolveWallClockToUtc(wallClock, ctx.bookingCtx.timezone);
-  if (!rescheduledAt.ok) {
-    return {
-      result: {
-        ok: false,
-        error: rescheduledAt.reason,
-        message: rescheduledAt.message,
-      },
-    };
-  }
+  // rescheduledAt was resolved before availability — reuse it.
 
   const guestName = parseGuestNameFromServiceName(appt.service_name);
   let zoneLabel: string | null = null;
