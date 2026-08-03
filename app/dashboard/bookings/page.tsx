@@ -12,7 +12,7 @@ import { toStatusKind } from '@/lib/appointment-status'
 import { reservationCsvFilename, reservationsToCsv } from '@/lib/guest-csv'
 import {
   slotFreedRequestForDeletion,
-  slotFreedRequestForStatusChange,
+  slotFreedRequestForStatusTransition,
   type SlotFreedRequest,
 } from '@/lib/waitlist-slot-freed'
 import { BookingsLightCalendar } from '@/components/bookings-light-calendar'
@@ -1118,6 +1118,7 @@ function ReservationModal({
   activityResources,
   onAdded,
   onUpdated,
+  onOfferFreedSlot,
   initialDate,
 }: {
   mode: ModalMode
@@ -1128,6 +1129,8 @@ function ReservationModal({
   activityResources: ActivityResource[]
   onAdded: (r: Reservation) => void
   onUpdated: (r: Reservation) => void
+  /** Same waitlist path updateStatus uses — only after a successful edit save. */
+  onOfferFreedSlot?: (request: SlotFreedRequest) => void
   initialDate?: string
 }) {
   const reduceMotion = useReducedMotion()
@@ -1148,6 +1151,8 @@ function ReservationModal({
   const [tableNumber, setTableNumber] = useState('')
   const [specialRequests, setSpecialRequests] = useState('')
   const [editStatus, setEditStatus] = useState<ResStatus>('pending')
+  /** Status when the form was loaded — used to detect a real releasing transition. */
+  const [statusAtOpen, setStatusAtOpen] = useState<ResStatus>('pending')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [focusedField, setFocusedField] = useState<string | null>(null)
@@ -1208,6 +1213,7 @@ function ReservationModal({
       setTableNumber(r.tableNumber !== '—' ? r.tableNumber : '')
       setSpecialRequests(r.specialRequests)
       setEditStatus(r.status)
+      setStatusAtOpen(r.status)
       setZoneId(r.zoneId ?? diningZones[0]?.id ?? '')
       setBookingKind(r.activityId ? 'activity' : 'dining')
       setActivityId(r.activityId ?? '')
@@ -1232,6 +1238,7 @@ function ReservationModal({
         setTableNumber('')
         setSpecialRequests('')
         setEditStatus('pending')
+        setStatusAtOpen('pending')
         setZoneId(diningZones[0]?.id ?? '')
         setBookingKind('dining')
         setActivityId('')
@@ -1400,6 +1407,20 @@ function ReservationModal({
         setError(updateError.message)
         return
       }
+
+      /*
+       * Edit → Save can set Cancelled/No-show the same way the quick Cancel
+       * button does, but it used to skip the waitlist call. Only fire when the
+       * status actually moved from a live booking into a releasing one — saving
+       * an already-cancelled row must not mail the queue again. Call only after
+       * the update succeeded so a failed write frees nothing.
+       */
+      const freed = slotFreedRequestForStatusTransition(
+        editReservation.id,
+        statusAtOpen,
+        editStatus,
+      )
+      if (freed) onOfferFreedSlot?.(freed)
 
       onUpdated({
         ...editReservation,
@@ -2634,6 +2655,7 @@ export default function BookingsPage() {
 
   async function updateStatus(id: string, status: ResStatus) {
     const previous = reservations
+    const previousStatus = previous.find((r) => r.id === id)?.status
     setReservations((prev) => prev.map((r) => (r.id === id ? { ...r, status } : r)))
     setUpdateError(null)
     const { error } = await supabase.from('appointments').update({ status }).eq('id', id)
@@ -2649,9 +2671,10 @@ export default function BookingsPage() {
      * cannot read another guest's queue row or send mail, so it asks the server
      * to. Deliberately not awaited and never surfaced as an error: the status
      * change itself succeeded, and a failed courtesy email must not make the
-     * cancellation look like it failed.
+     * cancellation look like it failed. Transition gate: already cancelled /
+     * no-show must not re-notify.
      */
-    const freed = slotFreedRequestForStatusChange(id, status)
+    const freed = slotFreedRequestForStatusTransition(id, previousStatus, status)
     if (freed) offerFreedSlotToWaitlist(freed)
   }
 
@@ -3828,6 +3851,7 @@ export default function BookingsPage() {
                     )
                     setEditReservation(null)
                   }}
+                  onOfferFreedSlot={offerFreedSlotToWaitlist}
                 />
               )}
             </AnimatePresence>
