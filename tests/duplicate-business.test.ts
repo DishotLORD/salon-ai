@@ -134,11 +134,104 @@ describe('migration 025 repairs the businesses.user_id invariant', () => {
   })
 
   it('never uses CREATE INDEX CONCURRENTLY inside this transactional migration', () => {
-    assert.doesNotMatch(executable, /concurrently/)
+    // "concurrently" is allowed to appear in a RAISE EXCEPTION message body
+    // (explaining what an invalid index typically means) — only the actual
+    // CREATE [UNIQUE] INDEX ... CONCURRENTLY clause is disallowed.
+    assert.doesNotMatch(executable, /create\s+(unique\s+)?index\s+concurrently/)
   })
 
   it('runs the guard and the index creation in one transaction', () => {
     assert.match(sql, /^begin;/m)
     assert.match(sql, /^commit;/m)
+  })
+})
+
+describe('migration 025 validates its own postcondition against the catalogs', () => {
+  const raw = readFileSync(
+    new URL('../supabase/migrations/025_business_user_unique.sql', import.meta.url),
+    'utf8',
+  )
+  const sql = raw.toLowerCase()
+  const executable = sql
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('--'))
+    .join('\n')
+
+  // CREATE UNIQUE INDEX IF NOT EXISTS only checks the object name — it says
+  // nothing about whether that object actually enforces anything. The
+  // postcondition block is everything after the CREATE INDEX statement, which
+  // is where that gets checked for real, against pg_index/pg_attribute.
+  const postconditionBlock = raw.slice(
+    raw.indexOf('create unique index if not exists businesses_user_id_unique_idx'),
+  )
+  const postconditionSql = postconditionBlock.toLowerCase()
+
+  it('reads the actual index definition from pg_index, not just its name', () => {
+    assert.match(postconditionSql, /pg_index/)
+    assert.match(postconditionSql, /to_regclass\('public\.businesses_user_id_unique_idx'\)/)
+  })
+
+  it('requires indisunique', () => {
+    assert.match(postconditionSql, /not idx\.indisunique/)
+  })
+
+  it('requires indisvalid', () => {
+    assert.match(postconditionSql, /not idx\.indisvalid/)
+  })
+
+  it('requires indisready', () => {
+    assert.match(postconditionSql, /not idx\.indisready/)
+  })
+
+  it('rejects a partial index', () => {
+    assert.match(postconditionSql, /idx\.indpred is not null/)
+  })
+
+  it('rejects an expression index', () => {
+    assert.match(postconditionSql, /idx\.indexprs is not null/)
+  })
+
+  it('verifies exactly one key column', () => {
+    assert.match(postconditionSql, /idx\.indnkeyatts <> 1/)
+  })
+
+  it('resolves the key column and verifies it is businesses.user_id, via pg_attribute', () => {
+    assert.match(postconditionSql, /pg_attribute/)
+    assert.match(postconditionSql, /attnum = key_attnum/)
+    assert.match(postconditionSql, /key_colname is distinct from 'user_id'/)
+  })
+
+  it('confirms the index belongs to public.businesses, not another table', () => {
+    assert.match(postconditionSql, /idx\.indrelid <> 'public\.businesses'::regclass/)
+  })
+
+  it('aborts on every failed check instead of continuing', () => {
+    const raises = postconditionSql.match(/raise exception/g) ?? []
+    // One raise per postcondition: exists, is-an-index, right-table, unique,
+    // valid, ready, non-partial, non-expression, single-column, right-column.
+    assert.ok(raises.length >= 9, `expected at least 9 raise exception branches, found ${raises.length}`)
+  })
+
+  it('never rewrites or drops businesses_user_id_unique_idx to force it to pass', () => {
+    assert.doesNotMatch(executable, /\balter\s+index\b/)
+    assert.doesNotMatch(executable, /\bdrop\s+index\b[^;]*businesses_user_id_unique_idx/)
+  })
+
+  it('the postcondition still runs inside the same guarded, locked transaction', () => {
+    // The postcondition block must sit between BEGIN and COMMIT, after the
+    // duplicate-data guard — not as a separate, later, unguarded migration.
+    // The header comment reproduces the guard's own SQL as an audit query for
+    // a DBA to run by hand, so searches must start after `begin;` or they find
+    // that prose copy instead of the executable guard.
+    const beginAt = sql.indexOf('\nbegin;\n')
+    const commitAt = sql.lastIndexOf('\ncommit;')
+    assert.ok(beginAt >= 0 && commitAt > beginAt, 'no single begin/commit transaction found')
+    const guardAt = sql.indexOf('having count(*) > 1', beginAt)
+    const postconditionAt = sql.indexOf('to_regclass(', beginAt)
+    assert.ok(guardAt > beginAt && guardAt < commitAt, 'duplicate guard is outside the transaction')
+    assert.ok(
+      postconditionAt > guardAt && postconditionAt < commitAt,
+      'postcondition check does not run after the guard, inside the same transaction',
+    )
   })
 })
