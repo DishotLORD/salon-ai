@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 
 import { resolveBusinessTimezone } from '@/lib/business-timezone'
+import { loadBusinessReadiness } from '@/lib/business-readiness'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { DEFAULT_WIDGET_THEME, parseWidgetLauncherColor, parseWidgetTheme } from '@/lib/widget-theme'
 
@@ -90,9 +91,18 @@ export async function GET(request: Request) {
   const timezone = resolveBusinessTimezone(
     typeof data?.timezone === 'string' ? data.timezone : null,
   )
+  const readiness = await loadBusinessReadiness(supabaseAdmin, id)
 
   return NextResponse.json(
-    { name, agentName, theme, launcherColor, timezone },
+    {
+      name,
+      agentName,
+      theme,
+      launcherColor,
+      timezone,
+      bookingReady: readiness.bookingReady,
+      setupIncomplete: !readiness.bookingReady,
+    },
     {
       status: 200,
       headers: {

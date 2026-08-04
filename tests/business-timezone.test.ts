@@ -167,12 +167,20 @@ describe('DST policy', () => {
       '2026-03-08T02:30:00',
       'America/Toronto',
     )
+    /*
+     * `assert.equal` carries an `asserts` signature, so testing `.ok` against
+     * false narrows the union here and now. The old follow-up guard was
+     * therefore dead code over a `never`, and the `doesNotThrow` around it
+     * proved nothing.
+     *
+     * Asserting the failure member directly is the stronger claim anyway: on the
+     * spring-forward gap there is no `iso` to hand to `toISOString()` at all,
+     * only guest-safe copy. Reading `.iso` below would not compile, which is
+     * exactly the guarantee this test exists to pin down.
+     */
     assert.equal(viaSchedule.ok, false)
-    // Calling toISOString on Invalid Date would throw — the typed path never does.
-    assert.doesNotThrow(() => {
-      if (!viaSchedule.ok) return viaSchedule.message
-      return viaSchedule.iso
-    })
+    assert.equal(viaSchedule.reason, 'nonexistent_local_time')
+    assert.equal(viaSchedule.message, DST_GAP_MESSAGE)
   })
 
   it('fall-back ambiguity chooses the documented earlier instant', () => {

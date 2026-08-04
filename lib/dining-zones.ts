@@ -1,5 +1,3 @@
-import type { BookingSettings } from '@/lib/booking-settings'
-
 export type DiningZone = {
   id: string
   business_id: string
@@ -78,22 +76,13 @@ export function parseDiningZoneRow(raw: Record<string, unknown>): DiningZone {
   }
 }
 
-export function defaultMainDiningZone(
-  businessId: string,
-  settings: BookingSettings,
-): Omit<DiningZone, 'id'> & { id?: string } {
-  return {
-    business_id: businessId,
-    name: 'Main dining',
-    slug: 'main-dining',
-    max_concurrent_parties: 150,
-    min_party_size: 1,
-    max_party_size: 999,
-    turnover_minutes: 70,
-    is_active: true,
-    sort_order: 0,
-  }
-}
+/*
+ * `defaultMainDiningZone` used to live here, handing out a 150-cover room that
+ * accepted parties of 999. Nothing calls it any more — the loader stopped
+ * seeding a zone on read — and leaving it in place only invites the next caller
+ * to open a restaurant on numbers nobody chose. Capacity comes from the owner or
+ * the venue is not bookable.
+ */
 
 const ZONE_KEYWORDS: Record<string, string[]> = {
   patio: ['patio', 'terrace', 'outdoor', 'outside', 'deck', 'патио', 'терраса', 'тераса', 'веранда'],

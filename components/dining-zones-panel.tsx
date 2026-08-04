@@ -4,7 +4,6 @@ import { useRef, useState } from 'react'
 
 import {
   ZONE_PRESETS,
-  defaultMainDiningZone,
   slugifyZoneName,
   type DiningZone,
 } from '@/lib/dining-zones'
@@ -36,19 +35,28 @@ export type DiningZoneDraft = Omit<DiningZone, 'id' | 'business_id'> & {
   _localKey?: string
 }
 
-function newZoneDraft(settings: BookingSettings, sortOrder: number): DiningZoneDraft {
-  const base = defaultMainDiningZone('', settings)
+/** Empty draft — capacity/party must be entered by the owner before save. */
+function emptyZoneDraft(
+  name: string,
+  slug: string,
+  sortOrder: number,
+  turnoverMinutes = 70,
+): DiningZoneDraft {
   return {
     _localKey: `new-${Date.now()}`,
-    name: 'Patio',
-    slug: 'patio',
-    max_concurrent_parties: 150,
-    min_party_size: base.min_party_size,
-    max_party_size: 999,
-    turnover_minutes: 70,
+    name,
+    slug,
+    max_concurrent_parties: 0,
+    min_party_size: 1,
+    max_party_size: 0,
+    turnover_minutes: turnoverMinutes,
     is_active: true,
     sort_order: sortOrder,
   }
+}
+
+function newZoneDraft(_settings: BookingSettings, sortOrder: number): DiningZoneDraft {
+  return emptyZoneDraft('Patio', 'patio', sortOrder)
 }
 
 export type DiningZonesPanelProps = {
@@ -88,20 +96,14 @@ export function DiningZonesPanel({
   }
 
   const addPreset = (name: string, slug: string) => {
-    onChange([
-      ...zones,
-      {
-        _localKey: `new-${++localKeyCounter.current}`,
-        name,
-        slug,
-        max_concurrent_parties: slug === 'main-dining' ? 150 : 60,
-        min_party_size: 1,
-        max_party_size: 999,
-        turnover_minutes: slug === 'large-groups' ? 120 : 70,
-        is_active: true,
-        sort_order: zones.length,
-      },
-    ])
+    const draft = emptyZoneDraft(
+      name,
+      slug,
+      zones.length,
+      slug === 'large-groups' ? 120 : 70,
+    )
+    draft._localKey = `new-${++localKeyCounter.current}`
+    onChange([...zones, draft])
     setPresetOpen(false)
   }
 
@@ -196,6 +198,36 @@ export function DiningZonesPanel({
                   const next = parseInt(raw, 10)
                   if (Number.isNaN(next)) return
                   updateAt(index, { max_concurrent_parties: Math.max(1, next) })
+                }}
+              />
+            </label>
+            <label style={{ display: 'grid', gap: 4 }}>
+              <span style={labelStyle}>Min party</span>
+              <input
+                type="number"
+                min={1}
+                disabled={disabled}
+                style={inputStyle}
+                value={zone.min_party_size || ''}
+                onChange={(e) => {
+                  const next = parseInt(e.target.value, 10)
+                  if (Number.isNaN(next)) return
+                  updateAt(index, { min_party_size: Math.max(1, next) })
+                }}
+              />
+            </label>
+            <label style={{ display: 'grid', gap: 4 }}>
+              <span style={labelStyle}>Max party</span>
+              <input
+                type="number"
+                min={1}
+                disabled={disabled}
+                style={inputStyle}
+                value={zone.max_party_size || ''}
+                onChange={(e) => {
+                  const next = parseInt(e.target.value, 10)
+                  if (Number.isNaN(next)) return
+                  updateAt(index, { max_party_size: Math.max(1, next) })
                 }}
               />
             </label>

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { describe, it } from 'node:test'
 
 import { isSlotAvailable } from '../lib/booking-availability.ts'
+import type { DiningZone } from '../lib/dining-zones.ts'
 import {
   DST_GAP_MESSAGE,
   scheduledAtToWallClock,
@@ -38,8 +39,14 @@ const SETTINGS = parseBookingSettings({
   average_check: 0,
 })
 
-const ZONE = {
+/**
+ * Annotated rather than inferred, so a column added to the production
+ * DiningZone surfaces here as a compile error instead of leaving the fixture a
+ * shape the code under test never actually receives.
+ */
+const ZONE: DiningZone = {
   id: 'zone-main',
+  business_id: 'biz-test-dst-write-order',
   name: 'Main dining',
   slug: 'main-dining',
   max_concurrent_parties: 50,
@@ -98,6 +105,19 @@ function createReservationWriteTimePhase(wallClock: string, timeZone: 'America/T
     }
   }
 
+  /*
+   * afterResolvedWriteWallClock declares its success side as a union of
+   * "resolved" and "resolved, and here is what the callback returned". Only the
+   * second is reachable — the first is returned early on failure — but the
+   * declared type admits both, so `ok` alone does not narrow far enough to read
+   * `next`. Testing for the property is the narrowing the type actually
+   * supports, and it stays honest: if the callback were ever skipped on a
+   * success path, this fails loudly instead of a cast hiding it.
+   */
+  if (!('next' in gated)) {
+    assert.fail('write gate resolved without running the availability callback')
+  }
+
   if (gated.next.kind === 'not_available') {
     return {
       outcome: {
@@ -146,6 +166,11 @@ function rescheduleWriteTimePhase(
       updateCalls,
       scheduled_at: original,
     }
+  }
+
+  // Same narrowing as the create path above, for the same reason.
+  if (!('next' in gated)) {
+    assert.fail('write gate resolved without running the update callback')
   }
 
   return {

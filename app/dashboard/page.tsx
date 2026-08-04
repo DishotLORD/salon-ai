@@ -7,6 +7,7 @@ import {
   venueBoundaryUtcIso,
   wallClockDateKey,
 } from '@/lib/booking-wall-clock'
+import { loadBusinessReadiness } from '@/lib/business-readiness'
 import { getDashboardContext } from '@/lib/dashboard-context'
 
 import { DashboardClient, type RecentActivity, type ZoneOccupancy } from './dashboard-client'
@@ -53,6 +54,11 @@ export default async function Dashboard() {
   }
 
   if (!business) {
+    redirect('/onboarding')
+  }
+
+  const readiness = await loadBusinessReadiness(supabase, businessId)
+  if (!readiness.bookingReady) {
     redirect('/onboarding')
   }
 
@@ -270,6 +276,15 @@ export default async function Dashboard() {
    * Every signal is derived from data already fetched above, so the checklist
    * costs no extra round trip and cannot go stale.
    */
+  const { count: menuItemCount } = await supabase
+    .from('services')
+    .select('id', { count: 'exact', head: true })
+    .eq('business_id', businessId)
+  const hasMenu =
+    (menuItemCount ?? 0) > 0 ||
+    (typeof business.menu_pdf_text === 'string' &&
+      business.menu_pdf_text.trim().length > 0)
+
   const setupSteps = [
     {
       id: 'widget',
@@ -283,22 +298,21 @@ export default async function Dashboard() {
       title: 'Set your opening hours',
       description: 'The concierge will not offer a table outside them.',
       href: '/dashboard/settings?category=restaurant',
-      done: business.operating_hours != null,
+      done: readiness.hoursConfirmed && readiness.hasOpenDay,
     },
     {
       id: 'menu',
       title: 'Add your menu',
       description: 'So it can answer what is on it, and what is in a dish.',
       href: '/dashboard/settings?tab=menu',
-      done:
-        typeof business.menu_pdf_text === 'string' && business.menu_pdf_text.trim().length > 0,
+      done: hasMenu,
     },
     {
       id: 'seating',
       title: 'Describe your seating',
       description: 'Dining areas and how many parties each can hold at once.',
       href: '/dashboard/settings?category=reservations',
-      done: zoneOccupancy.length > 0,
+      done: readiness.hasUsableZone,
     },
   ]
 

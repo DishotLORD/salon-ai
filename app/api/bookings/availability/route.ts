@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 import { getOpenSlotsForDate, inferDateKeyFromText } from '@/lib/booking-availability'
 import { getVenueNowParts } from '@/lib/booking-wall-clock'
 import { loadBusinessBookingContext } from '@/lib/booking-load'
+import { loadBusinessReadiness } from '@/lib/business-readiness'
 import { createClient } from '@/lib/supabase-server'
 import { verifyBusinessOwner } from '@/lib/verify-business-owner'
 
@@ -28,12 +29,26 @@ export async function GET(request: Request) {
   const partySize = Math.max(1, parseInt(partyRaw ?? '2', 10) || 2)
 
   const supabase = await createClient()
+  const readiness = await loadBusinessReadiness(supabase, businessId)
   const ctx = await loadBusinessBookingContext(supabase, businessId)
 
   const now = getVenueNowParts(ctx.timezone)
   const dateKey = dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)
     ? dateParam
     : inferDateKeyFromText(dateParam ?? 'today', now)
+
+  if (!readiness.bookingReady) {
+    return NextResponse.json({
+      dateKey,
+      partySize,
+      zoneId,
+      slots: [],
+      zones: [],
+      setup_incomplete: true,
+      bookingReady: false,
+      missingSteps: readiness.missingSteps.filter((s) => s.id !== 'menu'),
+    })
+  }
 
   const slots = getOpenSlotsForDate({
     dateKey,
@@ -54,5 +69,6 @@ export async function GET(request: Request) {
     zoneId,
     slots,
     zones: ctx.zones.filter((z) => z.is_active),
+    bookingReady: true,
   })
 }

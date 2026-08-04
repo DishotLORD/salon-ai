@@ -58,7 +58,14 @@ import {
 import {
   DEFAULT_SYSTEM_PROMPT_PLACEHOLDER,
 } from '@/lib/default-system-prompt'
-import { defaultMainDiningZone, parseDiningZoneRow, slugifyZoneName } from '@/lib/dining-zones'
+import type { BusinessReadiness } from '@/lib/business-readiness'
+import { validateZoneCapacityInput } from '@/lib/business-readiness'
+import {
+  categorySave,
+  operatingHoursPatch,
+  WORKING_HOURS_SAVE,
+} from '@/lib/settings-save-policy'
+import { parseDiningZoneRow, slugifyZoneName } from '@/lib/dining-zones'
 import { MENU_PDF_MAX_BYTES, MENU_PDF_MAX_MB } from '@/lib/menu-pdf-limits'
 import { oceanTransition, settingsPanelHeavy } from '@/lib/ocean-motion'
 import {
@@ -95,13 +102,13 @@ import {
 import { ColorSwatchPicker } from '@/components/color-swatch-picker'
 
 const BUSINESS_SELECT_WITH_BOOKING =
-  'id, name, email, phone, business_type, address, timezone, system_prompt, agent_name, language, menu_pdf_text, operating_hours, booking_settings, notification_settings'
+  'id, name, email, phone, business_type, address, timezone, system_prompt, agent_name, language, menu_pdf_text, operating_hours, operating_hours_confirmed_at, booking_settings, notification_settings'
 const BUSINESS_SELECT_WITH_BOOKING_NO_TZ =
-  'id, name, email, phone, business_type, address, system_prompt, agent_name, language, menu_pdf_text, operating_hours, booking_settings, notification_settings'
+  'id, name, email, phone, business_type, address, system_prompt, agent_name, language, menu_pdf_text, operating_hours, operating_hours_confirmed_at, booking_settings, notification_settings'
 const BUSINESS_SELECT_WITH_HOURS =
-  'id, name, email, phone, business_type, address, timezone, system_prompt, agent_name, language, menu_pdf_text, operating_hours, notification_settings'
+  'id, name, email, phone, business_type, address, timezone, system_prompt, agent_name, language, menu_pdf_text, operating_hours, operating_hours_confirmed_at, notification_settings'
 const BUSINESS_SELECT_WITH_HOURS_NO_TZ =
-  'id, name, email, phone, business_type, address, system_prompt, agent_name, language, menu_pdf_text, operating_hours, notification_settings'
+  'id, name, email, phone, business_type, address, system_prompt, agent_name, language, menu_pdf_text, operating_hours, operating_hours_confirmed_at, notification_settings'
 const BUSINESS_SELECT_BASE =
   'id, name, email, phone, business_type, address, timezone, system_prompt, agent_name, language, menu_pdf_text, notification_settings'
 const BUSINESS_SELECT_BASE_NO_TZ =
@@ -552,7 +559,12 @@ function SettingsPageInner() {
   const [initialTimezone, setInitialTimezone] = useState<string | null>(null)
   const [timezoneSchemaReady, setTimezoneSchemaReady] = useState(true)
   const [hours, setHours] = useState<OperatingHours>(DEFAULT_OPERATING_HOURS)
+  const [hoursConfirmed, setHoursConfirmed] = useState(false)
+  const [isSavingHours, setIsSavingHours] = useState(false)
+  const [hoursSaveSucceeded, setHoursSaveSucceeded] = useState(false)
+  const hoursSaveTimerRef = useRef<number | null>(null)
   const [hoursSchemaReady, setHoursSchemaReady] = useState(true)
+  const [launchReadiness, setLaunchReadiness] = useState<BusinessReadiness | null>(null)
   const [bookingSettings, setBookingSettings] = useState<BookingSettings>({
     ...DEFAULT_BOOKING_SETTINGS,
   })
@@ -651,6 +663,19 @@ function SettingsPageInner() {
         setTimezoneSchemaReady(true)
       }
 
+      if (
+        withBooking.error &&
+        /operating_hours_confirmed_at/i.test(withBooking.error.message)
+      ) {
+        const withoutConfirmed =
+          'id, name, email, phone, business_type, address, timezone, system_prompt, agent_name, language, menu_pdf_text, operating_hours, booking_settings, notification_settings'
+        withBooking = await supabase
+          .from('businesses')
+          .select(withoutConfirmed)
+          .eq('user_id', userId)
+          .maybeSingle()
+      }
+
       if (!isMounted) return
 
       if (!withBooking.error && withBooking.data) {
@@ -734,7 +759,18 @@ function SettingsPageInner() {
         if (schemaReady) {
           setHours(parseOperatingHours(data.operating_hours))
         }
+        setHoursConfirmed(Boolean(data.operating_hours_confirmed_at))
         setNotificationSettings(parseNotificationSettings(data.notification_settings))
+        if (data.id) {
+          void fetch(`/api/business/readiness?business_id=${encodeURIComponent(String(data.id))}`)
+            .then((r) => (r.ok ? r.json() : null))
+            .then((ready) => {
+              if (isMounted && ready && typeof ready.bookingReady === 'boolean') {
+                setLaunchReadiness(ready as BusinessReadiness)
+              }
+            })
+            .catch(() => {})
+        }
       }
 
       // Deposit settings (tolerates the payment_settings column not existing yet).
@@ -828,7 +864,20 @@ function SettingsPageInner() {
       setZonesSchemaReady(true)
       const rows = (data ?? []).map((r) => parseDiningZoneRow(r as Record<string, unknown>))
       if (rows.length === 0) {
-        setZoneDrafts([defaultMainDiningZone(bizId, bookingSettings)])
+        // UI draft only — empty capacity so save cannot invent seating.
+        setZoneDrafts([
+          {
+            business_id: bizId,
+            name: 'Main Dining',
+            slug: 'main-dining',
+            max_concurrent_parties: 0,
+            min_party_size: 1,
+            max_party_size: 0,
+            turnover_minutes: 70,
+            is_active: true,
+            sort_order: 0,
+          },
+        ])
       } else {
         setZoneDrafts(rows)
       }
@@ -918,6 +967,19 @@ function SettingsPageInner() {
     if (!zonesSchemaReady) {
       setSaveError(DINING_ZONES_MIGRATION_HINT)
       return false
+    }
+
+    for (const z of zoneDrafts.filter((row) => row.is_active !== false)) {
+      const validated = validateZoneCapacityInput({
+        name: z.name,
+        capacity: z.max_concurrent_parties,
+        minPartySize: z.min_party_size,
+        maxPartySize: z.max_party_size,
+      })
+      if (!validated.ok) {
+        setSaveError(`${z.name.trim() || 'Zone'}: ${validated.message}`)
+        return false
+      }
     }
 
     const existingIds = new Set(zoneDrafts.filter((z) => z.id).map((z) => z.id!))
@@ -1168,7 +1230,17 @@ function SettingsPageInner() {
       basePayload.timezone = tzParsed.timezone
     }
 
-    const payloadWithHours = { ...basePayload, operating_hours: hours }
+    /*
+     * Hours are deliberately absent here. This save runs for whichever category
+     * the owner is on, and none of them — not even Restaurant, which also holds
+     * the venue name, address and phone — is a statement about opening times.
+     * Only the Working Hours panel's own Save writes them; see
+     * lib/settings-save-policy.ts and saveWorkingHours below.
+     */
+    const payloadWithHours = {
+      ...basePayload,
+      ...operatingHoursPatch(categorySave(activeCategory), hours, new Date().toISOString()),
+    }
 
     let requestError: { message?: string } | null = null
     let hoursSaveSkipped = false
@@ -1181,6 +1253,14 @@ function SettingsPageInner() {
     }
 
     let result = await persist(hoursSchemaReady ? payloadWithHours : basePayload)
+
+    if (
+      result.error &&
+      /operating_hours_confirmed_at/i.test(result.error.message ?? '')
+    ) {
+      const { operating_hours_confirmed_at: _c, ...withoutConfirmed } = payloadWithHours
+      result = await persist(hoursSchemaReady ? withoutConfirmed : basePayload)
+    }
 
     if (result.error && isOperatingHoursSchemaError(result.error.message)) {
       setHoursSchemaReady(false)
@@ -1214,6 +1294,23 @@ function SettingsPageInner() {
       )
       setIsSaving(false)
       return
+    }
+
+    /*
+     * The badge used to be flipped to "confirmed" here on any Restaurant save,
+     * whether or not the database agreed. It is now only ever set from a value
+     * that was actually read back or actually written — see refreshHoursConfirmed
+     * and saveWorkingHours.
+     */
+    if (businessRowId) {
+      void fetch(`/api/business/readiness?business_id=${encodeURIComponent(businessRowId)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((ready) => {
+          if (ready && typeof ready.bookingReady === 'boolean') {
+            setLaunchReadiness(ready as BusinessReadiness)
+          }
+        })
+        .catch(() => {})
     }
 
     // Persist the widget FAB brand color when Integrations was saved.
@@ -1257,6 +1354,107 @@ function SettingsPageInner() {
     }, 2200)
 
     setIsSaving(false)
+  }
+
+  /**
+   * The one action that may write opening hours, and the one that confirms them.
+   *
+   * Confirmation is what makes a venue publicly bookable, so it has to be a
+   * deliberate act on the hours themselves — not a side effect of saving a phone
+   * number that happens to sit in the same tab.
+   */
+  const saveWorkingHours = async () => {
+    if (isSavingHours) return
+    setSaveError('')
+    setHoursSaveSucceeded(false)
+
+    const invalid = validateOperatingHours(hours)
+    if (invalid) {
+      setSaveError(invalid)
+      return
+    }
+    if (!hoursSchemaReady) {
+      setSaveError(OPERATING_HOURS_MIGRATION_HINT)
+      return
+    }
+
+    let bizId = businessRowId
+    if (!bizId) {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      const ownerId = currentUserId ?? user?.id ?? null
+      if (ownerId) {
+        const { data: row } = await supabase
+          .from('businesses')
+          .select('id')
+          .eq('user_id', ownerId)
+          .maybeSingle()
+        bizId = row?.id ?? null
+        if (bizId) setBusinessRowId(bizId)
+      }
+    }
+    if (!bizId) {
+      setSaveError('Save the restaurant profile first (Restaurant tab).')
+      return
+    }
+
+    setIsSavingHours(true)
+    const patch = operatingHoursPatch(WORKING_HOURS_SAVE, hours, new Date().toISOString())
+
+    let result = await supabase
+      .from('businesses')
+      .update(patch)
+      .eq('id', bizId)
+      .select('operating_hours_confirmed_at')
+      .maybeSingle()
+
+    // Deployments that have not run migration 024 have the hours column but not
+    // the confirmation column. Saving the hours is still worth doing; the venue
+    // simply stays unconfirmed until the migration lands.
+    if (result.error && /operating_hours_confirmed_at/i.test(result.error.message ?? '')) {
+      const { operating_hours_confirmed_at: _confirmed, ...hoursOnly } = patch
+      const retry = await supabase.from('businesses').update(hoursOnly).eq('id', bizId)
+      if (retry.error) {
+        setSaveError(retry.error.message)
+        setIsSavingHours(false)
+        return
+      }
+      setHoursConfirmed(false)
+      setSaveError(OPERATING_HOURS_MIGRATION_HINT)
+      setIsSavingHours(false)
+      return
+    }
+
+    if (result.error) {
+      if (isOperatingHoursSchemaError(result.error.message)) {
+        setHoursSchemaReady(false)
+        setSaveError(OPERATING_HOURS_MIGRATION_HINT)
+      } else {
+        setSaveError(result.error.message)
+      }
+      setIsSavingHours(false)
+      return
+    }
+
+    // Read back rather than assumed: the badge should describe the database.
+    setHoursConfirmed(Boolean(result.data?.operating_hours_confirmed_at))
+    setHoursSaveSucceeded(true)
+    if (hoursSaveTimerRef.current) window.clearTimeout(hoursSaveTimerRef.current)
+    hoursSaveTimerRef.current = window.setTimeout(() => {
+      setHoursSaveSucceeded(false)
+      hoursSaveTimerRef.current = null
+    }, 2200)
+    setIsSavingHours(false)
+
+    void fetch(`/api/business/readiness?business_id=${encodeURIComponent(bizId)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((ready) => {
+        if (ready && typeof ready.bookingReady === 'boolean') {
+          setLaunchReadiness(ready as BusinessReadiness)
+        }
+      })
+      .catch(() => {})
   }
 
   useEffect(() => {
@@ -1608,6 +1806,27 @@ function SettingsPageInner() {
             >
               Working Hours
             </div>
+            <div
+              style={{
+                marginBottom: 12,
+                padding: '10px 12px',
+                borderRadius: 8,
+                border: hoursConfirmed
+                  ? '1px solid rgba(56, 161, 105, 0.35)'
+                  : '1px solid rgba(214, 158, 46, 0.4)',
+                background: hoursConfirmed
+                  ? 'rgba(56, 161, 105, 0.08)'
+                  : 'rgba(214, 158, 46, 0.1)',
+                color: t.text,
+                fontSize: 12.5,
+                lineHeight: 1.45,
+                fontWeight: 600,
+              }}
+            >
+              {hoursConfirmed
+                ? 'Hours confirmed — guests book against this schedule.'
+                : 'Not configured — values below are editor defaults only. Save to confirm before taking online reservations.'}
+            </div>
             {!hoursSchemaReady ? (
               <div
                 style={{
@@ -1625,6 +1844,44 @@ function SettingsPageInner() {
               </div>
             ) : null}
             <WorkingHoursPanel hours={hours} onChange={setHours} reduceMotion={reduceMotion} />
+            {/*
+              Hours have their own Save. The page-level Save covers the venue's
+              name, address, phone and the rest of this tab; none of those is a
+              statement about when the restaurant opens, and confirming hours is
+              what lets guests book.
+            */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'flex-end',
+                gap: 10,
+                marginTop: 14,
+              }}
+            >
+              {hoursSaveSucceeded ? (
+                <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--bk-success, #38a169)' }}>
+                  Hours saved and confirmed
+                </span>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => void saveWorkingHours()}
+                disabled={isSavingHours || !hoursSchemaReady}
+                style={{
+                  padding: '9px 16px',
+                  borderRadius: 9,
+                  border: '1px solid rgba(56,189,248,0.5)',
+                  background: isSavingHours ? 'rgba(56,189,248,0.15)' : 'rgba(56,189,248,0.9)',
+                  color: isSavingHours ? t.text : '#03111c',
+                  fontSize: 12.5,
+                  fontWeight: 700,
+                  cursor: isSavingHours || !hoursSchemaReady ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {isSavingHours ? 'Saving hours…' : 'Save working hours'}
+              </button>
+            </div>
           </div>
         </div>
       )
@@ -2177,6 +2434,39 @@ function SettingsPageInner() {
               </p>
             </div>
 
+            {launchReadiness && !launchReadiness.bookingReady ? (
+              <div
+                style={{
+                  display: 'grid',
+                  gap: 10,
+                  padding: 14,
+                  borderRadius: 12,
+                  border: `1px solid rgba(214, 158, 46, 0.4)`,
+                  background: 'rgba(214, 158, 46, 0.08)',
+                }}
+              >
+                <div style={{ color: s.text, fontSize: 14, fontWeight: 700 }}>
+                  Setup incomplete — reservations are not live yet
+                </div>
+                <p style={{ margin: 0, color: s.textMuted, fontSize: 13, lineHeight: 1.5 }}>
+                  Finish these steps before copying the embed. Even if a snippet was copied earlier,
+                  guests cannot book until setup is complete.
+                </p>
+                <ul style={{ margin: 0, paddingLeft: 18, display: 'grid', gap: 6 }}>
+                  {launchReadiness.missingSteps
+                    .filter((step) => step.id !== 'menu')
+                    .map((step) => (
+                      <li key={step.id} style={{ fontSize: 13.5 }}>
+                        <a href={step.href} style={{ color: s.accent, fontWeight: 600 }}>
+                          {step.title}
+                        </a>
+                        <span style={{ color: s.textMuted }}> — {step.description}</span>
+                      </li>
+                    ))}
+                </ul>
+              </div>
+            ) : null}
+
             {!widgetLauncherColorSchemaReady ? (
               <div style={migrationHintBox}>{WIDGET_LAUNCHER_COLOR_MIGRATION_HINT}</div>
             ) : (
@@ -2209,34 +2499,80 @@ function SettingsPageInner() {
 
             {widgetEmbedSnippet ? (
               <div style={{ display: 'grid', gap: 10 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                   <div style={{ color: s.textMuted, fontSize: 11, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase' }}>
                     Embed Code
+                    {launchReadiness && !launchReadiness.bookingReady ? (
+                      <span style={{ marginLeft: 8, color: '#d69e2e', letterSpacing: '0.08em' }}>
+                        Draft
+                      </span>
+                    ) : null}
                   </div>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      try {
-                        await navigator.clipboard.writeText(widgetEmbedSnippet)
-                        setWidgetCopied(true)
-                        window.setTimeout(() => setWidgetCopied(false), 2000)
-                      } catch {
-                        setWidgetCopied(false)
-                      }
-                    }}
-                    style={{
-                      borderRadius: 8,
-                      border: `1px solid ${widgetCopied ? 'rgba(56,189,248,0.35)' : s.border}`,
-                      background: widgetCopied ? 'rgba(56,189,248,0.08)' : s.panel,
-                      color: widgetCopied ? s.accent : s.text,
-                      padding: '8px 14px',
-                      fontSize: 13,
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                    }}
-                  >
-                    {widgetCopied ? 'Copied!' : 'Copy snippet'}
-                  </button>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <a
+                      href={`/widget?business_id=${encodeURIComponent(businessRowId ?? '')}&embed=1&draft=1`}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{
+                        borderRadius: 8,
+                        border: `1px solid ${s.border}`,
+                        background: s.panel,
+                        color: s.text,
+                        padding: '8px 14px',
+                        fontSize: 13,
+                        fontWeight: 600,
+                        textDecoration: 'none',
+                      }}
+                    >
+                      {launchReadiness && !launchReadiness.bookingReady
+                        ? 'Preview (draft)'
+                        : 'Preview'}
+                    </a>
+                    <button
+                      type="button"
+                      disabled={Boolean(launchReadiness && !launchReadiness.bookingReady)}
+                      onClick={async () => {
+                        if (launchReadiness && !launchReadiness.bookingReady) return
+                        try {
+                          await navigator.clipboard.writeText(widgetEmbedSnippet)
+                          setWidgetCopied(true)
+                          window.setTimeout(() => setWidgetCopied(false), 2000)
+                        } catch {
+                          setWidgetCopied(false)
+                        }
+                      }}
+                      style={{
+                        borderRadius: 8,
+                        border: `1px solid ${widgetCopied ? 'rgba(56,189,248,0.35)' : s.border}`,
+                        background:
+                          launchReadiness && !launchReadiness.bookingReady
+                            ? 'rgba(255,255,255,0.04)'
+                            : widgetCopied
+                              ? 'rgba(56,189,248,0.08)'
+                              : s.panel,
+                        color:
+                          launchReadiness && !launchReadiness.bookingReady
+                            ? s.textMuted
+                            : widgetCopied
+                              ? s.accent
+                              : s.text,
+                        padding: '8px 14px',
+                        fontSize: 13,
+                        fontWeight: 600,
+                        cursor:
+                          launchReadiness && !launchReadiness.bookingReady
+                            ? 'not-allowed'
+                            : 'pointer',
+                        opacity: launchReadiness && !launchReadiness.bookingReady ? 0.55 : 1,
+                      }}
+                    >
+                      {launchReadiness && !launchReadiness.bookingReady
+                        ? 'Copy disabled'
+                        : widgetCopied
+                          ? 'Copied!'
+                          : 'Copy snippet'}
+                    </button>
+                  </div>
                 </div>
                 <pre
                   style={{
@@ -2249,6 +2585,7 @@ function SettingsPageInner() {
                     overflowX: 'auto',
                     fontSize: 13,
                     lineHeight: 1.6,
+                    opacity: launchReadiness && !launchReadiness.bookingReady ? 0.55 : 1,
                   }}
                 >
                   <code>{widgetEmbedSnippet}</code>
