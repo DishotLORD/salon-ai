@@ -17,6 +17,7 @@ const USABLE_ZONE = {
   max_concurrent_parties: 40,
   min_party_size: 1,
   max_party_size: 8,
+  turnover_minutes: 45,
 }
 
 describe('launch readiness — incomplete new businesses', () => {

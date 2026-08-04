@@ -59,16 +59,39 @@ function isPositiveInteger(n: number): boolean {
   return Number.isFinite(n) && Number.isInteger(n) && n > 0
 }
 
-/**
- * Strict read-time validation for a `dining_zones` row. Returns null instead
- * of inventing a plausible-looking value — a malformed or incomplete row must
- * never become a bookable zone. Booking-critical callers (readiness,
- * availability, booking creation) must drop nulls rather than substitute a
- * default.
- */
-export function parseDiningZoneRow(raw: Record<string, unknown>): DiningZone | null {
-  if (raw.id == null || raw.business_id == null) return null
+/** Minimum average table occupancy accepted anywhere a turnover is validated. */
+export const DINING_ZONE_TURNOVER_MIN_MINUTES = 15
 
+export type DiningZoneRawFields = {
+  max_concurrent_parties?: unknown
+  min_party_size?: unknown
+  max_party_size?: unknown
+  turnover_minutes?: unknown
+  is_active?: unknown
+}
+
+export type ValidatedDiningZoneFields = {
+  max_concurrent_parties: number
+  min_party_size: number
+  max_party_size: number
+  turnover_minutes: number
+  is_active: boolean
+}
+
+/**
+ * Single source of truth for whether a `dining_zones` row's booking-relevant
+ * fields are structurally valid. Returns null instead of inventing a
+ * plausible-looking value. This is deliberately separate from "usable for
+ * booking": a structurally valid row can still have `is_active: false` — that
+ * is a real, correctly-stored state, not a malformed one.
+ *
+ * Both `parseDiningZoneRow` (read-time parsing) and `isUsableDiningZone`
+ * (business readiness) call this — never duplicate these rules, or the two
+ * can drift and disagree about the same row.
+ */
+export function validateDiningZoneFields(
+  raw: DiningZoneRawFields,
+): ValidatedDiningZoneFields | null {
   const capacity = Number(raw.max_concurrent_parties)
   const minParty = Number(raw.min_party_size)
   const maxParty = Number(raw.max_party_size)
@@ -79,19 +102,48 @@ export function parseDiningZoneRow(raw: Record<string, unknown>): DiningZone | n
   if (!isPositiveInteger(maxParty)) return null
   if (maxParty < minParty) return null
   if (maxParty > capacity) return null
-  if (!Number.isFinite(turnover) || !Number.isInteger(turnover) || turnover < 15) return null
+  if (
+    !Number.isFinite(turnover) ||
+    !Number.isInteger(turnover) ||
+    turnover < DINING_ZONE_TURNOVER_MIN_MINUTES
+  ) {
+    return null
+  }
   if (typeof raw.is_active !== 'boolean') return null
+
+  return {
+    max_concurrent_parties: capacity,
+    min_party_size: minParty,
+    max_party_size: maxParty,
+    turnover_minutes: turnover,
+    is_active: raw.is_active,
+  }
+}
+
+/** Structurally valid AND currently active — the only zones bookable right now. */
+export function isBookableDiningZoneFields(raw: DiningZoneRawFields): boolean {
+  return validateDiningZoneFields(raw)?.is_active === true
+}
+
+/**
+ * Strict read-time validation for a `dining_zones` row. Returns null instead
+ * of inventing a plausible-looking value — a malformed or incomplete row must
+ * never become a bookable zone. Booking-critical callers (readiness,
+ * availability, booking creation) must drop nulls rather than substitute a
+ * default.
+ */
+export function parseDiningZoneRow(raw: Record<string, unknown>): DiningZone | null {
+  if (raw.id == null || raw.business_id == null) return null
+
+  const fields = validateDiningZoneFields(raw)
+  if (!fields) return null
 
   return {
     id: String(raw.id),
     business_id: String(raw.business_id),
     name: String(raw.name ?? 'Zone'),
     slug: String(raw.slug ?? 'zone'),
-    max_concurrent_parties: capacity,
-    min_party_size: minParty,
-    max_party_size: maxParty,
-    turnover_minutes: turnover,
-    is_active: raw.is_active,
+    ...fields,
     sort_order: Number(raw.sort_order) || 0,
   }
 }

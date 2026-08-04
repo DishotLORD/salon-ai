@@ -186,6 +186,7 @@ describe('invalid zones cannot power availability or booking', () => {
         max_concurrent_parties: undefined,
         min_party_size: 1,
         max_party_size: 4,
+        turnover_minutes: 30,
       }),
       false,
     )
@@ -195,6 +196,7 @@ describe('invalid zones cannot power availability or booking', () => {
         max_concurrent_parties: 8,
         min_party_size: 1,
         max_party_size: 4,
+        turnover_minutes: 30,
       }),
       true,
     )
