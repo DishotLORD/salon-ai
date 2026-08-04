@@ -2688,7 +2688,11 @@ export default function BookingsPage() {
         supabase.from('activity_resources').select('*').eq('business_id', businessId),
       ])
       if (!cancelled) {
-        setDiningZones((zoneRes.data ?? []).map((r) => parseDiningZoneRow(r as Record<string, unknown>)))
+        setDiningZones(
+          (zoneRes.data ?? [])
+            .map((r) => parseDiningZoneRow(r as Record<string, unknown>))
+            .filter((z): z is DiningZone => z !== null),
+        )
         setActivityResources(
           (activityRes.data ?? []).map((r) => parseActivityResourceRow(r as Record<string, unknown>)),
         )

@@ -55,23 +55,76 @@ export function slugifyZoneName(name: string): string {
     .slice(0, 48) || 'zone'
 }
 
-export function parseDiningZoneRow(raw: Record<string, unknown>): DiningZone {
+function isPositiveInteger(n: number): boolean {
+  return Number.isFinite(n) && Number.isInteger(n) && n > 0
+}
+
+/**
+ * Strict read-time validation for a `dining_zones` row. Returns null instead
+ * of inventing a plausible-looking value — a malformed or incomplete row must
+ * never become a bookable zone. Booking-critical callers (readiness,
+ * availability, booking creation) must drop nulls rather than substitute a
+ * default.
+ */
+export function parseDiningZoneRow(raw: Record<string, unknown>): DiningZone | null {
+  if (raw.id == null || raw.business_id == null) return null
+
+  const capacity = Number(raw.max_concurrent_parties)
+  const minParty = Number(raw.min_party_size)
+  const maxParty = Number(raw.max_party_size)
+  const turnover = Number(raw.turnover_minutes)
+
+  if (!isPositiveInteger(capacity)) return null
+  if (!isPositiveInteger(minParty)) return null
+  if (!isPositiveInteger(maxParty)) return null
+  if (maxParty < minParty) return null
+  if (maxParty > capacity) return null
+  if (!Number.isFinite(turnover) || !Number.isInteger(turnover) || turnover < 15) return null
+  if (typeof raw.is_active !== 'boolean') return null
+
   return {
     id: String(raw.id),
     business_id: String(raw.business_id),
     name: String(raw.name ?? 'Zone'),
     slug: String(raw.slug ?? 'zone'),
-    // Values under 20 are legacy "max tables" counts, not cover capacity.
-    max_concurrent_parties: (() => {
-      const n = Number(raw.max_concurrent_parties)
-      if (!Number.isFinite(n) || n < 1) return 150
-      if (n < 20) return 150
-      return Math.round(n)
-    })(),
-    min_party_size: Math.max(1, Number(raw.min_party_size) || 1),
-    max_party_size: Math.max(1, Number(raw.max_party_size) || 12),
-    turnover_minutes: Math.max(15, Number(raw.turnover_minutes) || 70),
-    is_active: raw.is_active !== false,
+    max_concurrent_parties: capacity,
+    min_party_size: minParty,
+    max_party_size: maxParty,
+    turnover_minutes: turnover,
+    is_active: raw.is_active,
+    sort_order: Number(raw.sort_order) || 0,
+  }
+}
+
+/**
+ * Editable draft for the Settings zone editor. Unlike `parseDiningZoneRow`
+ * this never rejects a row — the owner needs to see and fix a broken zone,
+ * not have it silently vanish. Missing/invalid fields become 0 (or false),
+ * which the zone editor already renders as a blank/incomplete input rather
+ * than a fake, plausible-looking value.
+ */
+export function draftFromDiningZoneRow(
+  raw: Record<string, unknown>,
+): Omit<DiningZone, 'id' | 'business_id'> & { id?: string; business_id?: string } {
+  const positiveIntOrZero = (v: unknown): number => {
+    const n = Number(v)
+    return isPositiveInteger(n) ? n : 0
+  }
+  const turnoverOrZero = (v: unknown): number => {
+    const n = Number(v)
+    return Number.isFinite(n) && Number.isInteger(n) && n >= 15 ? n : 0
+  }
+
+  return {
+    id: raw.id != null ? String(raw.id) : undefined,
+    business_id: raw.business_id != null ? String(raw.business_id) : undefined,
+    name: String(raw.name ?? 'Zone'),
+    slug: String(raw.slug ?? 'zone'),
+    max_concurrent_parties: positiveIntOrZero(raw.max_concurrent_parties),
+    min_party_size: positiveIntOrZero(raw.min_party_size),
+    max_party_size: positiveIntOrZero(raw.max_party_size),
+    turnover_minutes: turnoverOrZero(raw.turnover_minutes),
+    is_active: raw.is_active === true,
     sort_order: Number(raw.sort_order) || 0,
   }
 }
