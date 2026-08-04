@@ -975,6 +975,7 @@ function SettingsPageInner() {
         capacity: z.max_concurrent_parties,
         minPartySize: z.min_party_size,
         maxPartySize: z.max_party_size,
+        turnoverMinutes: z.turnover_minutes,
       })
       if (!validated.ok) {
         setSaveError(`${z.name.trim() || 'Zone'}: ${validated.message}`)

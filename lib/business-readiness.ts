@@ -18,6 +18,9 @@ export const SETUP_INCOMPLETE_GUEST_MESSAGE =
 /** Soft upper bounds for owner-submitted first-zone / settings values. */
 export const ZONE_CAPACITY_MAX = 500
 export const ZONE_PARTY_SIZE_MAX = 100
+/** Matches the minimum parseDiningZoneRow accepts on read — kept in sync so a
+ *  save can never write a turnover value the strict reader will reject. */
+export const ZONE_TURNOVER_MIN_MINUTES = 15
 
 export type ReadinessStepId = 'timezone' | 'hours' | 'seating' | 'menu'
 
@@ -77,7 +80,14 @@ export function isUsableDiningZone(zone: DiningZoneReadinessInput): boolean {
 }
 
 export type ZoneFieldValidation =
-  | { ok: true; capacity: number; minParty: number; maxParty: number; name: string }
+  | {
+      ok: true
+      capacity: number
+      minParty: number
+      maxParty: number
+      turnoverMinutes: number
+      name: string
+    }
   | { ok: false; message: string }
 
 /** Server-side validation for the first-zone / seating form. */
@@ -86,6 +96,7 @@ export function validateZoneCapacityInput(input: {
   capacity?: unknown
   minPartySize?: unknown
   maxPartySize?: unknown
+  turnoverMinutes?: unknown
 }): ZoneFieldValidation {
   const name = typeof input.name === 'string' ? input.name.trim() : ''
   if (name.length < 1) {
@@ -124,7 +135,18 @@ export function validateZoneCapacityInput(input: {
       message: 'Maximum party size cannot exceed total capacity.',
     }
   }
-  return { ok: true, capacity, minParty, maxParty, name }
+  const turnoverMinutes = Number(input.turnoverMinutes)
+  if (
+    !Number.isFinite(turnoverMinutes) ||
+    !Number.isInteger(turnoverMinutes) ||
+    turnoverMinutes < ZONE_TURNOVER_MIN_MINUTES
+  ) {
+    return {
+      ok: false,
+      message: `Average turnover time must be a whole number of at least ${ZONE_TURNOVER_MIN_MINUTES} minutes.`,
+    }
+  }
+  return { ok: true, capacity, minParty, maxParty, turnoverMinutes, name }
 }
 
 /**

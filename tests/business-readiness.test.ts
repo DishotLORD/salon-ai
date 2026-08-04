@@ -135,6 +135,7 @@ describe('capacity and party validation', () => {
       capacity: 40,
       minPartySize: 1,
       maxPartySize: 8,
+      turnoverMinutes: 45,
     })
     assert.equal(ok.ok, true)
   })

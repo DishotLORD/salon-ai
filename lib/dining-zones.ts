@@ -99,9 +99,10 @@ export function parseDiningZoneRow(raw: Record<string, unknown>): DiningZone | n
 /**
  * Editable draft for the Settings zone editor. Unlike `parseDiningZoneRow`
  * this never rejects a row — the owner needs to see and fix a broken zone,
- * not have it silently vanish. Missing/invalid fields become 0 (or false),
- * which the zone editor already renders as a blank/incomplete input rather
- * than a fake, plausible-looking value.
+ * not have it silently vanish. Missing/invalid numeric fields become 0,
+ * which the zone editor already renders as a blank/incomplete input; a
+ * missing/malformed `is_active` becomes false, which the editor renders as
+ * an unchecked, disabled zone — never a fake, plausible-looking value.
  */
 export function draftFromDiningZoneRow(
   raw: Record<string, unknown>,
