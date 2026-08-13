@@ -28,6 +28,30 @@ export type PrepareReservationWriteWallClockResult =
       message: string
     }
 
+/** The failure half of a preparation, reused so the two cannot drift apart. */
+type PrepareReservationWriteWallClockFailure = Extract<
+  PrepareReservationWriteWallClockResult,
+  { ok: false }
+>
+
+/**
+ * What `afterResolvedWriteWallClock` can actually return.
+ *
+ * Success always carries `next`. Reusing
+ * `PrepareReservationWriteWallClockResult` here would widen the success side to
+ * include that type's own `{ ok: true; prepared }` member — a result the
+ * implementation cannot produce, since the only success path builds `next` from
+ * the callback. Callers then could not read `next` after checking `ok`, and had
+ * to test for the property to narrow past a case that never happens.
+ */
+export type AfterResolvedWriteWallClockResult<T> =
+  | PrepareReservationWriteWallClockFailure
+  | {
+      ok: true
+      prepared: PreparedReservationWriteWallClock
+      next: T
+    }
+
 /**
  * Snap to the booking grid, then resolve venue-local digits to a UTC instant.
  */
@@ -64,9 +88,7 @@ export function afterResolvedWriteWallClock<T>(
   timeZone: CanadianBusinessTimezone,
   slotIntervalMinutes: number,
   afterResolved: (prepared: PreparedReservationWriteWallClock) => T,
-):
-  | PrepareReservationWriteWallClockResult
-  | { ok: true; prepared: PreparedReservationWriteWallClock; next: T } {
+): AfterResolvedWriteWallClockResult<T> {
   const prepared = prepareReservationWriteWallClock(
     wallClock,
     timeZone,
