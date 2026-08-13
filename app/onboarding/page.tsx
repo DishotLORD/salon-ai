@@ -377,6 +377,10 @@ export default function OnboardingPage() {
         capacity,
         minPartySize: minParty,
         maxPartySize: maxParty,
+        // First-zone turnover is a fixed onboarding default, not owner input,
+        // but it still runs through the shared validator so this insert can
+        // never write a value the strict reader would later reject.
+        turnoverMinutes: 90,
       })
       if (!validated.ok) {
         setError(validated.message)
@@ -412,7 +416,7 @@ export default function OnboardingPage() {
           max_concurrent_parties: validated.capacity,
           min_party_size: validated.minParty,
           max_party_size: validated.maxParty,
-          turnover_minutes: 90,
+          turnover_minutes: validated.turnoverMinutes,
           is_active: true,
           sort_order: 0,
         })

@@ -5,6 +5,11 @@ import {
   resolveBusinessTimezone,
 } from '@/lib/business-timezone'
 import {
+  DINING_ZONE_TURNOVER_MIN_MINUTES,
+  isBookableDiningZoneFields,
+  type DiningZoneRawFields,
+} from '@/lib/dining-zones'
+import {
   DAY_ORDER,
   parseOperatingHours,
   validateOperatingHours,
@@ -18,6 +23,9 @@ export const SETUP_INCOMPLETE_GUEST_MESSAGE =
 /** Soft upper bounds for owner-submitted first-zone / settings values. */
 export const ZONE_CAPACITY_MAX = 500
 export const ZONE_PARTY_SIZE_MAX = 100
+/** Re-exported so existing callers/tests keep working — this is the same
+ *  floor `validateDiningZoneFields` and `parseDiningZoneRow` enforce. */
+export const ZONE_TURNOVER_MIN_MINUTES = DINING_ZONE_TURNOVER_MIN_MINUTES
 
 export type ReadinessStepId = 'timezone' | 'hours' | 'seating' | 'menu'
 
@@ -46,6 +54,7 @@ export type DiningZoneReadinessInput = {
   max_concurrent_parties?: number | null
   min_party_size?: number | null
   max_party_size?: number | null
+  turnover_minutes?: number | null
 }
 
 export type BusinessReadinessInput = {
@@ -65,19 +74,25 @@ export function hasAtLeastOneOpenDay(hours: OperatingHours): boolean {
   return DAY_ORDER.some(({ key }) => !hours[key].closed)
 }
 
+/**
+ * A zone counts toward readiness only if it is both structurally valid and
+ * active. Delegates entirely to the shared contract in lib/dining-zones.ts —
+ * this must never re-implement its own, looser rules, or a row the strict
+ * reader rejects could still make a business look bookingReady.
+ */
 export function isUsableDiningZone(zone: DiningZoneReadinessInput): boolean {
-  if (zone.is_active === false) return false
-  const capacity = Number(zone.max_concurrent_parties)
-  const minParty = Number(zone.min_party_size)
-  const maxParty = Number(zone.max_party_size)
-  if (!Number.isFinite(capacity) || capacity <= 0) return false
-  if (!Number.isFinite(minParty) || minParty < 1) return false
-  if (!Number.isFinite(maxParty) || maxParty < minParty) return false
-  return true
+  return isBookableDiningZoneFields(zone as DiningZoneRawFields)
 }
 
 export type ZoneFieldValidation =
-  | { ok: true; capacity: number; minParty: number; maxParty: number; name: string }
+  | {
+      ok: true
+      capacity: number
+      minParty: number
+      maxParty: number
+      turnoverMinutes: number
+      name: string
+    }
   | { ok: false; message: string }
 
 /** Server-side validation for the first-zone / seating form. */
@@ -86,6 +101,7 @@ export function validateZoneCapacityInput(input: {
   capacity?: unknown
   minPartySize?: unknown
   maxPartySize?: unknown
+  turnoverMinutes?: unknown
 }): ZoneFieldValidation {
   const name = typeof input.name === 'string' ? input.name.trim() : ''
   if (name.length < 1) {
@@ -124,7 +140,18 @@ export function validateZoneCapacityInput(input: {
       message: 'Maximum party size cannot exceed total capacity.',
     }
   }
-  return { ok: true, capacity, minParty, maxParty, name }
+  const turnoverMinutes = Number(input.turnoverMinutes)
+  if (
+    !Number.isFinite(turnoverMinutes) ||
+    !Number.isInteger(turnoverMinutes) ||
+    turnoverMinutes < ZONE_TURNOVER_MIN_MINUTES
+  ) {
+    return {
+      ok: false,
+      message: `Average turnover time must be a whole number of at least ${ZONE_TURNOVER_MIN_MINUTES} minutes.`,
+    }
+  }
+  return { ok: true, capacity, minParty, maxParty, turnoverMinutes, name }
 }
 
 /**
@@ -272,7 +299,7 @@ export async function loadBusinessReadiness(
   const { data: zoneRows } = await supabase
     .from('dining_zones')
     .select(
-      'is_active, max_concurrent_parties, min_party_size, max_party_size',
+      'is_active, max_concurrent_parties, min_party_size, max_party_size, turnover_minutes',
     )
     .eq('business_id', businessId)
 

@@ -17,6 +17,7 @@ const USABLE_ZONE = {
   max_concurrent_parties: 40,
   min_party_size: 1,
   max_party_size: 8,
+  turnover_minutes: 45,
 }
 
 describe('launch readiness — incomplete new businesses', () => {
@@ -135,6 +136,7 @@ describe('capacity and party validation', () => {
       capacity: 40,
       minPartySize: 1,
       maxPartySize: 8,
+      turnoverMinutes: 45,
     })
     assert.equal(ok.ok, true)
   })

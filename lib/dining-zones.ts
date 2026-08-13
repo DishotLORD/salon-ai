@@ -55,25 +55,152 @@ export function slugifyZoneName(name: string): string {
     .slice(0, 48) || 'zone'
 }
 
-export function parseDiningZoneRow(raw: Record<string, unknown>): DiningZone {
+function isPositiveInteger(n: number): boolean {
+  return Number.isFinite(n) && Number.isInteger(n) && n > 0
+}
+
+/** Minimum average table occupancy accepted anywhere a turnover is validated. */
+export const DINING_ZONE_TURNOVER_MIN_MINUTES = 15
+
+export type DiningZoneRawFields = {
+  max_concurrent_parties?: unknown
+  min_party_size?: unknown
+  max_party_size?: unknown
+  turnover_minutes?: unknown
+  is_active?: unknown
+}
+
+export type ValidatedDiningZoneFields = {
+  max_concurrent_parties: number
+  min_party_size: number
+  max_party_size: number
+  turnover_minutes: number
+  is_active: boolean
+}
+
+/**
+ * Single source of truth for whether a `dining_zones` row's booking-relevant
+ * fields are structurally valid. Returns null instead of inventing a
+ * plausible-looking value. This is deliberately separate from "usable for
+ * booking": a structurally valid row can still have `is_active: false` — that
+ * is a real, correctly-stored state, not a malformed one.
+ *
+ * Both `parseDiningZoneRow` (read-time parsing) and `isUsableDiningZone`
+ * (business readiness) call this — never duplicate these rules, or the two
+ * can drift and disagree about the same row.
+ */
+export function validateDiningZoneFields(
+  raw: DiningZoneRawFields,
+): ValidatedDiningZoneFields | null {
+  const capacity = Number(raw.max_concurrent_parties)
+  const minParty = Number(raw.min_party_size)
+  const maxParty = Number(raw.max_party_size)
+  const turnover = Number(raw.turnover_minutes)
+
+  if (!isPositiveInteger(capacity)) return null
+  if (!isPositiveInteger(minParty)) return null
+  if (!isPositiveInteger(maxParty)) return null
+  if (maxParty < minParty) return null
+  if (maxParty > capacity) return null
+  if (
+    !Number.isFinite(turnover) ||
+    !Number.isInteger(turnover) ||
+    turnover < DINING_ZONE_TURNOVER_MIN_MINUTES
+  ) {
+    return null
+  }
+  if (typeof raw.is_active !== 'boolean') return null
+
+  return {
+    max_concurrent_parties: capacity,
+    min_party_size: minParty,
+    max_party_size: maxParty,
+    turnover_minutes: turnover,
+    is_active: raw.is_active,
+  }
+}
+
+/** Structurally valid AND currently active — the only zones bookable right now. */
+export function isBookableDiningZoneFields(raw: DiningZoneRawFields): boolean {
+  return validateDiningZoneFields(raw)?.is_active === true
+}
+
+/**
+ * Strict read-time validation for a `dining_zones` row. Returns null instead
+ * of inventing a plausible-looking value — a malformed or incomplete row must
+ * never become a bookable zone. Booking-critical callers (readiness,
+ * availability, booking creation) must drop nulls rather than substitute a
+ * default.
+ */
+export function parseDiningZoneRow(raw: Record<string, unknown>): DiningZone | null {
+  if (raw.id == null || raw.business_id == null) return null
+
+  const fields = validateDiningZoneFields(raw)
+  if (!fields) return null
+
   return {
     id: String(raw.id),
     business_id: String(raw.business_id),
     name: String(raw.name ?? 'Zone'),
     slug: String(raw.slug ?? 'zone'),
-    // Values under 20 are legacy "max tables" counts, not cover capacity.
-    max_concurrent_parties: (() => {
-      const n = Number(raw.max_concurrent_parties)
-      if (!Number.isFinite(n) || n < 1) return 150
-      if (n < 20) return 150
-      return Math.round(n)
-    })(),
-    min_party_size: Math.max(1, Number(raw.min_party_size) || 1),
-    max_party_size: Math.max(1, Number(raw.max_party_size) || 12),
-    turnover_minutes: Math.max(15, Number(raw.turnover_minutes) || 70),
-    is_active: raw.is_active !== false,
+    ...fields,
     sort_order: Number(raw.sort_order) || 0,
   }
+}
+
+/**
+ * Editable draft for the Settings zone editor. Unlike `parseDiningZoneRow`
+ * this never rejects a row — the owner needs to see and fix a broken zone,
+ * not have it silently vanish. Missing/invalid numeric fields become 0,
+ * which the zone editor already renders as a blank/incomplete input; a
+ * missing/malformed `is_active` becomes false, which the editor renders as
+ * an unchecked, disabled zone — never a fake, plausible-looking value.
+ */
+export function draftFromDiningZoneRow(
+  raw: Record<string, unknown>,
+): Omit<DiningZone, 'id' | 'business_id'> & { id?: string; business_id?: string } {
+  const positiveIntOrZero = (v: unknown): number => {
+    const n = Number(v)
+    return isPositiveInteger(n) ? n : 0
+  }
+  const turnoverOrZero = (v: unknown): number => {
+    const n = Number(v)
+    return Number.isFinite(n) && Number.isInteger(n) && n >= 15 ? n : 0
+  }
+
+  return {
+    id: raw.id != null ? String(raw.id) : undefined,
+    business_id: raw.business_id != null ? String(raw.business_id) : undefined,
+    name: String(raw.name ?? 'Zone'),
+    slug: String(raw.slug ?? 'zone'),
+    max_concurrent_parties: positiveIntOrZero(raw.max_concurrent_parties),
+    min_party_size: positiveIntOrZero(raw.min_party_size),
+    max_party_size: positiveIntOrZero(raw.max_party_size),
+    turnover_minutes: turnoverOrZero(raw.turnover_minutes),
+    is_active: raw.is_active === true,
+    sort_order: Number(raw.sort_order) || 0,
+  }
+}
+
+/**
+ * Read one keystroke of a numeric zone field in the Settings editor.
+ *
+ * Editing must not invent a number. A cleared field becomes 0 — the same
+ * "incomplete" marker `draftFromDiningZoneRow` uses, rendered as a blank
+ * input — and anything the owner actually typed is kept exactly as typed,
+ * fractional digits and negatives included, so that `validateZoneCapacityInput`
+ * can name the problem on save instead of the field quietly repairing itself
+ * into a value nobody chose. `Number` rather than `parseInt`, so `14.5` stays
+ * 14.5 and is rejected as a non-integer rather than passing as 14.
+ *
+ * Returns null when the field holds no number at all — a half-typed exponent,
+ * a lone minus sign — which the caller reads as "leave the draft untouched for
+ * this keystroke" rather than blanking what the owner has already entered.
+ */
+export function zoneNumericDraftValue(raw: string): number | null {
+  if (raw.trim() === '') return 0
+  const parsed = Number(raw)
+  return Number.isFinite(parsed) ? parsed : null
 }
 
 /*

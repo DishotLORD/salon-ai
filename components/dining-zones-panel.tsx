@@ -5,6 +5,7 @@ import { useRef, useState } from 'react'
 import {
   ZONE_PRESETS,
   slugifyZoneName,
+  zoneNumericDraftValue,
   type DiningZone,
 } from '@/lib/dining-zones'
 import type { BookingSettings } from '@/lib/booking-settings'
@@ -235,16 +236,19 @@ export function DiningZonesPanel({
               <span style={labelStyle}>Avg stay (min)</span>
               <input
                 type="number"
+                // `min` is browser guidance only — it must not correct the draft.
+                // `step={1}` because the contract is any whole number >= 15, not
+                // multiples of 15.
                 min={15}
-                step={15}
+                step={1}
                 disabled={disabled}
                 style={inputStyle}
-                value={zone.turnover_minutes}
-                onChange={(e) =>
-                  updateAt(index, {
-                    turnover_minutes: Math.max(15, parseInt(e.target.value, 10) || 70),
-                  })
-                }
+                value={zone.turnover_minutes || ''}
+                onChange={(e) => {
+                  const next = zoneNumericDraftValue(e.target.value)
+                  if (next === null) return
+                  updateAt(index, { turnover_minutes: next })
+                }}
               />
             </label>
           </div>

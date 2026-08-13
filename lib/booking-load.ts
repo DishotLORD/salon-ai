@@ -74,9 +74,11 @@ export async function loadBusinessBookingContext(
 
   // Never invent seating capacity. Zones exist only after the owner saves them
   // (onboarding or Settings). Empty list → booking readiness fails upstream.
-  const zones: DiningZone[] = (zoneRows ?? []).map((r) =>
-    parseDiningZoneRow(r as Record<string, unknown>),
-  )
+  // A malformed row (parseDiningZoneRow → null) is dropped rather than
+  // defaulted, so it can never make itself available for booking.
+  const zones: DiningZone[] = (zoneRows ?? [])
+    .map((r) => parseDiningZoneRow(r as Record<string, unknown>))
+    .filter((z): z is DiningZone => z !== null)
 
   const now = getVenueNowParts(timezone)
   const todayKey = wallClockDateKey(now)

@@ -65,7 +65,7 @@ import {
   operatingHoursPatch,
   WORKING_HOURS_SAVE,
 } from '@/lib/settings-save-policy'
-import { parseDiningZoneRow, slugifyZoneName } from '@/lib/dining-zones'
+import { draftFromDiningZoneRow, slugifyZoneName } from '@/lib/dining-zones'
 import { MENU_PDF_MAX_BYTES, MENU_PDF_MAX_MB } from '@/lib/menu-pdf-limits'
 import { oceanTransition, settingsPanelHeavy } from '@/lib/ocean-motion'
 import {
@@ -862,7 +862,7 @@ function SettingsPageInner() {
       setZoneDrafts([])
     } else if (!error) {
       setZonesSchemaReady(true)
-      const rows = (data ?? []).map((r) => parseDiningZoneRow(r as Record<string, unknown>))
+      const rows = (data ?? []).map((r) => draftFromDiningZoneRow(r as Record<string, unknown>))
       if (rows.length === 0) {
         // UI draft only — empty capacity so save cannot invent seating.
         setZoneDrafts([
@@ -975,6 +975,7 @@ function SettingsPageInner() {
         capacity: z.max_concurrent_parties,
         minPartySize: z.min_party_size,
         maxPartySize: z.max_party_size,
+        turnoverMinutes: z.turnover_minutes,
       })
       if (!validated.ok) {
         setSaveError(`${z.name.trim() || 'Zone'}: ${validated.message}`)
@@ -1033,7 +1034,7 @@ function SettingsPageInner() {
           return false
         }
         if (inserted) {
-          nextDrafts[i] = parseDiningZoneRow(inserted as Record<string, unknown>)
+          nextDrafts[i] = draftFromDiningZoneRow(inserted as Record<string, unknown>)
         }
       }
     }
