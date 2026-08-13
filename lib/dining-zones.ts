@@ -182,6 +182,27 @@ export function draftFromDiningZoneRow(
   }
 }
 
+/**
+ * Read one keystroke of a numeric zone field in the Settings editor.
+ *
+ * Editing must not invent a number. A cleared field becomes 0 — the same
+ * "incomplete" marker `draftFromDiningZoneRow` uses, rendered as a blank
+ * input — and anything the owner actually typed is kept exactly as typed,
+ * fractional digits and negatives included, so that `validateZoneCapacityInput`
+ * can name the problem on save instead of the field quietly repairing itself
+ * into a value nobody chose. `Number` rather than `parseInt`, so `14.5` stays
+ * 14.5 and is rejected as a non-integer rather than passing as 14.
+ *
+ * Returns null when the field holds no number at all — a half-typed exponent,
+ * a lone minus sign — which the caller reads as "leave the draft untouched for
+ * this keystroke" rather than blanking what the owner has already entered.
+ */
+export function zoneNumericDraftValue(raw: string): number | null {
+  if (raw.trim() === '') return 0
+  const parsed = Number(raw)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
 /*
  * `defaultMainDiningZone` used to live here, handing out a 150-cover room that
  * accepted parties of 999. Nothing calls it any more — the loader stopped
