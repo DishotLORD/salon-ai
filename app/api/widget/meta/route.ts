@@ -3,6 +3,11 @@ import { NextResponse } from 'next/server'
 import { resolveBusinessTimezone } from '@/lib/business-timezone'
 import { loadBusinessReadiness } from '@/lib/business-readiness'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import {
+  WIDGET_META_ERROR_CACHE_CONTROL,
+  WIDGET_META_READINESS_PARAM,
+  widgetMetaCacheControl,
+} from '@/lib/widget-meta-cache'
 import { DEFAULT_WIDGET_THEME, parseWidgetLauncherColor, parseWidgetTheme } from '@/lib/widget-theme'
 
 /**
@@ -19,6 +24,11 @@ import { DEFAULT_WIDGET_THEME, parseWidgetLauncherColor, parseWidgetTheme } from
  * CORS-open because widget.js is loaded cross-origin. That is safe for exactly
  * this payload: a venue's display name, its concierge's name, and two style
  * choices — all of it already visible to anyone who opens the widget.
+ *
+ * The response also carries readiness, and the two callers need it on different
+ * terms: widget.js ignores it and wants the cache, the panel renders it and
+ * cannot use a stale copy. `?readiness=live` picks the uncached policy for the
+ * panel; see lib/widget-meta-cache.ts. The body is identical either way.
  */
 
 const CORS_HEADERS = {
@@ -35,9 +45,16 @@ export function OPTIONS() {
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
   const id = searchParams.get('id')
+  const cacheControl = widgetMetaCacheControl(searchParams.get(WIDGET_META_READINESS_PARAM))
 
   if (!id) {
-    return NextResponse.json({ error: 'id required' }, { status: 400, headers: CORS_HEADERS })
+    return NextResponse.json(
+      { error: 'id required' },
+      {
+        status: 400,
+        headers: { ...CORS_HEADERS, 'Cache-Control': WIDGET_META_ERROR_CACHE_CONTROL },
+      },
+    )
   }
 
   type BrandingRow = {
@@ -78,7 +95,13 @@ export async function GET(request: Request) {
   }
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500, headers: CORS_HEADERS })
+    return NextResponse.json(
+      { error: error.message },
+      {
+        status: 500,
+        headers: { ...CORS_HEADERS, 'Cache-Control': WIDGET_META_ERROR_CACHE_CONTROL },
+      },
+    )
   }
 
   const name = typeof data?.name === 'string' && data.name.trim() ? data.name.trim() : null
@@ -107,7 +130,7 @@ export async function GET(request: Request) {
       status: 200,
       headers: {
         ...CORS_HEADERS,
-        'Cache-Control': 'public, max-age=60, s-maxage=60',
+        'Cache-Control': cacheControl,
       },
     },
   )
