@@ -11,6 +11,7 @@ import {
   type CanadianBusinessTimezone,
 } from '@/lib/business-timezone'
 import { formatPhoneInput, validatePhoneInput } from '@/lib/phone-input'
+import { widgetMetaUrl } from '@/lib/widget-meta-cache'
 import {
   DEFAULT_WIDGET_THEME,
   launcherColorOverrides,
@@ -771,7 +772,16 @@ function WidgetPageInner() {
     let cancelled = false
     void (async () => {
       try {
-        const res = await fetch(`/api/widget/meta?id=${encodeURIComponent(businessId)}`)
+        /*
+         * Live readiness, not the cached branding copy: this response decides
+         * whether the panel tells the guest the venue is taking reservations,
+         * it is read once at mount, and nothing re-fetches to correct it. The
+         * server sends `no-store` for this mode; `cache: 'no-store'` keeps the
+         * browser's own cache out of it too.
+         */
+        const res = await fetch(widgetMetaUrl(businessId, { live: true }), {
+          cache: 'no-store',
+        })
         if (cancelled || !res.ok) return
 
         const meta = (await res.json()) as {
