@@ -85,10 +85,18 @@ describe('/api/chat runs its ceilings before it does any work', () => {
     assert.ok(ipCheck < bodyParse)
   })
 
-  it('the global budget is checked before the per-IP ceiling', () => {
-    // An attacker rotating addresses earns a fresh per-IP allowance with each
-    // one; only the ceiling that ignores the caller stops them.
-    assert.ok(globalCheck < ipCheck)
+  it('the per-IP ceiling is checked before the global budget', () => {
+    /*
+     * Not cosmetic. With the global budget first, every request spends from it
+     * before anyone asks whether this caller is still welcome: one address
+     * could send the entire platform allowance in a window, have its own bucket
+     * refuse all but the first CHAT_IP_RATE_LIMIT of them, and still have
+     * incremented the shared counter CHAT_GLOBAL_RATE_LIMIT times. The 429 then
+     * lands on guests at every other restaurant — a budget meant to bound
+     * spending turned into a denial-of-service lever. Personal bucket first,
+     * and a caller past its own limit stops consuming shared capacity.
+     */
+    assert.ok(ipCheck < globalCheck)
   })
 
   it('both ceilings precede sanitization and the owner check', () => {
@@ -96,6 +104,10 @@ describe('/api/chat runs its ceilings before it does any work', () => {
     // `from_dashboard` used to buy an anonymous caller a Supabase Auth round
     // trip ahead of any limiter.
     assert.ok(ipCheck < ownerCheck)
+  })
+
+  it('the global budget is still checked before the body is parsed', () => {
+    assert.ok(globalCheck < bodyParse)
   })
 
   it('a refused request reaches no conversation insert and no model call', () => {
@@ -112,6 +124,104 @@ describe('/api/chat runs its ceilings before it does any work', () => {
   it('the business bucket still precedes the writes and the model call', () => {
     assert.ok(bizCheck < conversationInsert)
     assert.ok(bizCheck < openAiCall)
+  })
+})
+
+describe('one exhausted address cannot spend the platform budget', () => {
+  /**
+   * The route's two early gates, run against an injected store so the whole
+   * question can be settled in microseconds instead of 1200 real requests.
+   * `order` is the only variable — everything else matches the route.
+   */
+  function gate(
+    store: Map<string, Bucket>,
+    ip: string,
+    order: 'ip-first' | 'global-first',
+    now = 1_000,
+  ): 'allowed' | 'ip_429' | 'global_429' {
+    const ipGate = () =>
+      checkRateLimitMemory(
+        chatIpRateLimitKey(ip),
+        CHAT_IP_RATE_LIMIT,
+        CHAT_RATE_WINDOW_MS,
+        now,
+        store,
+      ).allowed
+    const globalGate = () =>
+      checkRateLimitMemory(
+        CHAT_GLOBAL_KEY,
+        CHAT_GLOBAL_RATE_LIMIT,
+        CHAT_GLOBAL_WINDOW_MS,
+        now,
+        store,
+      ).allowed
+
+    if (order === 'ip-first') {
+      if (!ipGate()) return 'ip_429'
+      return globalGate() ? 'allowed' : 'global_429'
+    }
+    if (!globalGate()) return 'global_429'
+    return ipGate() ? 'allowed' : 'ip_429'
+  }
+
+  const globalCount = (store: Map<string, Bucket>) => store.get(CHAT_GLOBAL_KEY)?.count ?? 0
+
+  it('a single address stops consuming shared capacity once its own bucket is full', () => {
+    const store = new Map<string, Bucket>()
+    const flood = CHAT_IP_RATE_LIMIT * 10
+    for (let i = 0; i < flood; i++) gate(store, '198.51.100.1', 'ip-first')
+
+    // It spent exactly its own allowance and not one request more.
+    assert.equal(globalCount(store), CHAT_IP_RATE_LIMIT)
+    assert.ok(globalCount(store) < CHAT_GLOBAL_RATE_LIMIT)
+  })
+
+  it('the old order let that same address spend the entire platform budget', () => {
+    // The finding, pinned. Delete the reordering and this is what comes back.
+    const store = new Map<string, Bucket>()
+    for (let i = 0; i < CHAT_GLOBAL_RATE_LIMIT; i++) {
+      gate(store, '198.51.100.1', 'global-first')
+    }
+    assert.equal(globalCount(store), CHAT_GLOBAL_RATE_LIMIT)
+
+    // And an unrelated guest at another restaurant is now refused by a budget
+    // they never touched.
+    assert.equal(gate(store, '203.0.113.222', 'global-first'), 'global_429')
+  })
+
+  it('under the corrected order that unrelated guest is served', () => {
+    const store = new Map<string, Bucket>()
+    for (let i = 0; i < CHAT_GLOBAL_RATE_LIMIT; i++) {
+      gate(store, '198.51.100.1', 'ip-first')
+    }
+    assert.equal(gate(store, '203.0.113.222', 'ip-first'), 'allowed')
+  })
+
+  it('fresh addresses still reach the global bucket and still exhaust it', () => {
+    // The case the budget exists for: every new IP passes its own empty bucket
+    // and then meets the one ceiling that does not care who is calling.
+    const store = new Map<string, Bucket>()
+    let allowed = 0
+    let globalRefusals = 0
+    for (let i = 0; i < CHAT_GLOBAL_RATE_LIMIT + 50; i++) {
+      const outcome = gate(store, `10.0.${Math.floor(i / 250)}.${i % 250}`, 'ip-first')
+      if (outcome === 'allowed') allowed += 1
+      if (outcome === 'global_429') globalRefusals += 1
+    }
+    assert.equal(allowed, CHAT_GLOBAL_RATE_LIMIT)
+    assert.equal(globalRefusals, 50)
+  })
+
+  it('each address keeps its own allowance below the global ceiling', () => {
+    const store = new Map<string, Bucket>()
+    for (const ip of ['198.51.100.1', '198.51.100.2', '198.51.100.3']) {
+      for (let i = 0; i < CHAT_IP_RATE_LIMIT; i++) {
+        assert.equal(gate(store, ip, 'ip-first'), 'allowed', ip)
+      }
+      assert.equal(gate(store, ip, 'ip-first'), 'ip_429', ip)
+    }
+    // Three exhausted addresses spent three allowances, not three budgets.
+    assert.equal(globalCount(store), CHAT_IP_RATE_LIMIT * 3)
   })
 })
 
@@ -303,20 +413,52 @@ describe('the backend is chosen by configuration and degrades to memory', () => 
     globalThis.fetch = (async () => impl()) as unknown as typeof fetch
   }
 
-  it('reports itself unconfigured when either variable is missing', () => {
-    delete process.env[URL_VAR]
-    delete process.env[TOKEN_VAR]
-    assert.equal(distributedRateLimitConfigured(), false)
+  it('reports itself configured only when both variables are present', () => {
+    // The truth table /api/health reports. A URL without a token is the state
+    // that matters: the limiter falls back to memory, so a probe claiming
+    // otherwise would make post-deploy verification worthless.
+    const cases: [string | undefined, string | undefined, boolean][] = [
+      [undefined, undefined, false],
+      ['https://redis.invalid', undefined, false],
+      [undefined, 'placeholder-not-a-real-token', false],
+      ['   ', 'placeholder-not-a-real-token', false],
+      ['https://redis.invalid', '   ', false],
+      ['https://redis.invalid', 'placeholder-not-a-real-token', true],
+    ]
+    for (const [url, token, expected] of cases) {
+      if (url === undefined) delete process.env[URL_VAR]
+      else process.env[URL_VAR] = url
+      if (token === undefined) delete process.env[TOKEN_VAR]
+      else process.env[TOKEN_VAR] = token
+      assert.equal(
+        distributedRateLimitConfigured(),
+        expected,
+        `url=${url === undefined ? 'unset' : JSON.stringify(url)} token=${token === undefined ? 'unset' : 'set'}`,
+      )
+    }
+  })
 
-    process.env[URL_VAR] = 'https://redis.invalid'
-    assert.equal(distributedRateLimitConfigured(), false, 'url alone is not enough')
+  it('/api/health asks the limiter instead of re-deriving the answer', () => {
+    const health = readFileSync(
+      new URL('../app/api/health/route.ts', import.meta.url),
+      'utf8',
+    )
+    assert.match(health, /distributed_rate_limit: distributedRateLimitConfigured\(\)/)
+    assert.match(health, /from '@\/lib\/rate-limit'/)
+    // The duplicated check that only looked at the URL is what made a
+    // token-less deployment report a distributed limiter it did not have.
+    assert.doesNotMatch(health, /UPSTASH_REDIS_REST_URL|UPSTASH_REDIS_REST_TOKEN/)
+  })
 
-    delete process.env[URL_VAR]
-    process.env[TOKEN_VAR] = 'placeholder-not-a-real-token'
-    assert.equal(distributedRateLimitConfigured(), false, 'token alone is not enough')
-
-    configure()
-    assert.equal(distributedRateLimitConfigured(), true)
+  it('/api/health still reports a plain boolean and no values', () => {
+    const health = readFileSync(
+      new URL('../app/api/health/route.ts', import.meta.url),
+      'utf8',
+    )
+    for (const line of health.split('\n').filter((l) => /distributed_rate_limit/.test(l))) {
+      assert.doesNotMatch(line, /process\.env/, line.trim())
+    }
+    assert.equal(typeof distributedRateLimitConfigured(), 'boolean')
   })
 
   it('never calls the network when unconfigured', async () => {

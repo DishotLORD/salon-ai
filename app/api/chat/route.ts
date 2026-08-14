@@ -4461,30 +4461,29 @@ export async function POST(request: Request) {
      * a full JSON parse plus — whenever the client set `from_dashboard` — a
      * round trip to Supabase Auth, all of it work an attacker could compel from
      * a request that was about to be refused anyway.
+     *
+     * Order within the pair matters too; see the note above the IP bucket.
      */
     const clientIp = getClientIp(request);
 
     /*
-     * The platform budget. It is checked ahead of the per-IP bucket on purpose:
-     * an attacker rotating addresses gets a fresh per-IP allowance with each new
-     * one, so the only ceiling that holds against them is the one that does not
-     * depend on who is calling.
+     * The caller's own bucket comes first, and the order matters more than it
+     * looks.
+     *
+     * Checking the platform budget first meant every request spent from it
+     * before anyone asked whether this caller was still welcome. One address
+     * could send the whole global allowance in a window; its own bucket refused
+     * all but the first CHAT_IP_RATE_LIMIT of them, but each refusal had
+     * already incremented the shared counter — so a single IP could exhaust the
+     * platform budget and hand a 429 to guests at every other restaurant. A
+     * ceiling meant to bound spending became a way to deny service.
+     *
+     * With the personal bucket first, a caller past its own limit stops
+     * consuming shared capacity entirely. What the global budget still catches
+     * is the case it exists for: an attacker rotating addresses, where every
+     * fresh IP passes its own empty bucket and then meets the one ceiling that
+     * does not care who is calling.
      */
-    const globalBudget = await checkRateLimit(
-      CHAT_GLOBAL_KEY,
-      CHAT_GLOBAL_RATE_LIMIT,
-      CHAT_GLOBAL_WINDOW_MS,
-    );
-    if (!globalBudget.allowed) {
-      return NextResponse.json(
-        { error: "Too many requests. Please try again shortly." },
-        {
-          status: 429,
-          headers: { "Retry-After": String(globalBudget.retryAfterSec ?? 60) },
-        },
-      );
-    }
-
     const ipLimit = await checkRateLimit(
       chatIpRateLimitKey(clientIp),
       CHAT_IP_RATE_LIMIT,
@@ -4496,6 +4495,21 @@ export async function POST(request: Request) {
         {
           status: 429,
           headers: { "Retry-After": String(ipLimit.retryAfterSec ?? 60) },
+        },
+      );
+    }
+
+    const globalBudget = await checkRateLimit(
+      CHAT_GLOBAL_KEY,
+      CHAT_GLOBAL_RATE_LIMIT,
+      CHAT_GLOBAL_WINDOW_MS,
+    );
+    if (!globalBudget.allowed) {
+      return NextResponse.json(
+        { error: "Too many requests. Please try again shortly." },
+        {
+          status: 429,
+          headers: { "Retry-After": String(globalBudget.retryAfterSec ?? 60) },
         },
       );
     }
