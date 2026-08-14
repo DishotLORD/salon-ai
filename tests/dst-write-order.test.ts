@@ -106,18 +106,11 @@ function createReservationWriteTimePhase(wallClock: string, timeZone: 'America/T
   }
 
   /*
-   * afterResolvedWriteWallClock declares its success side as a union of
-   * "resolved" and "resolved, and here is what the callback returned". Only the
-   * second is reachable — the first is returned early on failure — but the
-   * declared type admits both, so `ok` alone does not narrow far enough to read
-   * `next`. Testing for the property is the narrowing the type actually
-   * supports, and it stays honest: if the callback were ever skipped on a
-   * success path, this fails loudly instead of a cast hiding it.
+   * `gated.ok` alone reaches `next` — that is the point of the narrowed return
+   * type, and reading it here without a further check is the regression test:
+   * widen the success side back to include a `next`-less member and this stops
+   * compiling, so `npm run test:types` catches it rather than a reviewer.
    */
-  if (!('next' in gated)) {
-    assert.fail('write gate resolved without running the availability callback')
-  }
-
   if (gated.next.kind === 'not_available') {
     return {
       outcome: {
@@ -168,11 +161,7 @@ function rescheduleWriteTimePhase(
     }
   }
 
-  // Same narrowing as the create path above, for the same reason.
-  if (!('next' in gated)) {
-    assert.fail('write gate resolved without running the update callback')
-  }
-
+  // Reaches `next` off `ok` alone, same as the create path above.
   return {
     outcome: { ok: true as const, scheduled_at: gated.next.scheduled_at },
     updateCalls,
