@@ -166,11 +166,25 @@ export function parseRateLimitScriptResult(
   const ttlMs = Number(result[1])
   if (!Number.isFinite(count) || count < 1) return { skip: 'malformed_response' }
 
-  if (count <= limit) return { allowed: true }
+  const ttlUsable = Number.isFinite(ttlMs) && ttlMs > 0
 
-  // The script guarantees a positive TTL, but a broken one must not become an
-  // unbounded Retry-After — fall back to the window we asked for.
-  const retryMs = Number.isFinite(ttlMs) && ttlMs > 0 ? ttlMs : windowMs
+  if (count <= limit) {
+    /*
+     * A count within the limit is only half an answer. The script always
+     * returns a positive TTL alongside it, so a reply whose TTL is missing,
+     * zero, negative or not a number did not come from the script we sent —
+     * and letting a request through on a reply we cannot read is the one
+     * failure mode a limiter must not have. Fall back to the in-memory
+     * bucket, which at least counts.
+     */
+    if (!ttlUsable) return { skip: 'malformed_response' }
+    return { allowed: true }
+  }
+
+  // Refusals are the other way round: the count already says no, so a broken
+  // TTL only costs an accurate Retry-After. Use the window we asked for rather
+  // than discarding a refusal we did understand.
+  const retryMs = ttlUsable ? ttlMs : windowMs
   return { allowed: false, retryAfterSec: Math.max(1, Math.ceil(retryMs / 1000)) }
 }
 

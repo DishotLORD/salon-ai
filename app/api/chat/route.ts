@@ -4581,8 +4581,11 @@ export async function POST(request: Request) {
      * send, so the key space was as large as the attacker cared to make it.
      * Bound to ids that exist, the space is the size of the customer list.
      *
-     * Reached only after the global and per-IP ceilings have already allowed
-     * the request, so the lookup that gets us here is itself bounded.
+     * Second of the three gates. The per-IP bucket has already allowed the
+     * request — so the lookup that got us here is itself bounded — and the
+     * platform budget has not been touched yet. That is deliberate: a request
+     * this bucket refuses consumes no global capacity at all, which is what
+     * stops one restaurant being used to drain the budget for every other.
      */
     const bizLimit = await checkRateLimit(
       chatBusinessRateLimitKey(business.id),

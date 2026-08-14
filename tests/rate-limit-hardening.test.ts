@@ -48,7 +48,7 @@ function at(source: string, pattern: RegExp): number {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('/api/chat runs its ceilings before it does any work', () => {
+describe('/api/chat orders its admission gates ahead of the expensive work', () => {
   const globalCheck = at(CHAT_SOURCE, /checkRateLimit\(\s*\n?\s*CHAT_GLOBAL_KEY/)
   const ipCheck = at(CHAT_SOURCE, /chatIpRateLimitKey\(clientIp\)/)
   const bodyParse = at(CHAT_SOURCE, /await request\.json\(\)/)
@@ -108,10 +108,12 @@ describe('/api/chat runs its ceilings before it does any work', () => {
     assert.ok(bizCheck < globalCheck, 'venue bucket before the platform budget')
   })
 
-  it('both ceilings precede sanitization and the owner check', () => {
+  it('the per-IP bucket precedes sanitization and the owner check', () => {
+    // Only this one can: the venue bucket needs a looked-up id, and the
+    // platform budget deliberately sits behind the venue bucket.
     assert.ok(ipCheck < sanitize)
     // `from_dashboard` used to buy an anonymous caller a Supabase Auth round
-    // trip ahead of any limiter.
+    // trip ahead of any limiter at all.
     assert.ok(ipCheck < ownerCheck)
   })
 
@@ -381,9 +383,36 @@ describe('the distributed reply is only trusted when it is intelligible', () => 
   const LIMIT = 10
   const WINDOW = 60_000
 
-  it('a count within the limit allows', () => {
+  it('a count within the limit allows, when the TTL beside it is intelligible', () => {
     assert.deepEqual(parseRateLimitScriptResult({ result: [3, 45_000] }, LIMIT, WINDOW), {
       allowed: true,
+    })
+  })
+
+  it('a count within the limit does NOT allow on a broken TTL', () => {
+    /*
+     * The asymmetry is the point. The script always returns a positive TTL, so
+     * a reply without one did not come from the script we sent — and letting a
+     * request through on a reply we cannot read is the one failure mode a
+     * limiter must not have. Falling back to the in-memory bucket at least
+     * counts. A refusal is the other way round: the count already said no, so
+     * a broken TTL there only costs an accurate Retry-After.
+     */
+    for (const ttl of ['oops', Number.NaN, 0, -1, null, undefined, Infinity]) {
+      assert.deepEqual(
+        parseRateLimitScriptResult({ result: [3, ttl] }, LIMIT, WINDOW),
+        { skip: 'malformed_response' },
+        String(ttl),
+      )
+    }
+  })
+
+  it('the boundary count is held to the same TTL standard', () => {
+    assert.deepEqual(parseRateLimitScriptResult({ result: [LIMIT, 1_000] }, LIMIT, WINDOW), {
+      allowed: true,
+    })
+    assert.deepEqual(parseRateLimitScriptResult({ result: [LIMIT, 'x'] }, LIMIT, WINDOW), {
+      skip: 'malformed_response',
     })
   })
 
@@ -394,11 +423,6 @@ describe('the distributed reply is only trusted when it is intelligible', () => 
     })
   })
 
-  it('the boundary count is still allowed', () => {
-    assert.deepEqual(parseRateLimitScriptResult({ result: [10, 1_000] }, LIMIT, WINDOW), {
-      allowed: true,
-    })
-  })
 
   it('a command-level Redis error is not read as a count', () => {
     // Upstash returns per-command errors inside an HTTP 200; treating one as a
