@@ -147,7 +147,8 @@ describe('the deployed callers are wired to the right mode', () => {
   })
 
   it('the route picks its policy through the helper, not a literal', () => {
-    assert.match(route, /widgetMetaCacheControl\(searchParams\.get\(WIDGET_META_READINESS_PARAM\)\)/)
+    assert.match(route, /const readinessParam = searchParams\.get\(WIDGET_META_READINESS_PARAM\)/)
+    assert.match(route, /widgetMetaCacheControl\(readinessParam\)/)
     assert.doesNotMatch(route, /'Cache-Control':\s*'public, max-age=60/)
   })
 
@@ -157,11 +158,12 @@ describe('the deployed callers are wired to the right mode', () => {
   })
 
   it('every response still carries the CORS headers', () => {
-    // Three JSON responses (400, 500, 200); each must spread CORS_HEADERS.
+    // Four JSON responses (429, 400, 500, 200); each must spread CORS_HEADERS,
+    // or a cross-origin caller cannot read the answer it was given.
     const responses = route.match(/NextResponse\.json\(/g) ?? []
     const cors = route.match(/\.\.\.CORS_HEADERS/g) ?? []
-    assert.equal(responses.length, 3)
-    assert.equal(cors.length, 3)
+    assert.equal(responses.length, 4)
+    assert.equal(cors.length, responses.length)
   })
 
   it('the response body still carries the readiness contract', () => {

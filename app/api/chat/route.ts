@@ -94,6 +94,17 @@ import {
   type PaymentSettings,
 } from "@/lib/payment-settings";
 import { defaultSystemPrompt } from "@/lib/default-system-prompt";
+import {
+  CHAT_BUSINESS_RATE_LIMIT,
+  CHAT_GLOBAL_KEY,
+  CHAT_GLOBAL_RATE_LIMIT,
+  CHAT_GLOBAL_WINDOW_MS,
+  CHAT_IP_RATE_LIMIT,
+  CHAT_RATE_WINDOW_MS,
+  chatBusinessRateLimitKey,
+  chatIpRateLimitKey,
+  isWellFormedBusinessId,
+} from "@/lib/chat-rate-limit";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { escapeHtml } from "@/lib/escape-html";
 import { buildQuickReplies, type ToolSignal } from "@/lib/pending-field";
@@ -4440,11 +4451,51 @@ function extractSuggestedTimes(
   return previous;
 }
 
-const CHAT_RATE_LIMIT = 40;
-const CHAT_RATE_WINDOW_MS = 60_000;
 
 export async function POST(request: Request) {
   try {
+    /*
+     * Rate limiting comes first, before the body is even read.
+     *
+     * The per-address bucket needs nothing from the request, and it used to sit
+     * behind a full JSON parse plus — whenever the client set `from_dashboard`
+     * — a round trip to Supabase Auth, all of it work an attacker could compel
+     * from a request that was about to be refused anyway.
+     *
+     * The two wider gates run later, once there is something to key them on;
+     * see the notes above each. They are all still ahead of every write and of
+     * the model call.
+     */
+    const clientIp = getClientIp(request);
+
+    /*
+     * The caller's own bucket, and nothing before it that costs anything.
+     *
+     * It is also the first of three admission gates that run narrowest-first —
+     * this caller, then this venue, then the platform. That direction is the
+     * whole design: a request refused by a narrower bucket must not have spent
+     * anything from a wider one first. Checking the platform budget early meant
+     * every request debited it before anyone asked whether the caller was still
+     * welcome, so one address could burn the entire allowance in a window while
+     * its own bucket refused all but the first CHAT_IP_RATE_LIMIT — and the
+     * resulting 429 landed on guests at every other restaurant. A ceiling meant
+     * to bound spending became a way to deny service.
+     */
+    const ipLimit = await checkRateLimit(
+      chatIpRateLimitKey(clientIp),
+      CHAT_IP_RATE_LIMIT,
+      CHAT_RATE_WINDOW_MS,
+    );
+    if (!ipLimit.allowed) {
+      return NextResponse.json(
+        { error: "Too many requests. Please try again shortly." },
+        {
+          status: 429,
+          headers: { "Retry-After": String(ipLimit.retryAfterSec ?? 60) },
+        },
+      );
+    }
+
     /*
      * `guest_customer_id` used to be accepted here: the widget remembered a
      * customer id in localStorage and the server treated it as "this is who I
@@ -4478,8 +4529,6 @@ export async function POST(request: Request) {
       );
     }
 
-    const clientIp = getClientIp(request);
-
     /*
      * A business_id is not optional. There used to be a "preview mode" here for
      * landing-page demos: unreachable (it needed a CHAT_PREVIEW_SECRET header,
@@ -4490,7 +4539,12 @@ export async function POST(request: Request) {
      * The landing page talks to /api/demo/concierge instead: a fixed fictional
      * venue with real facts, and no reservation engine behind it to corrupt.
      */
-    if (!business_id) {
+    /*
+     * Shape-check before Postgres sees it. This is a cheap rejection, not a
+     * defence: valid UUIDs cost nothing to generate, which is why no rate-limit
+     * key is derived from this value — see the business bucket below.
+     */
+    if (!isWellFormedBusinessId(business_id)) {
       return NextResponse.json(
         { error: "business_id required" },
         { status: 400 },
@@ -4502,36 +4556,6 @@ export async function POST(request: Request) {
       if (!owns) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
       }
-    }
-
-    const ipLimit = await checkRateLimit(
-      `chat:ip:${clientIp}`,
-      CHAT_RATE_LIMIT,
-      CHAT_RATE_WINDOW_MS,
-    );
-    if (!ipLimit.allowed) {
-      return NextResponse.json(
-        { error: "Too many requests. Please try again shortly." },
-        {
-          status: 429,
-          headers: { "Retry-After": String(ipLimit.retryAfterSec ?? 60) },
-        },
-      );
-    }
-
-    const bizLimit = await checkRateLimit(
-      `chat:biz:${business_id}`,
-      CHAT_RATE_LIMIT * 2,
-      CHAT_RATE_WINDOW_MS,
-    );
-    if (!bizLimit.allowed) {
-      return NextResponse.json(
-        { error: "Too many requests for this business." },
-        {
-          status: 429,
-          headers: { "Retry-After": String(bizLimit.retryAfterSec ?? 60) },
-        },
-      );
     }
 
     // ── Fetch business ────────────────────────────────────────────────────────
@@ -4547,6 +4571,70 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: "Business not found" },
         { status: 404 },
+      );
+    }
+
+    /*
+     * The venue bucket, keyed on the row that came back rather than on the
+     * string that was sent. Keying on the request minted a fresh Redis key —
+     * and a fresh entry in the in-memory map — for every value anyone chose to
+     * send, so the key space was as large as the attacker cared to make it.
+     * Bound to ids that exist, the space is the size of the customer list.
+     *
+     * Second of the three gates. The per-IP bucket has already allowed the
+     * request — so the lookup that got us here is itself bounded — and the
+     * platform budget has not been touched yet. That is deliberate: a request
+     * this bucket refuses consumes no global capacity at all, which is what
+     * stops one restaurant being used to drain the budget for every other.
+     */
+    const bizLimit = await checkRateLimit(
+      chatBusinessRateLimitKey(business.id),
+      CHAT_BUSINESS_RATE_LIMIT,
+      CHAT_RATE_WINDOW_MS,
+    );
+    if (!bizLimit.allowed) {
+      return NextResponse.json(
+        { error: "Too many requests for this business." },
+        {
+          status: 429,
+          headers: { "Retry-After": String(bizLimit.retryAfterSec ?? 60) },
+        },
+      );
+    }
+
+    /*
+     * The platform budget, last of the three and for the same reason the IP
+     * bucket is first: a request that a narrower gate would refuse must not
+     * have spent from a wider one on the way.
+     *
+     * Checked after the venue bucket, an attacker aiming many addresses at one
+     * real restaurant spends CHAT_BUSINESS_RATE_LIMIT of the platform budget
+     * and then nothing more — every further attempt is refused by that venue's
+     * own bucket, which costs the platform nothing. Checked before it, each of
+     * those refusals had already debited the shared counter, so one restaurant
+     * could be used to exhaust the budget and hand a 429 to every other
+     * restaurant's guests.
+     *
+     * What still reaches here is what the budget is for: traffic spread across
+     * enough addresses and venues that no narrower bucket rejects it. That is
+     * genuine platform-wide demand, and this is the ceiling on it.
+     *
+     * Still ahead of every conversation, customer, message and appointment
+     * write, and ahead of the model call — a refusal here costs one limiter
+     * lookup and the reads already done, never a completion.
+     */
+    const globalBudget = await checkRateLimit(
+      CHAT_GLOBAL_KEY,
+      CHAT_GLOBAL_RATE_LIMIT,
+      CHAT_GLOBAL_WINDOW_MS,
+    );
+    if (!globalBudget.allowed) {
+      return NextResponse.json(
+        { error: "Too many requests. Please try again shortly." },
+        {
+          status: 429,
+          headers: { "Retry-After": String(globalBudget.retryAfterSec ?? 60) },
+        },
       );
     }
 

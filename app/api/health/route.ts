@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 
 import { VENUE_TIMEZONE_STATUS } from '@/lib/booking-wall-clock'
+import { distributedRateLimitConfigured } from '@/lib/rate-limit'
 
 /**
  * Uptime probe. Point Vercel monitoring, Better Stack, Pingdom or a status page
@@ -60,7 +61,14 @@ export async function GET() {
     payments: Boolean(process.env.STRIPE_SECRET_KEY?.trim()),
     payment_webhook: Boolean(process.env.STRIPE_WEBHOOK_SECRET?.trim()),
     address_lookup: Boolean(process.env.GEOAPIFY_API_KEY?.trim()),
-    distributed_rate_limit: Boolean(process.env.UPSTASH_REDIS_REST_URL?.trim()),
+    /*
+     * Asked of the limiter itself rather than re-derived here. This line used
+     * to check the URL alone, so a deployment holding a URL and no token
+     * reported the distributed limiter as configured while every request
+     * quietly fell back to the per-instance map — the one state where the
+     * probe most needs to be believed is exactly the one it got wrong.
+     */
+    distributed_rate_limit: distributedRateLimitConfigured(),
   }
 
   // The concierge cannot answer a guest without the model or the database, and
