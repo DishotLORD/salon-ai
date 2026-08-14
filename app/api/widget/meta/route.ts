@@ -2,11 +2,17 @@ import { NextResponse } from 'next/server'
 
 import { resolveBusinessTimezone } from '@/lib/business-timezone'
 import { loadBusinessReadiness } from '@/lib/business-readiness'
+import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import {
   WIDGET_META_ERROR_CACHE_CONTROL,
+  WIDGET_META_LIVE_CACHE_CONTROL,
+  WIDGET_META_LIVE_IP_RATE_LIMIT,
+  WIDGET_META_LIVE_RATE_WINDOW_MS,
   WIDGET_META_READINESS_PARAM,
+  isLiveReadinessRequest,
   widgetMetaCacheControl,
+  widgetMetaLiveRateLimitKey,
 } from '@/lib/widget-meta-cache'
 import { DEFAULT_WIDGET_THEME, parseWidgetLauncherColor, parseWidgetTheme } from '@/lib/widget-theme'
 
@@ -45,7 +51,41 @@ export function OPTIONS() {
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
   const id = searchParams.get('id')
-  const cacheControl = widgetMetaCacheControl(searchParams.get(WIDGET_META_READINESS_PARAM))
+  const readinessParam = searchParams.get(WIDGET_META_READINESS_PARAM)
+  const cacheControl = widgetMetaCacheControl(readinessParam)
+
+  /*
+   * Only the live mode is metered. The default request is answered from the
+   * CDN for a minute, so repeating it costs nothing to serve; the live mode
+   * bypasses that cache by design and reads the database every time, which is
+   * what makes it worth hammering. Limiting the cached branding request too
+   * would throttle the venue's own page views for no benefit.
+   *
+   * Ahead of every query below, so a refused caller costs one Redis round trip
+   * rather than four Postgres ones.
+   */
+  if (isLiveReadinessRequest(readinessParam)) {
+    const live = await checkRateLimit(
+      widgetMetaLiveRateLimitKey(getClientIp(request)),
+      WIDGET_META_LIVE_IP_RATE_LIMIT,
+      WIDGET_META_LIVE_RATE_WINDOW_MS,
+    )
+    if (!live.allowed) {
+      return NextResponse.json(
+        { error: 'rate_limited' },
+        {
+          status: 429,
+          headers: {
+            // Cross-origin callers must be able to read the refusal, and a
+            // cached 429 would lock out the guest who arrives next.
+            ...CORS_HEADERS,
+            'Cache-Control': WIDGET_META_LIVE_CACHE_CONTROL,
+            'Retry-After': String(live.retryAfterSec ?? 60),
+          },
+        },
+      )
+    }
+  }
 
   if (!id) {
     return NextResponse.json(

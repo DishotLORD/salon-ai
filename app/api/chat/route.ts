@@ -94,6 +94,17 @@ import {
   type PaymentSettings,
 } from "@/lib/payment-settings";
 import { defaultSystemPrompt } from "@/lib/default-system-prompt";
+import {
+  CHAT_BUSINESS_RATE_LIMIT,
+  CHAT_GLOBAL_KEY,
+  CHAT_GLOBAL_RATE_LIMIT,
+  CHAT_GLOBAL_WINDOW_MS,
+  CHAT_IP_RATE_LIMIT,
+  CHAT_RATE_WINDOW_MS,
+  chatBusinessRateLimitKey,
+  chatIpRateLimitKey,
+  isWellFormedBusinessId,
+} from "@/lib/chat-rate-limit";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { escapeHtml } from "@/lib/escape-html";
 import { buildQuickReplies, type ToolSignal } from "@/lib/pending-field";
@@ -4440,11 +4451,55 @@ function extractSuggestedTimes(
   return previous;
 }
 
-const CHAT_RATE_LIMIT = 40;
-const CHAT_RATE_WINDOW_MS = 60_000;
 
 export async function POST(request: Request) {
   try {
+    /*
+     * Rate limiting comes first, before the body is even read.
+     *
+     * Neither ceiling needs to know what was asked, and both used to sit behind
+     * a full JSON parse plus — whenever the client set `from_dashboard` — a
+     * round trip to Supabase Auth, all of it work an attacker could compel from
+     * a request that was about to be refused anyway.
+     */
+    const clientIp = getClientIp(request);
+
+    /*
+     * The platform budget. It is checked ahead of the per-IP bucket on purpose:
+     * an attacker rotating addresses gets a fresh per-IP allowance with each new
+     * one, so the only ceiling that holds against them is the one that does not
+     * depend on who is calling.
+     */
+    const globalBudget = await checkRateLimit(
+      CHAT_GLOBAL_KEY,
+      CHAT_GLOBAL_RATE_LIMIT,
+      CHAT_GLOBAL_WINDOW_MS,
+    );
+    if (!globalBudget.allowed) {
+      return NextResponse.json(
+        { error: "Too many requests. Please try again shortly." },
+        {
+          status: 429,
+          headers: { "Retry-After": String(globalBudget.retryAfterSec ?? 60) },
+        },
+      );
+    }
+
+    const ipLimit = await checkRateLimit(
+      chatIpRateLimitKey(clientIp),
+      CHAT_IP_RATE_LIMIT,
+      CHAT_RATE_WINDOW_MS,
+    );
+    if (!ipLimit.allowed) {
+      return NextResponse.json(
+        { error: "Too many requests. Please try again shortly." },
+        {
+          status: 429,
+          headers: { "Retry-After": String(ipLimit.retryAfterSec ?? 60) },
+        },
+      );
+    }
+
     /*
      * `guest_customer_id` used to be accepted here: the widget remembered a
      * customer id in localStorage and the server treated it as "this is who I
@@ -4478,8 +4533,6 @@ export async function POST(request: Request) {
       );
     }
 
-    const clientIp = getClientIp(request);
-
     /*
      * A business_id is not optional. There used to be a "preview mode" here for
      * landing-page demos: unreachable (it needed a CHAT_PREVIEW_SECRET header,
@@ -4490,7 +4543,12 @@ export async function POST(request: Request) {
      * The landing page talks to /api/demo/concierge instead: a fixed fictional
      * venue with real facts, and no reservation engine behind it to corrupt.
      */
-    if (!business_id) {
+    /*
+     * Shape-check before Postgres sees it. This is a cheap rejection, not a
+     * defence: valid UUIDs cost nothing to generate, which is why no rate-limit
+     * key is derived from this value — see the business bucket below.
+     */
+    if (!isWellFormedBusinessId(business_id)) {
       return NextResponse.json(
         { error: "business_id required" },
         { status: 400 },
@@ -4502,36 +4560,6 @@ export async function POST(request: Request) {
       if (!owns) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
       }
-    }
-
-    const ipLimit = await checkRateLimit(
-      `chat:ip:${clientIp}`,
-      CHAT_RATE_LIMIT,
-      CHAT_RATE_WINDOW_MS,
-    );
-    if (!ipLimit.allowed) {
-      return NextResponse.json(
-        { error: "Too many requests. Please try again shortly." },
-        {
-          status: 429,
-          headers: { "Retry-After": String(ipLimit.retryAfterSec ?? 60) },
-        },
-      );
-    }
-
-    const bizLimit = await checkRateLimit(
-      `chat:biz:${business_id}`,
-      CHAT_RATE_LIMIT * 2,
-      CHAT_RATE_WINDOW_MS,
-    );
-    if (!bizLimit.allowed) {
-      return NextResponse.json(
-        { error: "Too many requests for this business." },
-        {
-          status: 429,
-          headers: { "Retry-After": String(bizLimit.retryAfterSec ?? 60) },
-        },
-      );
     }
 
     // ── Fetch business ────────────────────────────────────────────────────────
@@ -4547,6 +4575,31 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: "Business not found" },
         { status: 404 },
+      );
+    }
+
+    /*
+     * The venue bucket, keyed on the row that came back rather than on the
+     * string that was sent. Keying on the request minted a fresh Redis key —
+     * and a fresh entry in the in-memory map — for every value anyone chose to
+     * send, so the key space was as large as the attacker cared to make it.
+     * Bound to ids that exist, the space is the size of the customer list.
+     *
+     * Reached only after the global and per-IP ceilings have already allowed
+     * the request, so the lookup that gets us here is itself bounded.
+     */
+    const bizLimit = await checkRateLimit(
+      chatBusinessRateLimitKey(business.id),
+      CHAT_BUSINESS_RATE_LIMIT,
+      CHAT_RATE_WINDOW_MS,
+    );
+    if (!bizLimit.allowed) {
+      return NextResponse.json(
+        { error: "Too many requests for this business." },
+        {
+          status: 429,
+          headers: { "Retry-After": String(bizLimit.retryAfterSec ?? 60) },
+        },
       );
     }
 

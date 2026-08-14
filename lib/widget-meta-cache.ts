@@ -45,6 +45,20 @@ export const WIDGET_META_LIVE_CACHE_CONTROL = 'no-store, max-age=0'
 export const WIDGET_META_ERROR_CACHE_CONTROL = 'no-store, max-age=0'
 
 /**
+ * The live mode answers from the database on every call — that is its purpose —
+ * so unlike the cached branding request it puts load on Postgres in proportion
+ * to how often it is asked. One page view opens the widget at most a handful of
+ * times, and the panel does not poll this endpoint, so 60 a minute is far above
+ * any real guest and still stops an uncached hammer.
+ */
+export const WIDGET_META_LIVE_IP_RATE_LIMIT = 60
+export const WIDGET_META_LIVE_RATE_WINDOW_MS = 60_000
+
+export function widgetMetaLiveRateLimitKey(clientIp: string): string {
+  return `widget-meta-live:ip:${clientIp}`
+}
+
+/**
  * Does this request opt into live readiness? Anything other than the exact
  * literal — absent, empty, differently cased, or a value someone assumed would
  * work — keeps the cached branding policy.
