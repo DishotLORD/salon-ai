@@ -75,28 +75,37 @@ describe('/api/chat runs its ceilings before it does any work', () => {
     }
   })
 
-  it('the global budget is checked before the body is parsed', () => {
-    // Parsing a body for a request that is about to be refused is work an
-    // attacker gets for free.
-    assert.ok(globalCheck < bodyParse)
+  it('body parsing is guarded by the per-address bucket, the one gate that needs no body', () => {
+    /*
+     * The wider gates cannot run this early: the venue bucket needs an id that
+     * has been looked up, and putting the platform budget ahead of it is the
+     * bug this ordering fixes. So parsing sits behind the per-address bucket
+     * alone — which is enough, because that bucket bounds how many bodies any
+     * one caller can make the server read.
+     */
+    assert.ok(ipCheck < bodyParse)
+    assert.ok(bodyParse < bizCheck)
+    assert.ok(bodyParse < globalCheck)
   })
 
   it('the per-IP ceiling is checked before the body is parsed', () => {
     assert.ok(ipCheck < bodyParse)
   })
 
-  it('the per-IP ceiling is checked before the global budget', () => {
+  it('the three admission gates run narrowest first', () => {
     /*
-     * Not cosmetic. With the global budget first, every request spends from it
-     * before anyone asks whether this caller is still welcome: one address
-     * could send the entire platform allowance in a window, have its own bucket
-     * refuse all but the first CHAT_IP_RATE_LIMIT of them, and still have
-     * incremented the shared counter CHAT_GLOBAL_RATE_LIMIT times. The 429 then
-     * lands on guests at every other restaurant — a budget meant to bound
-     * spending turned into a denial-of-service lever. Personal bucket first,
-     * and a caller past its own limit stops consuming shared capacity.
+     * Not cosmetic, and the reason is the same at both steps: a request a
+     * narrower bucket would refuse must not have spent from a wider one first.
+     *
+     * Global before IP let one address burn the whole platform allowance while
+     * its own bucket refused all but the first CHAT_IP_RATE_LIMIT. Global
+     * before business let many addresses aimed at one real restaurant do the
+     * same — each fresh IP passed its own bucket, debited the shared counter,
+     * and only then met the venue bucket that refused it. Either way the 429
+     * lands on guests at every other restaurant.
      */
-    assert.ok(ipCheck < globalCheck)
+    assert.ok(ipCheck < bizCheck, 'IP bucket before the venue bucket')
+    assert.ok(bizCheck < globalCheck, 'venue bucket before the platform budget')
   })
 
   it('both ceilings precede sanitization and the owner check', () => {
@@ -106,122 +115,192 @@ describe('/api/chat runs its ceilings before it does any work', () => {
     assert.ok(ipCheck < ownerCheck)
   })
 
-  it('the global budget is still checked before the body is parsed', () => {
-    assert.ok(globalCheck < bodyParse)
-  })
-
-  it('a refused request reaches no conversation insert and no model call', () => {
-    assert.ok(globalCheck < conversationInsert)
-    assert.ok(ipCheck < conversationInsert)
-    assert.ok(globalCheck < openAiCall)
-    assert.ok(ipCheck < openAiCall)
+  it('the body is parsed before the business can be loaded', () => {
+    assert.ok(bodyParse < businessLoad)
   })
 
   it('the business bucket comes after the business has been loaded', () => {
+    // A bucket for a venue nobody has proved exists is a key space the caller
+    // controls; see the provenance suite below.
     assert.ok(businessLoad < bizCheck)
   })
 
-  it('the business bucket still precedes the writes and the model call', () => {
-    assert.ok(bizCheck < conversationInsert)
-    assert.ok(bizCheck < openAiCall)
+  it('every gate precedes the writes and the model call', () => {
+    for (const [name, gate] of Object.entries({ ipCheck, bizCheck, globalCheck })) {
+      assert.ok(gate < conversationInsert, `${name} before the conversation insert`)
+      assert.ok(gate < openAiCall, `${name} before the model call`)
+    }
+  })
+
+  it('the full required order holds end to end', () => {
+    const order = [ipCheck, bodyParse, businessLoad, bizCheck, globalCheck, openAiCall]
+    assert.deepEqual(order, [...order].sort((a, b) => a - b))
   })
 })
 
-describe('one exhausted address cannot spend the platform budget', () => {
+describe('a narrower refusal never spends from a wider budget', () => {
+  type Outcome = 'allowed' | 'ip_429' | 'not_found' | 'biz_429' | 'global_429'
+  /** Where the platform budget sits relative to the narrower buckets. */
+  type Order = 'global-last' | 'global-first' | 'global-before-business'
+
+  const EXISTING = new Set(['biz-a', 'biz-b', 'biz-c'])
+
   /**
-   * The route's two early gates, run against an injected store so the whole
-   * question can be settled in microseconds instead of 1200 real requests.
-   * `order` is the only variable — everything else matches the route.
+   * The route's admission path, run against an injected store so a question
+   * about 1200-request behaviour is settled in microseconds. `order` is the
+   * only variable; everything else — the keys, the limits, the windows, the
+   * 404 on an unknown business — matches the route.
    */
-  function gate(
+  function admit(
     store: Map<string, Bucket>,
     ip: string,
-    order: 'ip-first' | 'global-first',
+    businessId: string,
+    order: Order = 'global-last',
     now = 1_000,
-  ): 'allowed' | 'ip_429' | 'global_429' {
-    const ipGate = () =>
-      checkRateLimitMemory(
-        chatIpRateLimitKey(ip),
-        CHAT_IP_RATE_LIMIT,
-        CHAT_RATE_WINDOW_MS,
-        now,
-        store,
-      ).allowed
-    const globalGate = () =>
-      checkRateLimitMemory(
-        CHAT_GLOBAL_KEY,
-        CHAT_GLOBAL_RATE_LIMIT,
-        CHAT_GLOBAL_WINDOW_MS,
-        now,
-        store,
-      ).allowed
+  ): Outcome {
+    const take = (key: string, limit: number) =>
+      checkRateLimitMemory(key, limit, CHAT_RATE_WINDOW_MS, now, store).allowed
+    const ipGate = () => take(chatIpRateLimitKey(ip), CHAT_IP_RATE_LIMIT)
+    const bizGate = () =>
+      take(chatBusinessRateLimitKey(businessId), CHAT_BUSINESS_RATE_LIMIT)
+    const globalGate = () => take(CHAT_GLOBAL_KEY, CHAT_GLOBAL_RATE_LIMIT)
 
-    if (order === 'ip-first') {
-      if (!ipGate()) return 'ip_429'
-      return globalGate() ? 'allowed' : 'global_429'
-    }
-    if (!globalGate()) return 'global_429'
-    return ipGate() ? 'allowed' : 'ip_429'
+    if (order === 'global-first' && !globalGate()) return 'global_429'
+    if (!ipGate()) return 'ip_429'
+    if (order === 'global-before-business' && !globalGate()) return 'global_429'
+    // The lookup: a business bucket exists only for a row that came back.
+    if (!EXISTING.has(businessId)) return 'not_found'
+    if (!bizGate()) return 'biz_429'
+    if (order === 'global-last' && !globalGate()) return 'global_429'
+    return 'allowed'
   }
 
-  const globalCount = (store: Map<string, Bucket>) => store.get(CHAT_GLOBAL_KEY)?.count ?? 0
+  const spent = (store: Map<string, Bucket>, key: string) => store.get(key)?.count ?? 0
+  const globalSpent = (store: Map<string, Bucket>) => spent(store, CHAT_GLOBAL_KEY)
 
-  it('a single address stops consuming shared capacity once its own bucket is full', () => {
+  it('A. one address flooding spends exactly its own allowance of the budget', () => {
     const store = new Map<string, Bucket>()
-    const flood = CHAT_IP_RATE_LIMIT * 10
-    for (let i = 0; i < flood; i++) gate(store, '198.51.100.1', 'ip-first')
-
-    // It spent exactly its own allowance and not one request more.
-    assert.equal(globalCount(store), CHAT_IP_RATE_LIMIT)
-    assert.ok(globalCount(store) < CHAT_GLOBAL_RATE_LIMIT)
+    for (let i = 0; i < CHAT_IP_RATE_LIMIT * 30; i++) {
+      admit(store, '198.51.100.1', 'biz-a')
+    }
+    assert.equal(globalSpent(store), CHAT_IP_RATE_LIMIT)
+    assert.ok(globalSpent(store) < CHAT_GLOBAL_RATE_LIMIT)
+    // And a guest elsewhere is still served.
+    assert.equal(admit(store, '203.0.113.222', 'biz-b'), 'allowed')
   })
 
-  it('the old order let that same address spend the entire platform budget', () => {
-    // The finding, pinned. Delete the reordering and this is what comes back.
+  it('B. one restaurant under many addresses spends only its own allowance', () => {
+    /*
+     * The regression this reordering exists for. Every request arrives from a
+     * fresh address, so the IP bucket never refuses; the venue bucket does,
+     * after 80. With the platform budget checked before that bucket, all 1400
+     * attempts debited it and the restaurant next door started seeing 429s.
+     */
+    const store = new Map<string, Bucket>()
+    const attempts = CHAT_GLOBAL_RATE_LIMIT + 200
+    let admitted = 0
+    let bizRefusals = 0
+    for (let i = 0; i < attempts; i++) {
+      const outcome = admit(store, `10.1.${Math.floor(i / 250)}.${i % 250}`, 'biz-a')
+      if (outcome === 'allowed') admitted += 1
+      if (outcome === 'biz_429') bizRefusals += 1
+    }
+
+    assert.equal(admitted, CHAT_BUSINESS_RATE_LIMIT)
+    assert.equal(bizRefusals, attempts - CHAT_BUSINESS_RATE_LIMIT)
+    assert.equal(globalSpent(store), CHAT_BUSINESS_RATE_LIMIT)
+    assert.ok(globalSpent(store) < CHAT_GLOBAL_RATE_LIMIT)
+
+    // An unrelated restaurant is untouched.
+    assert.equal(admit(store, '203.0.113.9', 'biz-b'), 'allowed')
+  })
+
+  it('B(regression). the old order let that one restaurant drain the budget', () => {
+    // Delete the reordering and this is what comes back.
     const store = new Map<string, Bucket>()
     for (let i = 0; i < CHAT_GLOBAL_RATE_LIMIT; i++) {
-      gate(store, '198.51.100.1', 'global-first')
+      admit(store, `10.2.${Math.floor(i / 250)}.${i % 250}`, 'biz-a', 'global-before-business')
     }
-    assert.equal(globalCount(store), CHAT_GLOBAL_RATE_LIMIT)
-
-    // And an unrelated guest at another restaurant is now refused by a budget
-    // they never touched.
-    assert.equal(gate(store, '203.0.113.222', 'global-first'), 'global_429')
+    assert.equal(globalSpent(store), CHAT_GLOBAL_RATE_LIMIT)
+    assert.equal(
+      admit(store, '203.0.113.9', 'biz-b', 'global-before-business'),
+      'global_429',
+      'a restaurant that was never attacked is refused',
+    )
   })
 
-  it('under the corrected order that unrelated guest is served', () => {
+  it('A(regression). the old order also let one address drain it', () => {
     const store = new Map<string, Bucket>()
     for (let i = 0; i < CHAT_GLOBAL_RATE_LIMIT; i++) {
-      gate(store, '198.51.100.1', 'ip-first')
+      admit(store, '198.51.100.1', 'biz-a', 'global-first')
     }
-    assert.equal(gate(store, '203.0.113.222', 'ip-first'), 'allowed')
+    assert.equal(globalSpent(store), CHAT_GLOBAL_RATE_LIMIT)
+    assert.equal(admit(store, '203.0.113.222', 'biz-b', 'global-first'), 'global_429')
   })
 
-  it('fresh addresses still reach the global bucket and still exhaust it', () => {
-    // The case the budget exists for: every new IP passes its own empty bucket
-    // and then meets the one ceiling that does not care who is calling.
+  it('C. spread widely enough, traffic still reaches and exhausts the budget', () => {
+    /*
+     * Moving the platform budget behind the narrower buckets must not have
+     * removed it. Fresh address every time and enough venues that neither
+     * narrower bucket refuses, so every request reaches the ceiling — which is
+     * exactly the demand the budget exists to bound.
+     */
     const store = new Map<string, Bucket>()
-    let allowed = 0
+    const venues = Array.from({ length: 30 }, (_, i) => `biz-${i}`)
+    for (const v of venues) EXISTING.add(v)
+
+    const attempts = CHAT_GLOBAL_RATE_LIMIT + 60
+    let admitted = 0
     let globalRefusals = 0
-    for (let i = 0; i < CHAT_GLOBAL_RATE_LIMIT + 50; i++) {
-      const outcome = gate(store, `10.0.${Math.floor(i / 250)}.${i % 250}`, 'ip-first')
-      if (outcome === 'allowed') allowed += 1
-      if (outcome === 'global_429') globalRefusals += 1
+    let narrowRefusals = 0
+    for (let i = 0; i < attempts; i++) {
+      const outcome = admit(store, `10.3.${Math.floor(i / 250)}.${i % 250}`, venues[i % venues.length])
+      if (outcome === 'allowed') admitted += 1
+      else if (outcome === 'global_429') globalRefusals += 1
+      else narrowRefusals += 1
     }
-    assert.equal(allowed, CHAT_GLOBAL_RATE_LIMIT)
-    assert.equal(globalRefusals, 50)
+    for (const v of venues) EXISTING.delete(v)
+
+    assert.equal(narrowRefusals, 0, 'no narrower bucket should have engaged')
+    assert.equal(admitted, CHAT_GLOBAL_RATE_LIMIT)
+    assert.equal(globalSpent(store), CHAT_GLOBAL_RATE_LIMIT)
+    assert.equal(globalRefusals, 60)
   })
 
-  it('each address keeps its own allowance below the global ceiling', () => {
+  it('C. an otherwise-valid request after the ceiling is refused globally', () => {
     const store = new Map<string, Bucket>()
-    for (const ip of ['198.51.100.1', '198.51.100.2', '198.51.100.3']) {
-      for (let i = 0; i < CHAT_IP_RATE_LIMIT; i++) {
-        assert.equal(gate(store, ip, 'ip-first'), 'allowed', ip)
-      }
-      assert.equal(gate(store, ip, 'ip-first'), 'ip_429', ip)
+    store.set(CHAT_GLOBAL_KEY, { count: CHAT_GLOBAL_RATE_LIMIT, resetAt: 61_000 })
+    assert.equal(admit(store, '203.0.113.31', 'biz-c'), 'global_429')
+  })
+
+  it('D. a nonexistent business consumes neither its own bucket nor the budget', () => {
+    const store = new Map<string, Bucket>()
+    const invented = '3f2504e0-4f89-41d3-9a0c-0305e82c3301'
+    for (let i = 0; i < 25; i++) {
+      assert.equal(admit(store, `10.4.0.${i}`, invented), 'not_found')
     }
-    // Three exhausted addresses spent three allowances, not three budgets.
-    assert.equal(globalCount(store), CHAT_IP_RATE_LIMIT * 3)
+    assert.equal(globalSpent(store), 0, 'the platform budget is untouched')
+    assert.equal(spent(store, chatBusinessRateLimitKey(invented)), 0, 'no venue bucket exists')
+    // Only the per-address buckets moved, one request each.
+    assert.equal(spent(store, chatIpRateLimitKey('10.4.0.0')), 1)
+  })
+
+  it('an exhausted address spends nothing from the venue bucket either', () => {
+    const store = new Map<string, Bucket>()
+    for (let i = 0; i < CHAT_IP_RATE_LIMIT * 3; i++) admit(store, '198.51.100.5', 'biz-a')
+    assert.equal(spent(store, chatBusinessRateLimitKey('biz-a')), CHAT_IP_RATE_LIMIT)
+    assert.equal(globalSpent(store), CHAT_IP_RATE_LIMIT)
+  })
+
+  it('each venue keeps its own allowance, and they add up rather than multiply', () => {
+    const store = new Map<string, Bucket>()
+    for (const biz of ['biz-a', 'biz-b', 'biz-c']) {
+      for (let i = 0; i < CHAT_BUSINESS_RATE_LIMIT + 10; i++) {
+        admit(store, `10.5.${biz.charCodeAt(4)}.${i}`, biz)
+      }
+      assert.equal(spent(store, chatBusinessRateLimitKey(biz)), CHAT_BUSINESS_RATE_LIMIT, biz)
+    }
+    assert.equal(globalSpent(store), CHAT_BUSINESS_RATE_LIMIT * 3)
   })
 })
 

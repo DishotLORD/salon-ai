@@ -4457,32 +4457,29 @@ export async function POST(request: Request) {
     /*
      * Rate limiting comes first, before the body is even read.
      *
-     * Neither ceiling needs to know what was asked, and both used to sit behind
-     * a full JSON parse plus — whenever the client set `from_dashboard` — a
-     * round trip to Supabase Auth, all of it work an attacker could compel from
-     * a request that was about to be refused anyway.
+     * The per-address bucket needs nothing from the request, and it used to sit
+     * behind a full JSON parse plus — whenever the client set `from_dashboard`
+     * — a round trip to Supabase Auth, all of it work an attacker could compel
+     * from a request that was about to be refused anyway.
      *
-     * Order within the pair matters too; see the note above the IP bucket.
+     * The two wider gates run later, once there is something to key them on;
+     * see the notes above each. They are all still ahead of every write and of
+     * the model call.
      */
     const clientIp = getClientIp(request);
 
     /*
-     * The caller's own bucket comes first, and the order matters more than it
-     * looks.
+     * The caller's own bucket, and nothing before it that costs anything.
      *
-     * Checking the platform budget first meant every request spent from it
-     * before anyone asked whether this caller was still welcome. One address
-     * could send the whole global allowance in a window; its own bucket refused
-     * all but the first CHAT_IP_RATE_LIMIT of them, but each refusal had
-     * already incremented the shared counter — so a single IP could exhaust the
-     * platform budget and hand a 429 to guests at every other restaurant. A
-     * ceiling meant to bound spending became a way to deny service.
-     *
-     * With the personal bucket first, a caller past its own limit stops
-     * consuming shared capacity entirely. What the global budget still catches
-     * is the case it exists for: an attacker rotating addresses, where every
-     * fresh IP passes its own empty bucket and then meets the one ceiling that
-     * does not care who is calling.
+     * It is also the first of three admission gates that run narrowest-first —
+     * this caller, then this venue, then the platform. That direction is the
+     * whole design: a request refused by a narrower bucket must not have spent
+     * anything from a wider one first. Checking the platform budget early meant
+     * every request debited it before anyone asked whether the caller was still
+     * welcome, so one address could burn the entire allowance in a window while
+     * its own bucket refused all but the first CHAT_IP_RATE_LIMIT — and the
+     * resulting 429 landed on guests at every other restaurant. A ceiling meant
+     * to bound spending became a way to deny service.
      */
     const ipLimit = await checkRateLimit(
       chatIpRateLimitKey(clientIp),
@@ -4495,21 +4492,6 @@ export async function POST(request: Request) {
         {
           status: 429,
           headers: { "Retry-After": String(ipLimit.retryAfterSec ?? 60) },
-        },
-      );
-    }
-
-    const globalBudget = await checkRateLimit(
-      CHAT_GLOBAL_KEY,
-      CHAT_GLOBAL_RATE_LIMIT,
-      CHAT_GLOBAL_WINDOW_MS,
-    );
-    if (!globalBudget.allowed) {
-      return NextResponse.json(
-        { error: "Too many requests. Please try again shortly." },
-        {
-          status: 429,
-          headers: { "Retry-After": String(globalBudget.retryAfterSec ?? 60) },
         },
       );
     }
@@ -4613,6 +4595,42 @@ export async function POST(request: Request) {
         {
           status: 429,
           headers: { "Retry-After": String(bizLimit.retryAfterSec ?? 60) },
+        },
+      );
+    }
+
+    /*
+     * The platform budget, last of the three and for the same reason the IP
+     * bucket is first: a request that a narrower gate would refuse must not
+     * have spent from a wider one on the way.
+     *
+     * Checked after the venue bucket, an attacker aiming many addresses at one
+     * real restaurant spends CHAT_BUSINESS_RATE_LIMIT of the platform budget
+     * and then nothing more — every further attempt is refused by that venue's
+     * own bucket, which costs the platform nothing. Checked before it, each of
+     * those refusals had already debited the shared counter, so one restaurant
+     * could be used to exhaust the budget and hand a 429 to every other
+     * restaurant's guests.
+     *
+     * What still reaches here is what the budget is for: traffic spread across
+     * enough addresses and venues that no narrower bucket rejects it. That is
+     * genuine platform-wide demand, and this is the ceiling on it.
+     *
+     * Still ahead of every conversation, customer, message and appointment
+     * write, and ahead of the model call — a refusal here costs one limiter
+     * lookup and the reads already done, never a completion.
+     */
+    const globalBudget = await checkRateLimit(
+      CHAT_GLOBAL_KEY,
+      CHAT_GLOBAL_RATE_LIMIT,
+      CHAT_GLOBAL_WINDOW_MS,
+    );
+    if (!globalBudget.allowed) {
+      return NextResponse.json(
+        { error: "Too many requests. Please try again shortly." },
+        {
+          status: 429,
+          headers: { "Retry-After": String(globalBudget.retryAfterSec ?? 60) },
         },
       );
     }
