@@ -3,7 +3,13 @@ import OpenAI from 'openai'
 
 import { MENU_PDF_MAX_BYTES, MENU_PDF_MAX_MB } from '@/lib/menu-pdf-limits'
 import {
+  MENU_OCR_MAX_PAGES,
+  decideOcrCoverage,
+  ocrCoverageMessage,
+} from '@/lib/menu-ocr-coverage'
+import {
   extractPdfTextLayer,
+  getPdfPageCount,
   INVALID_PDF_MESSAGE,
   isInvalidPdfError,
   pdfReadErrorMessage,
@@ -18,18 +24,26 @@ export const maxDuration = 120 // 2 minutes for OCR of large PDFs
 
 
 /**
- * OCR renders ten pages at 2.5× and sends them to GPT-4o Vision with a
- * 16k-token budget. That is the single most expensive request this product can
- * make, and re-uploading the same menu a few times in a row is a normal thing
- * for someone to do while fiddling with settings. Capped per venue.
+ * OCR renders pages at 2.5× and sends them to GPT-4o Vision with a 16k-token
+ * budget. That is the single most expensive request this product can make, and
+ * re-uploading the same menu a few times in a row is a normal thing for someone
+ * to do while fiddling with settings. Capped per venue.
  */
 const OCR_LIMIT_PER_HOUR = 12
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
 // ── OCR: render PDF pages to PNGs, send to GPT-4o Vision ─────────────────────
+/**
+ * Only ever called once coverage has been established, so `MENU_OCR_MAX_PAGES`
+ * here is a ceiling that the document is already known to fit inside — not a
+ * silent truncation point.
+ */
 async function ocrPdf(buffer: Buffer): Promise<string> {
-  const pageImages = await renderPdfPagesToPngBase64(buffer, { maxPages: 10, scale: 2.5 })
+  const pageImages = await renderPdfPagesToPngBase64(buffer, {
+    maxPages: MENU_OCR_MAX_PAGES,
+    scale: 2.5,
+  })
 
   // Send pages to GPT-4o Vision
   const content: OpenAI.Chat.Completions.ChatCompletionContentPart[] = [
@@ -184,6 +198,8 @@ export async function POST(request: Request) {
   let text = ''
   let pages = 0
   let usedOcr = false
+  /** How many pages OCR actually covered; only set once coverage is proven. */
+  let ocrPageCount = 0
 
   try {
     const result = await extractPdfTextLayer(buffer)
@@ -200,6 +216,57 @@ export async function POST(request: Request) {
   const pageCount = pages || 1
   const parseIncomplete = () => parsedPdfLikelyIncomplete(text, pageCount)
   const shouldOcr = !text || forceOcr || parseIncomplete()
+
+  /*
+   * Coverage, decided before a single page is rendered.
+   *
+   * This gate exists because OCR used to run to its page ceiling on a document
+   * of any length, and whatever came back replaced the extracted text and was
+   * saved behind a 200 — a 60-page menu became a 10-page one, and nothing said
+   * so. Refusing here rather than after the render also means an oversized
+   * document never spends the venue's OCR budget or two minutes of function
+   * time on work that must be thrown away.
+   *
+   * Note this sits inside `shouldOcr`. A long PDF whose text layer is complete
+   * never reaches it: extraction reads every page, so a 100-page searchable
+   * menu is saved in full, exactly as before.
+   */
+  if (shouldOcr) {
+    let totalPages: number | null = pages > 0 ? pages : null
+    if (totalPages === null) {
+      /*
+       * Extraction threw, so the count never got out. Ask for it directly
+       * rather than assuming the document is short — that assumption is the
+       * one that produced a ten-page menu from a sixty-page file.
+       */
+      try {
+        totalPages = await getPdfPageCount(buffer)
+      } catch (err) {
+        console.error(
+          '[pdf] page count failed:',
+          err instanceof Error ? err.message : err,
+        )
+        totalPages = null
+      }
+    }
+
+    const coverage = decideOcrCoverage(totalPages)
+    if (!coverage.ok) {
+      // Nothing is written on this path, so whatever menu the venue already had
+      // is still theirs. The file is not called invalid — it is longer than one
+      // OCR pass can honestly read.
+      return NextResponse.json(
+        {
+          error: ocrCoverageMessage(coverage),
+          code: coverage.reason,
+          totalPages: coverage.reason === 'ocr_page_limit' ? coverage.totalPages : null,
+          maxOcrPages: MENU_OCR_MAX_PAGES,
+        },
+        { status: 422 },
+      )
+    }
+    ocrPageCount = coverage.ocrPages
+  }
 
   /*
    * OCR is the expensive path, so it gets a budget. Spending it out is not
@@ -278,7 +345,14 @@ export async function POST(request: Request) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  return NextResponse.json({ text, pages, usedOcr })
+  return NextResponse.json({
+    text,
+    pages,
+    usedOcr,
+    // Present only when OCR ran, and equal to `pages` by construction: the
+    // coverage gate above refuses anything it cannot read end to end.
+    ...(usedOcr ? { ocrPages: ocrPageCount } : {}),
+  })
 }
 
 // ── DELETE /api/menu/pdf ──────────────────────────────────────────────────────
