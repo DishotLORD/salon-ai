@@ -4,6 +4,7 @@ import { describe, it } from 'node:test'
 
 import {
   MENU_OCR_MAX_PAGES,
+  OCR_UNAVAILABLE_MESSAGE,
   decideOcrCoverage,
   ocrCoverageMessage,
 } from '../lib/menu-ocr-coverage.ts'
@@ -113,6 +114,30 @@ describe('the refusal tells the owner what actually happened', () => {
 
   it('offers the route that does work at any length', () => {
     assert.match(message, /text-searchable/)
+  })
+
+  it('never suggests splitting the menu across uploads', () => {
+    /*
+     * A venue has one `businesses.menu_pdf_text`, so a second upload replaces
+     * the first. Advising someone to upload their food and drink menus
+     * separately would talk them into deleting one with the other — advice that
+     * destroys data is worse than no advice.
+     */
+    for (const text of [
+      message,
+      ocrCoverageMessage(decideOcrCoverage(null)),
+      OCR_UNAVAILABLE_MESSAGE,
+    ]) {
+      assert.doesNotMatch(text, /separate|separately|split|two documents|shorter documents/i)
+    }
+  })
+
+  it('the unavailable-OCR message states the cause, the loss and the way out', () => {
+    assert.match(OCR_UNAVAILABLE_MESSAGE, /image reading/)
+    assert.match(OCR_UNAVAILABLE_MESSAGE, /[Nn]othing was saved/)
+    assert.match(OCR_UNAVAILABLE_MESSAGE, /menu is unchanged/)
+    assert.match(OCR_UNAVAILABLE_MESSAGE, /text-searchable|Settings/)
+    assert.doesNotMatch(OCR_UNAVAILABLE_MESSAGE, /invalid|corrupt/i)
   })
 
   it('the unknown-count refusal says the same three things', () => {
@@ -229,6 +254,29 @@ describe('behaviour preserved for documents that already worked', () => {
     assert.match(ROUTE, /status: 429/)
     assert.match(ROUTE, /INVALID_PDF_MESSAGE/)
     assert.match(ROUTE, /MENU_PDF_MAX_BYTES/)
+  })
+
+  it('an exhausted budget refuses on an unusable text layer, never falls back to it', () => {
+    /*
+     * The fallback used to keep any non-empty text. `textLayerUnusable` is what
+     * separates "we have a real menu and force_ocr was only a preference" from
+     * "what we have is partial", and only the first may be handed back.
+     */
+    assert.match(ROUTE, /const textLayerUnusable = !text \|\| parseIncomplete\(\)/)
+    assert.match(ROUTE, /const shouldOcr = textLayerUnusable \|\| forceOcr/)
+    assert.match(ROUTE, /if \(textLayerUnusable\) \{[\s\S]{0,600}status: 429/)
+    assert.match(ROUTE, /code: 'ocr_unavailable'/)
+    // The old condition keyed on emptiness alone and let partial text through.
+    assert.doesNotMatch(ROUTE, /if \(!text\) \{[\s\S]{0,400}status: 429/)
+  })
+
+  it('the 429 keeps its Retry-After', () => {
+    assert.match(ROUTE, /'Retry-After': String\(ocrBudget\.retryAfterSec \?\? 600\)/)
+  })
+
+  it('the resolved page count replaces the one extraction failed to report', () => {
+    // Otherwise a successful OCR could answer `pages: 0, ocrPages: 8`.
+    assert.match(ROUTE, /pages = coverage\.ocrPages/)
   })
 
   it('authorization still precedes body buffering', () => {

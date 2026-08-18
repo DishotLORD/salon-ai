@@ -4,6 +4,7 @@ import OpenAI from 'openai'
 import { MENU_PDF_MAX_BYTES, MENU_PDF_MAX_MB } from '@/lib/menu-pdf-limits'
 import {
   MENU_OCR_MAX_PAGES,
+  OCR_UNAVAILABLE_MESSAGE,
   decideOcrCoverage,
   ocrCoverageMessage,
 } from '@/lib/menu-ocr-coverage'
@@ -215,7 +216,18 @@ export async function POST(request: Request) {
 
   const pageCount = pages || 1
   const parseIncomplete = () => parsedPdfLikelyIncomplete(text, pageCount)
-  const shouldOcr = !text || forceOcr || parseIncomplete()
+
+  /*
+   * Why OCR is wanted decides what may happen if it cannot run, so the two
+   * reasons are kept apart rather than collapsed into one boolean.
+   *
+   * `textLayerUnusable` means what we have is missing or known to be partial —
+   * headings without prices, a page of footers. Nothing downstream may save it.
+   * `forceOcr` on top of a text layer that already looks complete is a
+   * preference, not a defect, and falling back to that complete text is safe.
+   */
+  const textLayerUnusable = !text || parseIncomplete()
+  const shouldOcr = textLayerUnusable || forceOcr
 
   /*
    * Coverage, decided before a single page is rendered.
@@ -266,22 +278,37 @@ export async function POST(request: Request) {
       )
     }
     ocrPageCount = coverage.ocrPages
+    /*
+     * The count is now known for certain, including on the path where
+     * extraction threw and it had to be fetched. Adopting it here keeps the
+     * success response honest: `pages` is the document's real length rather
+     * than the 0 that extraction left behind, and it equals `ocrPages`.
+     */
+    pages = coverage.ocrPages
   }
 
   /*
-   * OCR is the expensive path, so it gets a budget. Spending it out is not
-   * necessarily an error: if the free text layer produced something usable we
-   * quietly hand that back instead. It is only fatal when there is nothing else.
+   * OCR is the expensive path, so it gets a budget.
+   *
+   * Running out of it is only survivable when there is already a complete text
+   * layer to fall back on. This branch used to keep any non-empty text, which
+   * meant a document whose extraction was judged *incomplete* — the very reason
+   * OCR was wanted — got saved anyway the moment the budget ran dry: headings
+   * with no prices, stored as the venue's menu, behind a 200. That is the same
+   * defect this PR exists to remove, reached by a different route.
    */
   let ocrAllowed = true
   if (shouldOcr) {
     const ocrBudget = await checkRateLimit(`menu-ocr:${business_id}`, OCR_LIMIT_PER_HOUR, 3_600_000)
     if (!ocrBudget.allowed) {
-      if (!text) {
+      if (textLayerUnusable) {
+        // Nothing readable and nothing safe to fall back on. Refuse and leave
+        // whatever menu the venue already had in place.
         return NextResponse.json(
           {
-            error:
-              'This menu needs image reading, and that has been used heavily in the last hour. Try again shortly, or paste the menu text into Settings → Menu.',
+            error: OCR_UNAVAILABLE_MESSAGE,
+            code: 'ocr_unavailable',
+            maxOcrPages: MENU_OCR_MAX_PAGES,
           },
           {
             status: 429,
@@ -289,7 +316,9 @@ export async function POST(request: Request) {
           },
         )
       }
-      console.warn('[pdf] OCR budget spent for', business_id, '— keeping the text-layer extraction')
+      // Only `force_ocr` asked for this, and the text layer already looks
+      // complete — handing that back is a real menu, not a partial one.
+      console.warn('[pdf] OCR budget spent for', business_id, '— keeping the complete text layer')
       ocrAllowed = false
     }
   }

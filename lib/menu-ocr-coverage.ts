@@ -75,15 +75,28 @@ export function ocrCoverageMessage(decision: OcrCoverageDecision): string {
   if (decision.ok) return ''
   if (decision.reason === 'ocr_page_limit') {
     return (
-      `This PDF has ${decision.totalPages} pages and needs image reading, but that ` +
-      `currently covers up to ${MENU_OCR_MAX_PAGES} pages in one pass. Nothing was saved and ` +
-      `your current menu is unchanged. Export a text-searchable PDF — those are read in full at ` +
-      `any length — or upload the food and drink menus as separate, shorter documents.`
+      `This PDF has ${decision.totalPages} pages and needs image reading, but that currently ` +
+      `covers up to ${MENU_OCR_MAX_PAGES} pages in one pass. Nothing was saved and your current ` +
+      `menu is unchanged. Export the menu as a text-searchable PDF and upload it again — ` +
+      `searchable PDFs are read in full however long they are.`
     )
   }
   return (
     'We could not work out how many pages this PDF has, so we could not confirm the whole menu ' +
-    'would be read. Nothing was saved and your current menu is unchanged. Try exporting it as a ' +
-    'text-searchable PDF and uploading again.'
+    'would be read. Nothing was saved and your current menu is unchanged. Export the menu as a ' +
+    'text-searchable PDF and upload it again.'
   )
 }
+
+/**
+ * When OCR is needed but its hourly budget is spent.
+ *
+ * Deliberately does not suggest splitting the menu across uploads: a venue has
+ * one `businesses.menu_pdf_text`, so a second upload replaces the first rather
+ * than adding to it, and telling an owner otherwise would talk them into
+ * deleting their own food menu with their drinks list.
+ */
+export const OCR_UNAVAILABLE_MESSAGE =
+  'This menu needs image reading, and that has been used heavily in the last hour. Nothing was ' +
+  'saved and your current menu is unchanged. Try again shortly, export the menu as a ' +
+  'text-searchable PDF, or paste the menu text into Settings → Menu.'

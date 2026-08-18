@@ -3,6 +3,7 @@ import { describe, it } from 'node:test'
 
 import {
   MENU_OCR_MAX_PAGES,
+  OCR_UNAVAILABLE_MESSAGE,
   decideOcrCoverage,
   ocrCoverageMessage,
 } from '../lib/menu-ocr-coverage.ts'
@@ -72,8 +73,14 @@ function runUpload(doc: Doc): Outcome {
   }
 
   let text = doc.textLayer
-  const pages = doc.reportedPages
-  const shouldOcr = !text || doc.forceOcr === true || !doc.textLayerComplete
+  let pages = doc.reportedPages
+  /*
+   * Missing or known-partial. Kept apart from `forceOcr`, because what may
+   * happen when OCR cannot run depends entirely on which of the two asked
+   * for it.
+   */
+  const textLayerUnusable = !text || !doc.textLayerComplete
+  const shouldOcr = textLayerUnusable || doc.forceOcr === true
 
   let ocrPageCount = 0
   if (shouldOcr) {
@@ -91,14 +98,20 @@ function runUpload(doc: Doc): Outcome {
       return out
     }
     ocrPageCount = coverage.ocrPages
+    // The length is now known for certain, including where extraction threw.
+    pages = coverage.ocrPages
 
     out.budgetChecked = true
     if (doc.ocrBudgetSpent) {
-      if (!text) {
+      if (textLayerUnusable) {
+        // Nothing readable and nothing safe to fall back on.
         out.status = 429
+        out.code = 'ocr_unavailable'
+        out.message = OCR_UNAVAILABLE_MESSAGE
+        assert.equal(db.menu_pdf_text, EXISTING_MENU, 'refusal must not touch the stored menu')
         return out
       }
-      // Budget spent but the text layer gave us something: keep it.
+      // Only force_ocr asked, and the text layer already looks complete.
     } else {
       out.ocrRan = true
       const ocrText = (doc.ocrText ?? '').trim()
@@ -300,8 +313,44 @@ describe('I. a page count that cannot be established fails safe', () => {
   })
 })
 
-describe('J. the OCR budget path is unchanged', () => {
-  it('a short scan with no budget and no text still 429s', () => {
+describe('J. an exhausted OCR budget never launders an incomplete text layer', () => {
+  /*
+   * The hole this closes. OCR being unavailable used to mean "keep whatever the
+   * text layer produced", and that included text the pipeline had *already
+   * judged incomplete* — headings with no prices — which then became the
+   * venue's stored menu behind a 200. Same defect as the page ceiling, reached
+   * through the rate limiter instead.
+   */
+
+  it('A. an incomplete text layer with no budget is refused, not saved', () => {
+    const r = runUpload({
+      textLayer: 'HEADINGS ONLY, NO PRICES',
+      reportedPages: 6,
+      truePages: 6,
+      textLayerComplete: false,
+      ocrBudgetSpent: true,
+    })
+    assert.equal(r.status, 429)
+    assert.equal(r.code, 'ocr_unavailable')
+    assert.equal(r.ocrRan, false, 'OCR must not run without budget')
+    assert.equal(r.updateCalled, false, 'the incomplete text must not be persisted')
+    assert.equal(r.savedText, null, 'the existing menu must survive')
+  })
+
+  it('A. the refusal says image reading is unavailable and nothing was saved', () => {
+    const r = runUpload({
+      textLayer: 'HEADINGS ONLY',
+      reportedPages: 6,
+      truePages: 6,
+      textLayerComplete: false,
+      ocrBudgetSpent: true,
+    })
+    assert.match(r.message ?? '', /image reading/)
+    assert.match(r.message ?? '', /[Nn]othing was saved/)
+    assert.match(r.message ?? '', /menu is unchanged/)
+  })
+
+  it('B. an empty text layer with no budget still 429s, as before', () => {
     const r = runUpload({
       textLayer: '',
       reportedPages: 6,
@@ -313,17 +362,36 @@ describe('J. the OCR budget path is unchanged', () => {
     assert.equal(r.updateCalled, false)
   })
 
-  it('a short document with a usable text layer keeps it when the budget is spent', () => {
+  it('C. a complete text layer + force_ocr with no budget keeps the complete text', () => {
+    /*
+     * The one safe fallback, and the reason the two OCR triggers are tracked
+     * separately. Nothing here is partial: extraction already produced a menu
+     * that passes the completeness check, and `force_ocr` was a preference. The
+     * request succeeds with that text and `usedOcr: false`.
+     */
     const r = runUpload({
-      textLayer: 'USABLE TEXT LAYER',
+      textLayer: 'A COMPLETE TEXT LAYER WITH PRICES',
       reportedPages: 6,
       truePages: 6,
-      textLayerComplete: false,
+      textLayerComplete: true,
+      forceOcr: true,
       ocrBudgetSpent: true,
     })
     assert.equal(r.status, 200)
-    assert.equal(r.savedText, 'USABLE TEXT LAYER')
+    assert.equal(r.savedText, 'A COMPLETE TEXT LAYER WITH PRICES')
     assert.equal(r.usedOcr, false)
+    assert.equal(r.ocrRan, false)
+  })
+
+  it('the rate limit itself is not weakened — budget is still consulted', () => {
+    const r = runUpload({
+      textLayer: '',
+      reportedPages: 6,
+      truePages: 6,
+      textLayerComplete: false,
+      ocrText: 'OCR TEXT',
+    })
+    assert.equal(r.budgetChecked, true)
   })
 
   it('a long document never reaches the budget check at all', () => {
@@ -335,6 +403,51 @@ describe('J. the OCR budget path is unchanged', () => {
       textLayerComplete: false,
     })
     assert.equal(r.budgetChecked, false)
+  })
+})
+
+describe('reported page counts describe the real document', () => {
+  it('a successful OCR reports pages === ocrPages === the true length', () => {
+    // Extraction threw, so `pages` was 0; the resolved count must replace it
+    // rather than travelling back to the owner as a zero-page menu.
+    const r = runUpload({
+      textLayer: '',
+      reportedPages: 0,
+      truePages: 8,
+      textLayerComplete: false,
+      ocrText: 'OCR OF ALL 8 PAGES',
+    })
+    assert.equal(r.status, 200)
+    assert.equal(r.usedOcr, true)
+    assert.equal(r.pages, 8)
+    assert.equal(r.ocrPages, 8)
+  })
+
+  it('the two never disagree on any OCR success', () => {
+    for (const n of [1, 4, 8, 10]) {
+      for (const reported of [n, 0]) {
+        const r = runUpload({
+          textLayer: '',
+          reportedPages: reported,
+          truePages: n,
+          textLayerComplete: false,
+          ocrText: `OCR ${n}`,
+        })
+        assert.equal(r.pages, n, `pages for ${n} (reported ${reported})`)
+        assert.equal(r.ocrPages, n, `ocrPages for ${n} (reported ${reported})`)
+      }
+    }
+  })
+
+  it('a text-layer save still reports the extractor’s own count', () => {
+    const r = runUpload({
+      textLayer: 'FULL TEXT',
+      reportedPages: 42,
+      truePages: 42,
+      textLayerComplete: true,
+    })
+    assert.equal(r.pages, 42)
+    assert.equal(r.ocrPages, undefined, 'no OCR ran, so no coverage claim is made')
   })
 })
 
