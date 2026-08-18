@@ -24,6 +24,23 @@ import {
 export const INVALID_PDF_MESSAGE =
   'That PDF could not be read. Export it again from your design tool and try once more.'
 
+/**
+ * What the owner is told when the server could not draw the PDF.
+ *
+ * Distinct from INVALID_PDF_MESSAGE on purpose: the file is fine, our renderer
+ * could not draw it. Calling a valid menu invalid sends the owner off to fix
+ * something that is not broken.
+ *
+ * This replaced a fallthrough that appended the caught exception verbatim, so a
+ * canvas mismatch reached a restaurant owner as
+ * "Could not read this PDF. Value is none of these types `String`, `Path`,".
+ * The internal text still goes to the server log, where someone can act on it.
+ */
+export const RENDER_FAILED_MESSAGE =
+  'We could not render this menu PDF for image reading. Nothing was saved and your current menu ' +
+  'is unchanged. Try exporting the PDF again from your design tool, or paste the menu text into ' +
+  'Settings → Menu.'
+
 const DOMMATRIX_HINT = /DOMMatrix is not defined/i
 
 let polyfillsEnsured = false
@@ -113,7 +130,9 @@ export function pdfReadErrorMessage(err: unknown): string {
     return 'Could not render this PDF on the server. Please try again, or paste the menu text into Settings → Menu.'
   }
   if (isInvalidPdfError(err)) return INVALID_PDF_MESSAGE
-  return `Could not read this PDF. ${message}`
+  // Everything else is a render/native failure. The exception text belongs in
+  // the server log, not in front of a restaurant owner.
+  return RENDER_FAILED_MESSAGE
 }
 
 /**
