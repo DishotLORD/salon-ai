@@ -16,6 +16,20 @@ import {
   pdfReadErrorMessage,
   renderPdfPagesToPngBase64,
 } from '@/lib/menu-pdf-read'
+import {
+  MENU_CHUNK_INSERT_BATCH,
+  MENU_INDEX_BUSY_MESSAGE,
+  MENU_INDEX_FAILED_MESSAGE,
+  MENU_INDEX_LIMIT_PER_HOUR,
+  MENU_INDEX_WINDOW_MS,
+  MENU_MAX_CHUNKS_SYNC,
+  MENU_TOO_LARGE_MESSAGE,
+  buildChunkRows,
+  embedMenuChunks,
+  menuIndexRateLimitKey,
+} from '@/lib/menu-indexing'
+import { chunkMenuText, chunksCoverSource } from '@/lib/menu-chunking'
+import { normalizeMenuText } from '@/lib/menu-ocr-normalize'
 import { checkRateLimit } from '@/lib/rate-limit'
 import { businessIdFromUrl, declaredBodyTooLarge } from '@/lib/upload-guard'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -367,20 +381,152 @@ export async function POST(request: Request) {
     )
   }
 
-  const { error } = await supabaseAdmin
-    .from('businesses')
-    .update({ menu_pdf_text: text })
-    .eq('id', business_id)
+  /*
+   * From here the menu is indexed before it is published.
+   *
+   * `businesses.menu_pdf_text` used to be written the moment text existed. It
+   * is now written only inside activate_menu_document, in the same transaction
+   * that flips the new document to active — so the stored text and the indexed
+   * document are always the same upload. Writing them apart is how a venue ends
+   * up with two current menus: the owner reads the new one in Settings while
+   * retrieval still serves the old, or the reverse, and neither is a menu
+   * anybody chose.
+   *
+   * Every refusal below therefore leaves the previous menu exactly as it was.
+   */
+  const menuText = normalizeMenuText(text)
+  if (!menuText) {
+    return NextResponse.json(
+      { error: 'No text found in this PDF even after OCR.' },
+      { status: 422 },
+    )
+  }
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  let chunks
+  try {
+    chunks = chunkMenuText(menuText, { source: usedOcr ? 'pdf_ocr' : 'pdf_text' })
+  } catch (err) {
+    console.error('[menu-index] chunking failed:', err instanceof Error ? err.message : err)
+    return NextResponse.json(
+      { error: MENU_INDEX_FAILED_MESSAGE, code: 'chunking_failed' },
+      { status: 422 },
+    )
+  }
+
+  if (chunks.length === 0 || !chunksCoverSource(menuText, chunks)) {
+    // A chunker that silently drops a page is the failure this design exists to
+    // avoid; cheap to prove it did not, and fatal if it did.
+    console.error('[menu-index] chunk coverage check failed for', business_id)
+    return NextResponse.json(
+      { error: MENU_INDEX_FAILED_MESSAGE, code: 'chunking_failed' },
+      { status: 422 },
+    )
+  }
+
+  // Before embeddings, before any document row: an oversized menu costs nothing.
+  if (chunks.length > MENU_MAX_CHUNKS_SYNC) {
+    return NextResponse.json(
+      {
+        error: MENU_TOO_LARGE_MESSAGE,
+        code: 'menu_too_large',
+        chunks: chunks.length,
+        maxChunks: MENU_MAX_CHUNKS_SYNC,
+      },
+      { status: 422 },
+    )
+  }
+
+  const indexBudget = await checkRateLimit(
+    menuIndexRateLimitKey(business_id),
+    MENU_INDEX_LIMIT_PER_HOUR,
+    MENU_INDEX_WINDOW_MS,
+  )
+  if (!indexBudget.allowed) {
+    return NextResponse.json(
+      { error: MENU_INDEX_BUSY_MESSAGE, code: 'menu_index_rate_limited' },
+      { status: 429, headers: { 'Retry-After': String(indexBudget.retryAfterSec ?? 600) } },
+    )
+  }
+
+  // Opens the job under a row lock, or refuses because one is already running.
+  const { data: documentId, error: beginError } = await supabaseAdmin.rpc('begin_menu_indexing', {
+    p_business_id: business_id,
+    p_source: usedOcr ? 'pdf_ocr' : 'pdf_text',
+    p_char_count: menuText.length,
+  })
+  if (beginError || typeof documentId !== 'string') {
+    const busy = /menu_processing/.test(beginError?.message ?? '')
+    console.error('[menu-index] begin failed:', beginError?.message ?? 'no document id')
+    return NextResponse.json(
+      {
+        error: busy ? MENU_INDEX_BUSY_MESSAGE : MENU_INDEX_FAILED_MESSAGE,
+        code: busy ? 'menu_processing' : 'index_begin_failed',
+      },
+      { status: busy ? 409 : 500 },
+    )
+  }
+
+  /** Retire the half-built document so the venue is not locked out. */
+  const abandon = async () => {
+    const { error } = await supabaseAdmin.rpc('fail_menu_document', {
+      p_document_id: documentId,
+      p_business_id: business_id,
+    })
+    if (error) console.error('[menu-index] could not mark document failed:', error.message)
+  }
+
+  const embedded = await embedMenuChunks(openai, chunks)
+  if (!embedded.ok) {
+    await abandon()
+    return NextResponse.json(
+      { error: MENU_INDEX_FAILED_MESSAGE, code: `embedding_${embedded.reason}` },
+      { status: embedded.reason === 'timeout' ? 504 : 502 },
+    )
+  }
+
+  const rows = buildChunkRows(chunks, embedded.embeddings, business_id, documentId)
+  for (let i = 0; i < rows.length; i += MENU_CHUNK_INSERT_BATCH) {
+    const { error } = await supabaseAdmin
+      .from('menu_chunks')
+      .insert(rows.slice(i, i + MENU_CHUNK_INSERT_BATCH))
+    if (error) {
+      console.error('[menu-index] chunk insert failed:', error.message)
+      await abandon()
+      return NextResponse.json(
+        { error: MENU_INDEX_FAILED_MESSAGE, code: 'chunk_insert_failed' },
+        { status: 500 },
+      )
+    }
+  }
+
+  /*
+   * Activation counts the rows itself and refuses a document that is short,
+   * miscounted or missing an embedding, then moves the active flag and the
+   * legacy text together. Until this returns, the venue's menu is the old one.
+   */
+  const { error: activateError } = await supabaseAdmin.rpc('activate_menu_document', {
+    p_document_id: documentId,
+    p_business_id: business_id,
+    p_expected_chunks: chunks.length,
+    p_menu_text: menuText,
+  })
+  if (activateError) {
+    console.error('[menu-index] activation failed:', activateError.message)
+    await abandon()
+    return NextResponse.json(
+      { error: MENU_INDEX_FAILED_MESSAGE, code: 'activation_failed' },
+      { status: 500 },
+    )
+  }
 
   return NextResponse.json({
-    text,
+    text: menuText,
     pages,
     usedOcr,
     // Present only when OCR ran, and equal to `pages` by construction: the
     // coverage gate above refuses anything it cannot read end to end.
     ...(usedOcr ? { ocrPages: ocrPageCount } : {}),
+    indexedChunks: chunks.length,
   })
 }
 
@@ -395,9 +541,25 @@ export async function DELETE(request: Request) {
   const check = await verifyOwner(business_id)
   if (check instanceof NextResponse) return check
 
-  const { error } = await supabaseAdmin
-    .from('businesses').update({ menu_pdf_text: null }).eq('id', business_id)
-
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  /*
+   * One transaction, under the same row lock the upload takes. Clearing the
+   * text on its own would let an upload that is mid-flight finish afterwards
+   * and activate — bringing back the menu the owner just deleted, with nobody
+   * having asked for it. The function refuses while a live job exists instead.
+   */
+  const { error } = await supabaseAdmin.rpc('delete_active_menu', {
+    p_business_id: business_id,
+  })
+  if (error) {
+    const busy = /menu_processing/.test(error.message)
+    console.error('[menu-index] delete failed:', error.message)
+    return NextResponse.json(
+      {
+        error: busy ? MENU_INDEX_BUSY_MESSAGE : MENU_INDEX_FAILED_MESSAGE,
+        code: busy ? 'menu_processing' : 'delete_failed',
+      },
+      { status: busy ? 409 : 500 },
+    )
+  }
   return NextResponse.json({ ok: true })
 }
