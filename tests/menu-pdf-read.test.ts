@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { describe, it } from 'node:test'
 
 import {
@@ -6,6 +7,7 @@ import {
   INVALID_PDF_MESSAGE,
   isInvalidPdfError,
   pdfReadErrorMessage,
+  RENDER_FAILED_MESSAGE,
   renderPdfPagesToPngBase64,
   ensureNodePdfPolyfills,
 } from '../lib/menu-pdf-read.ts'
@@ -92,5 +94,118 @@ describe('truly invalid PDFs get a clean validation error', () => {
 
   it('does not treat a missing canvas polyfill message as an invalid file', () => {
     assert.equal(isInvalidPdfError(new Error('DOMMatrix is not defined')), false)
+  })
+})
+
+/**
+ * A menu designed in a layout tool is mostly clipped vector art, and that is the
+ * path that broke.
+ *
+ * The app declared `@napi-rs/canvas` ^1.0.0 while pdfjs-dist 5.7 declares
+ * ^0.1.100 as its own optional dependency, so npm installed both. The polyfill
+ * installed `Path2D` from the 1.x copy, pdf.js drew on a context from the 0.1.x
+ * copy, and every clip or fill that crossed that boundary threw
+ * "Value is none of these types `String`, `Path`" out of CanvasGraphics —
+ * before Vision was ever called. A real restaurant menu could not be uploaded
+ * at all, and the owner was shown the library's own exception text.
+ *
+ * tests/fixtures/pdf-clip-path.pdf is synthetic — generated for this repository,
+ * no content from any real menu — and reproduces the failure on 1.0.0 and 1.0.7
+ * while passing on 0.1.100. If the versions ever diverge again, this fails.
+ */
+describe('a clip/path-heavy PDF renders for the OCR path', () => {
+  const fixture = () =>
+    readFileSync(new URL('./fixtures/pdf-clip-path.pdf', import.meta.url))
+
+  it('is a real PDF, and a small one', () => {
+    const pdf = fixture()
+    assert.equal(pdf.subarray(0, 5).toString('latin1'), '%PDF-')
+    assert.ok(pdf.length < 64 * 1024, `fixture is ${pdf.length} bytes; keep it small`)
+  })
+
+  it('renders at the production scale without throwing', async () => {
+    const images = await renderPdfPagesToPngBase64(fixture(), { maxPages: 10, scale: 2.5 })
+    assert.equal(images.length, 1, 'one page in, one image out')
+    assert.ok(images[0]!.length > 1000)
+  })
+
+  it('produces a decodable PNG of non-trivial size', async () => {
+    const images = await renderPdfPagesToPngBase64(fixture(), { maxPages: 1, scale: 2.5 })
+    const png = Buffer.from(images[0]!, 'base64')
+    // Signature rather than pixels: this proves a real image was encoded without
+    // asserting anything that a renderer version bump would legitimately change.
+    assert.equal(png.subarray(0, 8).toString('hex'), '89504e470d0a1a0a')
+    const width = png.readUInt32BE(16)
+    const height = png.readUInt32BE(20)
+    assert.ok(width > 1000 && height > 1000, `got ${width}x${height}`)
+    assert.ok(png.length > 10_000, `got ${png.length} bytes`)
+  })
+
+  it('scales with the requested factor', async () => {
+    const [small] = await renderPdfPagesToPngBase64(fixture(), { maxPages: 1, scale: 1 })
+    const [large] = await renderPdfPagesToPngBase64(fixture(), { maxPages: 1, scale: 2.5 })
+    const w = (b64: string) => Buffer.from(b64, 'base64').readUInt32BE(16)
+    assert.ok(w(large!) > w(small!))
+  })
+})
+
+describe('render failures reach the owner without library internals', () => {
+  /** The exact exception the version mismatch produced. */
+  const NATIVE_RENDER_ERROR = new Error('Value is none of these types `String`, `Path`, ')
+
+  it('is not mistaken for an invalid PDF — the file was fine', () => {
+    assert.equal(isInvalidPdfError(NATIVE_RENDER_ERROR), false)
+  })
+
+  it('returns the sanitized render message', () => {
+    assert.equal(pdfReadErrorMessage(NATIVE_RENDER_ERROR), RENDER_FAILED_MESSAGE)
+  })
+
+  it('leaks no implementation detail whatsoever', () => {
+    const msg = pdfReadErrorMessage(NATIVE_RENDER_ERROR)
+    for (const forbidden of [
+      'String`, `Path',
+      'Path2D',
+      'CanvasGraphics',
+      '@napi-rs/canvas',
+      'napi',
+      'pdf.js',
+      'pdfjs',
+      'consumePath',
+      'DOMMatrix',
+    ]) {
+      assert.equal(msg.includes(forbidden), false, `message leaked ${forbidden}`)
+    }
+    assert.doesNotMatch(msg, /\bat .+:\d+:\d+/, 'message looks like a stack frame')
+  })
+
+  it('says nothing was saved, so the owner knows their menu survived', () => {
+    assert.match(RENDER_FAILED_MESSAGE, /[Nn]othing was saved/)
+    assert.match(RENDER_FAILED_MESSAGE, /menu is unchanged/)
+    assert.doesNotMatch(RENDER_FAILED_MESSAGE, /invalid|corrupt|broken/i)
+  })
+
+  it('an arbitrary internal failure is sanitized the same way', () => {
+    assert.equal(pdfReadErrorMessage(new Error('ENOENT: no such file or directory')), RENDER_FAILED_MESSAGE)
+    assert.equal(pdfReadErrorMessage('some raw string thrown by a native binding'), RENDER_FAILED_MESSAGE)
+  })
+
+  it('invalid PDFs still get the invalid-PDF message, unchanged', () => {
+    const invalid = new Error('Invalid PDF structure')
+    assert.equal(isInvalidPdfError(invalid), true)
+    assert.equal(pdfReadErrorMessage(invalid), INVALID_PDF_MESSAGE)
+  })
+})
+
+describe('one canvas generation, shared with pdf.js', () => {
+  it('the app and pdfjs-dist agree on @napi-rs/canvas', async () => {
+    // The whole bug in one assertion: two generations meant Path2D objects
+    // crossed a package boundary pdf.js could not accept.
+    const pkg = JSON.parse(
+      readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+    ) as { dependencies: Record<string, string> }
+    const declared = pkg.dependencies['@napi-rs/canvas']
+    assert.equal(declared, '0.1.100', 'pin exactly; pdfjs-dist 5.7 declares ^0.1.100')
+    assert.doesNotMatch(declared, /^\^?1\./, 'the 1.x line is incompatible with pdf.js 5.7')
   })
 })
