@@ -13,6 +13,8 @@
 import path from 'path'
 import { pathToFileURL } from 'url'
 
+import { MENU_OCR_MAX_PAGES } from '@/lib/menu-ocr-coverage'
+
 import {
   DOMMatrix as NapiDOMMatrix,
   ImageData as NapiImageData,
@@ -143,12 +145,31 @@ export async function extractPdfTextLayer(
   }
 }
 
+/**
+ * How many pages the document has, without reading any of them.
+ *
+ * `extractPdfTextLayer` already reports this, but it reports it on success, and
+ * the caller needs the count precisely when extraction has failed — that is the
+ * path where a document of unknown length used to be handed to OCR and assumed
+ * short. Same `openPdfDocument`, so the pdf.js polyfill setup is not duplicated.
+ */
+export async function getPdfPageCount(buffer: Buffer): Promise<number> {
+  const doc = await openPdfDocument(buffer)
+  try {
+    return doc.numPages
+  } finally {
+    await doc.destroy().catch(() => {
+      /* ignore */
+    })
+  }
+}
+
 /** Render pages to PNG base64 for GPT-4o Vision OCR. */
 export async function renderPdfPagesToPngBase64(
   buffer: Buffer,
   opts: { maxPages?: number; scale?: number } = {},
 ): Promise<string[]> {
-  const maxPages = opts.maxPages ?? 10
+  const maxPages = opts.maxPages ?? MENU_OCR_MAX_PAGES
   const scale = opts.scale ?? 2.5
   const doc = await openPdfDocument(buffer)
   try {
