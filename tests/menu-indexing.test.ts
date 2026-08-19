@@ -10,6 +10,7 @@ import {
   MENU_EMBEDDING_MAX_RETRIES,
   MENU_EMBEDDING_MODEL,
   MENU_EMBEDDING_TIMEOUT_MS,
+  MENU_EMBEDDING_TOTAL_BUDGET_MS,
   MENU_INDEX_BUSY_MESSAGE,
   MENU_INDEX_FAILED_MESSAGE,
   MENU_MAX_CHUNKS_SYNC,
@@ -19,6 +20,7 @@ import {
   embedMenuChunks,
   menuIndexRateLimitKey,
   type EmbeddingClient,
+  type EmbeddingRequestOptions,
 } from '../lib/menu-indexing.ts'
 
 const ROUTE = readFileSync(new URL('../app/api/menu/pdf/route.ts', import.meta.url), 'utf8')
@@ -33,19 +35,33 @@ const vector = () => Array.from({ length: MENU_EMBEDDING_DIMENSIONS }, () => 0.0
 
 /** An embedding client that records what it was asked and answers as told. */
 function fakeClient(
-  behaviour: (call: number, input: string[]) => Promise<{ data: { embedding: number[] }[] }>,
+  behaviour: (
+    call: number,
+    input: string[],
+    options?: EmbeddingRequestOptions,
+  ) => Promise<{ data: { embedding: number[] }[] }>,
 ) {
   const calls: string[][] = []
+  const optionsSeen: (EmbeddingRequestOptions | undefined)[] = []
   const client: EmbeddingClient = {
     embeddings: {
-      create: async ({ input }) => {
+      create: async ({ input }, options) => {
         calls.push(input)
-        return behaviour(calls.length - 1, input)
+        optionsSeen.push(options)
+        return behaviour(calls.length - 1, input, options)
       },
     },
   }
-  return { client, calls }
+  return { client, calls, optionsSeen }
 }
+
+/** A request that only settles when its own signal aborts, as the SDK does. */
+const abortable = (options?: EmbeddingRequestOptions) =>
+  new Promise<never>((_, reject) => {
+    options?.signal?.addEventListener('abort', () => {
+      reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+    })
+  })
 
 const ok = (input: string[]) => ({ data: input.map(() => ({ embedding: vector() })) })
 
@@ -143,9 +159,98 @@ describe('embedding a menu', () => {
   })
 
   it('reports a timeout as a timeout', async () => {
-    const { client } = fakeClient(async () => new Promise(() => {}))
+    const { client } = fakeClient(async (_i, _input, options) => abortable(options))
     const result = await embedMenuChunks(client, chunks(2), { timeoutMs: 20, maxRetries: 0 })
     assert.deepEqual(result, { ok: false, reason: 'timeout' })
+  })
+
+  it('aborts the real request instead of abandoning it', async () => {
+    /*
+     * A raced promise leaves the original call in flight, so a timed-out batch
+     * and its retry ran at once — two live requests for the same work, the
+     * first still billable and still able to resolve into nothing.
+     */
+    const aborted: boolean[] = []
+    const { client } = fakeClient(async (_i, _input, options) => {
+      options?.signal?.addEventListener('abort', () => aborted.push(true))
+      return abortable(options)
+    })
+    const result = await embedMenuChunks(client, chunks(2), { timeoutMs: 20, maxRetries: 1 })
+    assert.deepEqual(result, { ok: false, reason: 'timeout' })
+    assert.equal(aborted.length, 2, 'every attempt aborted its own request')
+  })
+
+  it('passes an AbortSignal on every request', async () => {
+    const { client, optionsSeen } = fakeClient(async (_i, input) => ok(input))
+    await embedMenuChunks(client, chunks(200), { batchSize: 96 })
+    assert.equal(optionsSeen.length, 3)
+    for (const o of optionsSeen) assert.ok(o?.signal instanceof AbortSignal)
+  })
+
+  it('disables the SDK’s own retries so ours is the only loop', async () => {
+    /*
+     * The SDK retries twice by default (`opts.maxRetries=2`), so without this
+     * "at most 2 retries" meant up to nine HTTP attempts per batch — and no
+     * deadline computed here could hold.
+     */
+    const { client, optionsSeen } = fakeClient(async (_i, input) => ok(input))
+    await embedMenuChunks(client, chunks(3))
+    for (const o of optionsSeen) assert.equal(o?.maxRetries, 0)
+  })
+
+  it('makes at most 1 + MENU_EMBEDDING_MAX_RETRIES real HTTP attempts per batch', async () => {
+    let attempts = 0
+    const { client } = fakeClient(async () => {
+      attempts += 1
+      throw Object.assign(new Error('server error'), { status: 503 })
+    })
+    await embedMenuChunks(client, chunks(3))
+    assert.equal(attempts, 1 + MENU_EMBEDDING_MAX_RETRIES)
+    assert.equal(attempts, 3)
+  })
+
+  it('stops at the total phase deadline however many batches remain', async () => {
+    /*
+     * Per-batch bounds do not bound the total: twenty batches each finishing
+     * just inside their own timeout still run past the route's maxDuration, and
+     * the invocation is killed with a document stuck in `indexing`.
+     */
+    let clock = 0
+    let calls = 0
+    const { client } = fakeClient(async (_i, input) => {
+      calls += 1
+      clock += 400 // each batch "takes" 400ms of the budget
+      return ok(input)
+    })
+    const result = await embedMenuChunks(client, chunks(96 * 20), {
+      batchSize: 96,
+      totalBudgetMs: 1_000,
+      now: () => clock,
+    })
+    assert.deepEqual(result, { ok: false, reason: 'timeout' })
+    assert.ok(calls < 20, `stopped after ${calls} of 20 batches`)
+  })
+
+  it('never lets one attempt outlive the remaining phase budget', async () => {
+    let clock = 0
+    const { client } = fakeClient(async (_i, _input, options) => {
+      clock += 10
+      return abortable(options)
+    })
+    const result = await embedMenuChunks(client, chunks(2), {
+      timeoutMs: 30_000,
+      totalBudgetMs: 40,
+      maxRetries: 2,
+      now: () => clock,
+    })
+    assert.deepEqual(result, { ok: false, reason: 'timeout' })
+  })
+
+  it('the phase budget leaves room inside the route’s own ceiling', () => {
+    // 120s maxDuration, and the route still has to retire the document and
+    // answer the owner after this returns.
+    assert.equal(MENU_EMBEDDING_TOTAL_BUDGET_MS, 70_000)
+    assert.ok(MENU_EMBEDDING_TOTAL_BUDGET_MS < 120_000 - 40_000)
   })
 
   it('rejects a short reply rather than indexing a partial menu', async () => {
@@ -220,10 +325,14 @@ describe('the synchronous ceiling', () => {
     assert.ok(ceilingAt < embedAt, 'ceiling comes before any embedding is bought')
   })
 
-  it('the refusal tells the owner nothing was saved', () => {
+  it('the refusal tells the owner nothing was saved, in their terms', () => {
     assert.match(MENU_TOO_LARGE_MESSAGE, /[Nn]othing was saved/)
     assert.match(MENU_TOO_LARGE_MESSAGE, /menu is unchanged/)
-    assert.match(MENU_TOO_LARGE_MESSAGE, new RegExp(String(MENU_MAX_CHUNKS_SYNC)))
+    // 1500 is a chunk ceiling, not a count of menu sections — quoting it at an
+    // owner would be both meaningless and, as "1500 sections", untrue.
+    assert.doesNotMatch(MENU_TOO_LARGE_MESSAGE, /\d/)
+    assert.doesNotMatch(MENU_TOO_LARGE_MESSAGE, /section|chunk/i)
+    assert.match(MENU_TOO_LARGE_MESSAGE, /too large to index/i)
   })
 
   it('a 1501-chunk menu is over the line and a 1500-chunk one is not', () => {

@@ -246,15 +246,105 @@ describe('size limits and oversized blocks', () => {
   })
 })
 
-describe('the coverage check actually catches loss', () => {
-  it('rejects a chunk set that dropped a block', () => {
-    const full = chunkMenuText(OCR_LIKE)
+describe('coverage is exact equality, not a subsequence', () => {
+  /*
+   * The weaker form passed when content was duplicated, reordered or padded
+   * with text nobody uploaded — which made it barely worth running. Equality
+   * holds because section labels live in the `section` column rather than being
+   * copied into each chunk.
+   */
+  const full = chunkMenuText(OCR_LIKE)
+
+  it('accepts the real output', () => {
+    assert.equal(chunksCoverSource(OCR_LIKE, full), true)
+  })
+
+  it('rejects a dropped tail block', () => {
     assert.equal(chunksCoverSource(OCR_LIKE, full.slice(0, -1)), false)
   })
 
+  it('rejects a deleted middle piece', () => {
+    const gapped = full.filter((_, i) => i !== Math.floor(full.length / 2))
+    assert.equal(chunksCoverSource(OCR_LIKE, gapped), false)
+  })
+
+  it('rejects duplicated content', () => {
+    assert.equal(chunksCoverSource(OCR_LIKE, [...full, full[0]]), false)
+  })
+
+  it('rejects reordered content', () => {
+    const swapped = [full[1], full[0], ...full.slice(2)]
+    assert.equal(chunksCoverSource(OCR_LIKE, swapped), false)
+  })
+
+  it('rejects injected text nobody uploaded', () => {
+    const padded = full.map((c, i) => (i === 0 ? { ...c, content: `${c.content}\nFREE CAVIAR $0` } : c))
+    assert.equal(chunksCoverSource(OCR_LIKE, padded), false)
+  })
+
   it('rejects truncated content', () => {
-    const chunks = chunkMenuText(OCR_LIKE)
-    const truncated = chunks.map((c, i) => (i === 0 ? { ...c, content: c.content.slice(0, 5) } : c))
+    const truncated = full.map((c, i) => (i === 0 ? { ...c, content: c.content.slice(0, 5) } : c))
     assert.equal(chunksCoverSource(OCR_LIKE, truncated), false)
+  })
+
+  it('ignores only whitespace differences', () => {
+    const respaced = full.map((c) => ({ ...c, content: c.content.replace(/\n/g, '\n  ') }))
+    assert.equal(chunksCoverSource(OCR_LIKE, respaced), true)
+  })
+})
+
+describe('chunking is actually source-aware', () => {
+  /*
+   * `extractPdfTextLayer` joins every text item on a page with a space, so a
+   * searchable PDF arrives as one line per page with no dish structure left in
+   * it. Treating that like OCR output would promise a dish+price grouping the
+   * input cannot support, so the page is the atom instead — coarser, but true.
+   */
+  const PAGE_TEXT = [
+    'STARTERS Wings $17 Nachos $28 Dip $12',
+    'MAINS Burger $24 Steak $27 Tofu $22',
+  ].join('\n')
+
+  it('a searchable PDF keeps page boundaries as atoms', () => {
+    assert.deepEqual(splitIntoBlocks(PAGE_TEXT, 'pdf_text'), [
+      'STARTERS Wings $17 Nachos $28 Dip $12',
+      'MAINS Burger $24 Steak $27 Tofu $22',
+    ])
+  })
+
+  it('OCR output uses blank-line blocks instead', () => {
+    const ocr = 'A $1\n\nB $2'
+    assert.deepEqual(splitIntoBlocks(ocr, 'pdf_ocr'), ['A $1', 'B $2'])
+    // The same text read as page-flattened is one atom per line, not per block.
+    assert.deepEqual(splitIntoBlocks(ocr, 'pdf_text'), ['A $1', 'B $2'])
+  })
+
+  it('the two sources really do differ on the same input', () => {
+    // A multi-line dish is one atom to OCR and several to a flattened page —
+    // which is the whole point of passing `source` rather than ignoring it.
+    const same = 'DISH ONE\nDescription $10\n\nDISH TWO\nDescription $20'
+    assert.deepEqual(splitIntoBlocks(same, 'pdf_ocr'), [
+      'DISH ONE\nDescription $10',
+      'DISH TWO\nDescription $20',
+    ])
+    assert.deepEqual(splitIntoBlocks(same, 'pdf_text'), [
+      'DISH ONE',
+      'Description $10',
+      'DISH TWO',
+      'Description $20',
+    ])
+  })
+
+  it('the source reaches the chunker rather than being ignored', () => {
+    const asPages = chunkMenuText(PAGE_TEXT, { source: 'pdf_text', targetChars: 20, maxChars: 60 })
+    assert.ok(asPages.length >= 2, 'each page is its own atom')
+    assert.equal(chunksCoverSource(PAGE_TEXT, asPages), true)
+  })
+
+  it('loses nothing either way', () => {
+    for (const source of ['pdf_text', 'pdf_ocr'] as const) {
+      const out = chunkMenuText(OCR_LIKE, { source })
+      assert.equal(chunksCoverSource(OCR_LIKE, out), true, source)
+    }
   })
 })

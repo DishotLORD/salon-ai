@@ -90,9 +90,28 @@ export function detectSection(block: string): string | null {
  * PDFs — falls back to single lines, which is coarser but never merges two
  * dishes into one atom.
  */
-export function splitIntoBlocks(text: string): string[] {
+export function splitIntoBlocks(text: string, source: MenuChunkSource = 'pdf_ocr'): string[] {
   const normalized = text.replace(/\r\n?/g, '\n').trim()
   if (!normalized) return []
+
+  /*
+   * Searchable PDFs are a different, and honestly worse, shape.
+   *
+   * `extractPdfTextLayer` joins every text item on a page with a space, so its
+   * output is one line per page and the only newline is a page boundary. There
+   * is no blank line between dishes because there is no dish structure left to
+   * find, and pretending otherwise would promise a dish+price grouping the
+   * input cannot support. So the page is the atom: coarser than a dish, but
+   * true. Recovering real lines needs richer extraction metadata than the
+   * legacy text carries, and that is deliberately not attempted here.
+   */
+  if (source === 'pdf_text') {
+    return normalized
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean)
+  }
+
   const byBlankLine = normalized
     .split(/\n\s*\n+/)
     .map((b) => b.trim())
@@ -158,16 +177,17 @@ export type ChunkMenuOptions = {
  * Turn a complete menu into ordered chunks.
  *
  * Blocks accumulate until adding another would pass the target; a heading
- * starts a fresh chunk so a section's items travel with their own label. The
- * section label is repeated into each chunk of that section — the one piece of
- * duplicated text here, and it earns its place: a chunk retrieved on its own has
- * to say what part of the menu it came from.
+ * starts a fresh chunk so a section's items travel with their own label, which
+ * is also recorded in `section` for retrieval to filter on. The heading text
+ * itself appears exactly once, in the chunk that opens its section — nothing is
+ * duplicated, which is what lets `chunksCoverSource` demand an exact match
+ * rather than merely a subsequence.
  */
 export function chunkMenuText(text: string, options: ChunkMenuOptions = {}): MenuChunk[] {
   const targetChars = options.targetChars ?? MENU_CHUNK_TARGET_CHARS
   const maxChars = options.maxChars ?? MENU_CHUNK_MAX_CHARS
 
-  const blocks = splitIntoBlocks(text)
+  const blocks = splitIntoBlocks(text, options.source ?? 'pdf_ocr')
   if (blocks.length === 0) return []
 
   const chunks: MenuChunk[] = []
@@ -221,24 +241,18 @@ export function chunkMenuText(text: string, options: ChunkMenuOptions = {}): Men
 }
 
 /**
- * Every non-whitespace character of the source survives into some chunk.
+ * The chunks are the source, exactly — no loss, no invention, no reordering.
  *
- * Used by the tests and by the upload route as a last check before anything is
- * embedded: a chunker that silently drops a page is the failure this whole
- * design exists to avoid, and it is cheap to prove it did not.
+ * Compared with whitespace removed, because chunking is free to change where
+ * lines break but not what the menu says. This started as a subsequence check,
+ * which was too weak to be worth running: it passed when content was duplicated,
+ * reordered, or padded with text nobody uploaded. Equality catches all three,
+ * and the chunker holds it because section labels live in their own column
+ * rather than being copied into each chunk.
  */
 export function chunksCoverSource(text: string, chunks: MenuChunk[]): boolean {
   const strip = (s: string) => s.replace(/\s+/g, '')
   const source = strip(text)
-  if (!source) return chunks.length === 0
   const combined = strip(chunks.map((c) => c.content).join(''))
-  // Section labels are repeated into their chunks, so the output may be longer
-  // than the input — but it must contain all of it.
-  let cursor = 0
-  for (const ch of source) {
-    const at = combined.indexOf(ch, cursor)
-    if (at === -1) return false
-    cursor = at + 1
-  }
-  return true
+  return source === combined
 }

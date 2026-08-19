@@ -117,13 +117,37 @@ describe('RLS mirrors the existing owner pattern', () => {
     assert.match(SQL, /alter table public\.menu_chunks enable row level security/)
   })
 
-  it('scopes both to accessible_business_ids, for read and write', () => {
+  it('grants authenticated SELECT only, scoped to accessible businesses', () => {
     for (const table of ['menu_documents', 'menu_chunks']) {
       const policy = new RegExp(
-        `create policy "${table}_owner_all" on public\\.${table} for all to authenticated using \\(business_id in \\(select public\\.accessible_business_ids\\(\\)\\)\\) with check \\(business_id in \\(select public\\.accessible_business_ids\\(\\)\\)\\)`,
+        `create policy "${table}_owner_select" on public\\.${table} for select to authenticated using \\(business_id in \\(select public\\.accessible_business_ids\\(\\)\\)\\)`,
       )
-      assert.match(normalized, policy, `${table} policy`)
+      assert.match(normalized, policy, `${table} select policy`)
     }
+  })
+
+  it('gives authenticated no write path to these tables at all', () => {
+    /*
+     * `for all to authenticated` would let an owner insert a chunk or flip a
+     * document to 'active' directly — bypassing the row lock, the chunk count
+     * and the embedding check that activation exists to perform. Owning a venue
+     * is permission to see its index, not to publish a menu that was never
+     * embedded.
+     */
+    assert.doesNotMatch(normalized, /for all to authenticated/)
+    for (const verb of ['insert', 'update', 'delete']) {
+      assert.doesNotMatch(
+        normalized,
+        new RegExp(`for ${verb} to authenticated`),
+        `authenticated must have no ${verb} policy`,
+      )
+    }
+    const policies = CODE.match(/create policy/g) ?? []
+    assert.equal(policies.length, 2, 'exactly the two select policies')
+  })
+
+  it('every write therefore comes from the service role', () => {
+    assert.match(normalized, /grant execute on function %s to service_role/)
   })
 
   it('grants nothing to anon and never uses using(true)', () => {
@@ -200,6 +224,18 @@ describe('activation is all-or-nothing', () => {
     assert.match(fn, /if v_total = 0 then/)
     assert.match(fn, /if v_total <> p_expected_chunks then/)
     assert.match(fn, /if v_missing > 0 then/)
+  })
+
+  it('proves the legacy text is the same version the document describes', () => {
+    /*
+     * Without this a caller could activate document A while writing the text of
+     * upload B, and the indexed menu and the stored menu would disagree from the
+     * moment they went live — the exact split this design exists to prevent.
+     */
+    assert.match(fn, /if p_menu_text is null or length\(btrim\(p_menu_text\)\) = 0 then/)
+    assert.match(fn, /raise exception 'empty_menu_text'/)
+    assert.match(fn, /if char_length\(p_menu_text\) <> v_char_count then/)
+    assert.match(fn, /raise exception 'menu_text_length_mismatch'/)
   })
 
   it('supersedes the old document, activates the new one and moves the legacy text together', () => {

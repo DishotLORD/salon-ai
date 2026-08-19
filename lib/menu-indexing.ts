@@ -25,8 +25,22 @@ export const MENU_EMBEDDING_DIMENSIONS = 1536
  */
 export const MENU_EMBEDDING_BATCH_SIZE = 96
 
-/** Per batch. Several batches still have to fit the route's 120s ceiling. */
+/** Per attempt. Several attempts still have to fit the phase budget below. */
 export const MENU_EMBEDDING_TIMEOUT_MS = 30_000
+
+/**
+ * The whole embedding phase, not one batch of it.
+ *
+ * Per-batch bounds alone do not bound the total: twenty batches that each
+ * finish just inside their timeout still run far past the route's own
+ * `maxDuration` of 120 seconds, and the platform kills the invocation
+ * mid-flight — leaving a document stuck in `indexing` that nothing marked
+ * failed, so the venue is locked out until the stale window expires.
+ *
+ * 70 seconds leaves ~50 for everything after: retiring the document, returning
+ * a response the owner can act on, and the request overhead either side.
+ */
+export const MENU_EMBEDDING_TOTAL_BUDGET_MS = 70_000
 
 /** Transient failures only, and a fixed number of them. */
 export const MENU_EMBEDDING_MAX_RETRIES = 2
@@ -64,8 +78,8 @@ export function menuIndexRateLimitKey(verifiedBusinessId: string): string {
  * list.
  */
 export const MENU_TOO_LARGE_MESSAGE =
-  `This menu is larger than we can index in one go (over ${MENU_MAX_CHUNKS_SYNC} sections). ` +
-  'Nothing was saved and your current menu is unchanged. Get in touch and we will index it for you.'
+  'This menu is too large to index in one request. Nothing was saved and your current menu is ' +
+  'unchanged. Get in touch and we will index it for you.'
 
 export const MENU_INDEX_BUSY_MESSAGE =
   'This menu is still being processed. Nothing was saved and your current menu is unchanged. ' +
@@ -84,13 +98,23 @@ export function batchChunks<T>(items: T[], size = MENU_EMBEDDING_BATCH_SIZE): T[
   return out
 }
 
-/** The client shape this module needs — an OpenAI instance satisfies it. */
+/**
+ * The client shape this module needs — an OpenAI instance satisfies it.
+ *
+ * The second argument is the SDK's per-request options, and both fields it
+ * carries here are load-bearing rather than decorative. See `embedMenuChunks`.
+ */
+export type EmbeddingRequestOptions = {
+  signal?: AbortSignal
+  maxRetries?: number
+}
+
 export type EmbeddingClient = {
   embeddings: {
-    create: (args: {
-      model: string
-      input: string[]
-    }) => Promise<{ data: { embedding: number[] }[] }>
+    create: (
+      args: { model: string; input: string[] },
+      options?: EmbeddingRequestOptions,
+    ) => Promise<{ data: { embedding: number[] }[] }>
   }
 }
 
@@ -118,32 +142,6 @@ function isTransient(err: unknown): boolean {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 /**
- * Race a promise against a deadline, and always clear the deadline.
- *
- * An uncleared timer keeps Node's event loop alive until it fires, so a
- * successful batch would still hold the function open for the length of its own
- * timeout — thirty seconds of a serverless invocation spent waiting on a timer
- * whose answer already arrived.
- */
-async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  try {
-    return await Promise.race([
-      work,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => {
-          const e = new Error('embedding timeout')
-          e.name = 'TimeoutError'
-          reject(e)
-        }, ms)
-      }),
-    ])
-  } finally {
-    if (timer) clearTimeout(timer)
-  }
-}
-
-/**
  * Embed every chunk, or report why not.
  *
  * Batches run in sequence rather than in parallel: a menu is not urgent enough
@@ -157,27 +155,54 @@ export async function embedMenuChunks(
     batchSize?: number
     timeoutMs?: number
     maxRetries?: number
+    totalBudgetMs?: number
+    now?: () => number
     onBatch?: (index: number, total: number) => void
   } = {},
 ): Promise<EmbedResult> {
   const batchSize = options.batchSize ?? MENU_EMBEDDING_BATCH_SIZE
-  const timeoutMs = options.timeoutMs ?? MENU_EMBEDDING_TIMEOUT_MS
+  const attemptTimeoutMs = options.timeoutMs ?? MENU_EMBEDDING_TIMEOUT_MS
   const maxRetries = options.maxRetries ?? MENU_EMBEDDING_MAX_RETRIES
+  const totalBudgetMs = options.totalBudgetMs ?? MENU_EMBEDDING_TOTAL_BUDGET_MS
+  const now = options.now ?? Date.now
 
   const batches = batchChunks(chunks, batchSize)
   const embeddings: number[][] = []
+  const deadline = now() + totalBudgetMs
 
   for (let b = 0; b < batches.length; b++) {
     options.onBatch?.(b, batches.length)
     const input = batches[b].map((c) => c.content)
-    let lastWasTimeout = false
     let done = false
 
     for (let attempt = 0; attempt <= maxRetries && !done; attempt++) {
+      const remaining = deadline - now()
+      // The phase budget outranks the per-attempt one: starting a request that
+      // cannot finish inside it only guarantees the invocation is killed with
+      // work in flight.
+      if (remaining <= 0) return { ok: false, reason: 'timeout' }
+      const budget = Math.min(attemptTimeoutMs, remaining)
+
+      const controller = new AbortController()
+      let timedOut = false
+      const timer = setTimeout(() => {
+        timedOut = true
+        // Cancels the request itself. A raced promise leaves the original in
+        // flight, so a timed-out batch and its retry ran at once — two live
+        // requests for the same work, and the first one still billable.
+        controller.abort()
+      }, budget)
+
       try {
-        const res = await withTimeout(
-          client.embeddings.create({ model: MENU_EMBEDDING_MODEL, input }),
-          timeoutMs,
+        const res = await client.embeddings.create(
+          { model: MENU_EMBEDDING_MODEL, input },
+          {
+            signal: controller.signal,
+            // The SDK retries twice on its own by default, which would have
+            // made "at most 2 retries" mean up to nine HTTP attempts per batch
+            // and blown any deadline computed here. One retry loop, this one.
+            maxRetries: 0,
+          },
         )
         const vectors = res?.data?.map((d) => d.embedding)
         // A short or malformed reply is not a partial success to paper over —
@@ -193,13 +218,19 @@ export async function embedMenuChunks(
         embeddings.push(...vectors)
         done = true
       } catch (err) {
-        lastWasTimeout = err instanceof Error && err.name === 'TimeoutError'
-        if (attempt === maxRetries || !isTransient(err)) {
+        // Reached only once the aborted request has actually rejected, so no
+        // abandoned call outlives this attempt.
+        const isOurTimeout = timedOut
+        if (isOurTimeout && now() >= deadline) return { ok: false, reason: 'timeout' }
+        if (attempt === maxRetries || !(isOurTimeout || isTransient(err))) {
           // Never the message, the key, or the vectors — only that it failed.
           console.error('[menu-index] embedding batch failed after', attempt + 1, 'attempt(s)')
-          return { ok: false, reason: lastWasTimeout ? 'timeout' : 'failed' }
+          return { ok: false, reason: isOurTimeout ? 'timeout' : 'failed' }
         }
-        await sleep(250 * (attempt + 1))
+        const backoff = Math.min(250 * (attempt + 1), Math.max(0, deadline - now()))
+        if (backoff > 0) await sleep(backoff)
+      } finally {
+        clearTimeout(timer)
       }
     }
   }

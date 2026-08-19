@@ -79,23 +79,32 @@ create index if not exists menu_chunks_business_idx
 
 -- ─── RLS ─────────────────────────────────────────────────────────────────────
 --
--- Mirrors dining_zones_owner_all. No anon policy exists, and none should: the
--- widget reads menu data through the server, and migration 021 removed the last
--- `using (true)` policies for exactly the reason not to add another.
+-- Read-only for the dashboard, and read-only on purpose.
+--
+-- `for all to authenticated` would let an owner write these tables directly:
+-- insert a chunk, or flip a document's status to 'active' — bypassing
+-- begin_menu_indexing, the row lock, the chunk count and the embedding check
+-- that activation exists to perform. Owning a venue is permission to see its
+-- index, not to publish a menu that was never embedded. Every write comes from
+-- the server through the functions below.
+--
+-- No anon policy, and no `using (true)`: the widget reads menu data through the
+-- server, and migration 021 removed the last such policies for exactly this
+-- reason.
 alter table public.menu_documents enable row level security;
 alter table public.menu_chunks enable row level security;
 
 drop policy if exists "menu_documents_owner_all" on public.menu_documents;
-create policy "menu_documents_owner_all" on public.menu_documents
-  for all to authenticated
-  using (business_id in (select public.accessible_business_ids()))
-  with check (business_id in (select public.accessible_business_ids()));
+drop policy if exists "menu_documents_owner_select" on public.menu_documents;
+create policy "menu_documents_owner_select" on public.menu_documents
+  for select to authenticated
+  using (business_id in (select public.accessible_business_ids()));
 
 drop policy if exists "menu_chunks_owner_all" on public.menu_chunks;
-create policy "menu_chunks_owner_all" on public.menu_chunks
-  for all to authenticated
-  using (business_id in (select public.accessible_business_ids()))
-  with check (business_id in (select public.accessible_business_ids()));
+drop policy if exists "menu_chunks_owner_select" on public.menu_chunks;
+create policy "menu_chunks_owner_select" on public.menu_chunks
+  for select to authenticated
+  using (business_id in (select public.accessible_business_ids()));
 
 -- ─── Lifecycle functions ─────────────────────────────────────────────────────
 --
@@ -186,6 +195,7 @@ as $$
 declare
   v_lock uuid;
   v_status text;
+  v_char_count integer;
   v_total integer;
   v_missing integer;
 begin
@@ -194,7 +204,7 @@ begin
     raise exception 'business_not_found' using errcode = 'P0002';
   end if;
 
-  select status into v_status
+  select status, char_count into v_status, v_char_count
     from public.menu_documents
    where id = p_document_id and business_id = p_business_id;
 
@@ -221,6 +231,17 @@ begin
   end if;
   if v_missing > 0 then
     raise exception 'chunk_missing_embedding' using errcode = 'P0001';
+  end if;
+
+  -- One more proof that the legacy text being published is the same upload the
+  -- document describes. Without it, a caller could activate document A while
+  -- writing the text of upload B, and the two representations would disagree
+  -- from the moment they went live.
+  if p_menu_text is null or length(btrim(p_menu_text)) = 0 then
+    raise exception 'empty_menu_text' using errcode = 'P0001';
+  end if;
+  if char_length(p_menu_text) <> v_char_count then
+    raise exception 'menu_text_length_mismatch' using errcode = 'P0001';
   end if;
 
   update public.menu_documents
