@@ -105,6 +105,27 @@ describe('one active menu, one indexing job', () => {
     )
   })
 
+  it('lets a lease exist before its metadata is known', () => {
+    /*
+     * The row is created before extraction runs, because it is what stops a
+     * DELETE landing mid-upload — and at that moment nobody knows whether the
+     * text will come from the PDF's own layer or from OCR, nor how long it will
+     * be. A document that failed before extraction keeps them null, which is
+     * the honest record of what happened.
+     */
+    assert.match(normalized, /source text check \(source in \('pdf_text', 'pdf_ocr', 'legacy_backfill'\)\)/)
+    assert.match(normalized, /char_count integer check \(char_count >= 0\)/)
+    assert.doesNotMatch(normalized, /source text not null/)
+    assert.doesNotMatch(normalized, /char_count integer not null/)
+  })
+
+  it('but a published document must know what it is', () => {
+    assert.match(
+      normalized,
+      /constraint menu_documents_published_metadata check \( status in \('indexing', 'failed'\) or \(source is not null and char_count is not null\) \)/,
+    )
+  })
+
   it('constrains status and source to known values', () => {
     assert.match(normalized, /check \(status in \('indexing', 'active', 'failed', 'superseded'\)\)/)
     assert.match(normalized, /check \(source in \('pdf_text', 'pdf_ocr', 'legacy_backfill'\)\)/)
@@ -226,6 +247,13 @@ describe('activation is all-or-nothing', () => {
     assert.match(fn, /if v_missing > 0 then/)
   })
 
+  it('refuses to publish a document that never got past extraction', () => {
+    assert.match(fn, /if v_source is null then/)
+    assert.match(fn, /raise exception 'missing_source'/)
+    assert.match(fn, /if v_char_count is null then/)
+    assert.match(fn, /raise exception 'missing_char_count'/)
+  })
+
   it('proves the legacy text is the same version the document describes', () => {
     /*
      * Without this a caller could activate document A while writing the text of
@@ -268,6 +296,64 @@ describe('deletion cannot be undone by an upload that was already running', () =
   it('clears the text and deactivates the document in the same transaction', () => {
     assert.match(fn, /set status = 'superseded', superseded_at = now\(\)/)
     assert.match(fn, /set menu_pdf_text = null/)
+  })
+})
+
+describe('the lease is taken before the work, not after it', () => {
+  const fn = SQL.slice(
+    SQL.indexOf('function public.begin_menu_indexing'),
+    SQL.indexOf('-- Record what the upload turned out to be'),
+  )
+
+  it('begin takes only the business id, because nothing else is known yet', () => {
+    assert.match(normalized, /function public\.begin_menu_indexing\( p_business_id uuid \)/)
+    assert.match(fn, /insert into public\.menu_documents \(business_id, status\)/)
+  })
+
+  it('metadata arrives later, exactly once, into a document still indexing', () => {
+    const prepare = SQL.slice(
+      SQL.indexOf('function public.prepare_menu_document'),
+      SQL.indexOf('-- Publish an indexed document'),
+    )
+    assert.match(prepare, /if v_status <> 'indexing' then/)
+    assert.match(prepare, /where id = p_document_id and business_id = p_business_id/)
+    assert.match(prepare, /raise exception 'invalid_source'/)
+    assert.match(prepare, /raise exception 'invalid_char_count'/)
+    assert.match(prepare, /set source = p_source, char_count = p_char_count/)
+  })
+
+  it('prepare is server-only like the rest', () => {
+    assert.ok(normalized.includes('public.prepare_menu_document('))
+  })
+})
+
+describe('DELETE cannot land in the middle of an upload', () => {
+  /*
+   * Modelled rather than executed — no local Supabase was available — but the
+   * ordering it depends on is pinned in both files: the lease exists from before
+   * extraction until the document is retired or activated, and delete_active_menu
+   * refuses whenever a live indexing document is present.
+   */
+  const del = SQL.slice(
+    SQL.indexOf('function public.delete_active_menu'),
+    SQL.indexOf('-- Abandon an indexing job'),
+  )
+
+  it('a held lease makes DELETE conflict', () => {
+    assert.match(del, /where business_id = p_business_id and status = 'indexing'/)
+    assert.match(del, /raise exception 'menu_processing'/)
+  })
+
+  it('a retired lease lets DELETE through', () => {
+    // fail_menu_document moves 'indexing' → 'failed', which delete_active_menu
+    // no longer sees, so a failed upload does not block the owner.
+    const fail = SQL.slice(SQL.indexOf('function public.fail_menu_document'))
+    assert.match(fail, /set status = 'failed'/)
+    assert.match(fail, /and status = 'indexing'/)
+  })
+
+  it('a stale lease does not block forever', () => {
+    assert.match(del, /v_indexing > now\(\) - public\.menu_indexing_stale_after\(\)/)
   })
 })
 

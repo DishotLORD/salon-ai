@@ -315,13 +315,20 @@ describe('the synchronous ceiling', () => {
     assert.equal(MENU_MAX_CHUNKS_SYNC, 1500)
   })
 
-  it('is checked after chunking and before anything is embedded or created', () => {
+  it('is checked after chunking and before metadata or embeddings', () => {
+    /*
+     * The lease now precedes chunking — it has to, to close the DELETE race —
+     * so the ceiling can no longer come before the document row. What still
+     * holds, and is what costs money, is that nothing is embedded and no
+     * metadata is committed until the size is known to be acceptable. An
+     * oversized upload retires its own lease and changes nothing else.
+     */
     const chunkAt = ROUTE.search(/chunkMenuText\(menuText/)
     const ceilingAt = ROUTE.search(/chunks\.length > MENU_MAX_CHUNKS_SYNC/)
-    const beginAt = ROUTE.search(/rpc\('begin_menu_indexing'/)
+    const prepareAt = ROUTE.search(/rpc\('prepare_menu_document'/)
     const embedAt = ROUTE.search(/embedMenuChunks\(openai/)
     assert.ok(chunkAt >= 0 && ceilingAt > chunkAt, 'ceiling comes after chunking')
-    assert.ok(ceilingAt < beginAt, 'ceiling comes before any document row exists')
+    assert.ok(ceilingAt < prepareAt, 'ceiling comes before any metadata is committed')
     assert.ok(ceilingAt < embedAt, 'ceiling comes before any embedding is bought')
   })
 
@@ -374,9 +381,46 @@ describe('the upload route publishes only what it fully indexed', () => {
     assert.match(ROUTE, /p_menu_text: menuText/)
   })
 
-  it('runs begin → embed → insert → activate, in that order', () => {
+  it('takes the upload lease BEFORE the body, extraction, OCR or embeddings', () => {
+    /*
+     * The race this closes. With the document created only once the text was in
+     * hand, an owner could delete their menu while OCR was still running: the
+     * delete saw no indexing job and succeeded, then the upload finished and
+     * activated, putting the deleted menu back.
+     */
+    const lease = ROUTE.search(/rpc\('begin_menu_indexing'/)
+    for (const [name, pattern] of [
+      ['formData', /await request\.formData\(\)/],
+      ['extraction', /extractPdfTextLayer\(buffer\)/],
+      ['OCR', /await ocrPdf\(buffer\)/],
+      ['chunking', /chunkMenuText\(menuText/],
+      ['embeddings', /embedMenuChunks\(openai/],
+      ['activation', /rpc\('activate_menu_document'/],
+    ] as const) {
+      const at = ROUTE.search(pattern)
+      assert.ok(at >= 0 && lease < at, `lease must precede ${name}`)
+    }
+  })
+
+  it('still authorizes before taking a lease or buffering', () => {
+    const auth = ROUTE.search(/const check = await verifyOwner\(business_id\)/)
+    const lease = ROUTE.search(/rpc\('begin_menu_indexing'/)
+    const body = ROUTE.search(/await request\.formData\(\)/)
+    assert.ok(auth >= 0 && auth < lease, 'no lease on an unowned venue')
+    assert.ok(auth < body, 'authentication still precedes buffering')
+  })
+
+  it('refuses on the rate limit before any lease or expensive work', () => {
+    const limit = ROUTE.search(/menuIndexRateLimitKey\(business_id\)/)
+    const lease = ROUTE.search(/rpc\('begin_menu_indexing'/)
+    const ocr = ROUTE.search(/await ocrPdf\(buffer\)/)
+    assert.ok(limit >= 0 && limit < lease && limit < ocr)
+  })
+
+  it('runs lease → prepare → embed → insert → activate, in that order', () => {
     const order = [
       ROUTE.search(/rpc\('begin_menu_indexing'/),
+      ROUTE.search(/rpc\('prepare_menu_document'/),
       ROUTE.search(/embedMenuChunks\(openai/),
       ROUTE.search(/from\('menu_chunks'\)\s*\n?\s*\.insert/),
       ROUTE.search(/rpc\('activate_menu_document'/),
@@ -385,23 +429,54 @@ describe('the upload route publishes only what it fully indexed', () => {
     assert.deepEqual(order, [...order].sort((a, b) => a - b))
   })
 
-  it('abandons the half-built document on every failure path after it exists', () => {
-    /*
-     * Three paths can fail once begin_menu_indexing has returned — embedding,
-     * chunk insert, activation — and each must retire the document. Otherwise
-     * the one-indexing unique index locks the venue out for the stale window.
-     */
-    const abandons = ROUTE.match(/await abandon\(\)/g) ?? []
-    assert.equal(abandons.length, 3, 'one per failure path after the document exists')
-    assert.match(ROUTE, /rpc\('fail_menu_document'/)
-    for (const path of [/embedded\.ok/, /chunk_insert_failed/, /activation_failed/]) {
-      assert.match(ROUTE, path)
-    }
+  it('records the character count the way PostgreSQL will read it', () => {
+    // String.length would report 9 for "🍕22 🍕16" where char_length() says 7,
+    // and activation compares the two.
+    assert.match(ROUTE, /p_char_count: menuCharacterCount\(menuText\)/)
+    assert.doesNotMatch(ROUTE, /p_char_count: menuText\.length/)
   })
 
-  it('does not leave an embedding timeout timer holding the function open', () => {
-    const lib = readFileSync(new URL('../lib/menu-indexing.ts', import.meta.url), 'utf8')
-    assert.match(lib, /clearTimeout\(timer\)/)
+  it('retires the lease on every failure after it exists, through one helper', () => {
+    /*
+     * Centralised on purpose. Copying the cleanup into a dozen branches is how
+     * one of them gets forgotten and a venue is locked out for the stale window
+     * over a bad PDF header.
+     */
+    assert.match(ROUTE, /const release = async \(response: NextResponse\)/)
+    assert.match(ROUTE, /rpc\('fail_menu_document'/)
+
+    const guarded = ROUTE.slice(
+      ROUTE.indexOf('const release = async'),
+      ROUTE.indexOf('// ── DELETE /api/menu/pdf'),
+    )
+    const bare = guarded.match(/return NextResponse\.json\(/g) ?? []
+    // Exactly one: the success path, where activation already consumed the lease.
+    assert.equal(bare.length, 1, 'every failure exit must go through release()')
+    assert.ok((guarded.match(/return release\(/g) ?? []).length >= 10)
+  })
+
+  it('covers the early branches that used to return before any document existed', () => {
+    const guarded = ROUTE.slice(
+      ROUTE.indexOf('const release = async'),
+      ROUTE.indexOf('// ── DELETE /api/menu/pdf'),
+    )
+    for (const branch of [
+      'Could not read the upload',      // malformed multipart
+      'does not look like a PDF',       // signature
+      'That file is empty',             // zero bytes
+      'ocrCoverageMessage(coverage)',   // OCR page-coverage refusal
+      'OCR_UNAVAILABLE_MESSAGE',        // OCR budget refusal
+      'MENU_TOO_LARGE_MESSAGE',         // chunk ceiling
+    ]) {
+      const at = guarded.indexOf(branch)
+      assert.ok(at >= 0, `${branch} not found inside the guarded region`)
+      const before = guarded.lastIndexOf('return ', at)
+      assert.match(
+        guarded.slice(before, at + branch.length + 200),
+        /return release\(/,
+        `${branch} must retire the lease`,
+      )
+    }
   })
 
   it('maps embedding outcomes to distinct statuses', () => {
@@ -426,6 +501,21 @@ describe('the upload route publishes only what it fully indexed', () => {
   it('DELETE goes through the transactional function', () => {
     assert.match(ROUTE, /rpc\('delete_active_menu'/)
     assert.doesNotMatch(ROUTE, /update\(\{ menu_pdf_text: null \}\)/)
+  })
+
+  it('keeps index internals out of owner-facing responses', () => {
+    /*
+     * Chunk counts describe our storage, not the owner's menu. Checked against
+     * the response bodies rather than the whole file, because the same
+     * expression is a legitimate RPC argument (`p_expected_chunks`).
+     */
+    const responses = ROUTE.match(/NextResponse\.json\(\{[\s\S]*?\}/g) ?? []
+    for (const body of responses) {
+      for (const leak of ['indexedChunks', 'maxChunks', 'chunks:']) {
+        assert.equal(body.includes(leak), false, `response leaks ${leak}: ${body.slice(0, 80)}`)
+      }
+    }
+    assert.match(ROUTE, /p_expected_chunks: chunks\.length/, 'still passed to activation')
   })
 })
 

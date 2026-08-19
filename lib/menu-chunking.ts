@@ -25,6 +25,20 @@ export const MENU_CHUNK_MAX_CHARS = 1600
 
 export type MenuChunkSource = 'pdf_text' | 'pdf_ocr'
 
+/**
+ * Characters, the way PostgreSQL counts them.
+ *
+ * `String.length` counts UTF-16 code units, `char_length()` counts characters,
+ * and the two disagree the moment a menu contains anything outside the basic
+ * plane. This is not hypothetical: the validated pub menu transcribes its pizza
+ * prices as `🍕22 🍕16`, which JavaScript measures as 9 and PostgreSQL as 7 —
+ * so a correctly indexed menu failed activation on a length check that was
+ * comparing two different units. Both sides now count code points.
+ */
+export function menuCharacterCount(text: string): number {
+  return Array.from(text).length
+}
+
 export type MenuChunk = {
   ordinal: number
   section: string | null

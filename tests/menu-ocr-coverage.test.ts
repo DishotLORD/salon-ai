@@ -203,7 +203,10 @@ describe('the route cannot reach the write with partial OCR', () => {
 
   it('the refusal returns 422 and returns, rather than falling through', () => {
     const block = ROUTE.slice(refusal - 400, refusal + 400)
-    assert.match(block, /return NextResponse\.json\(/)
+    // Wrapped in release() since the upload lease is now taken before OCR: the
+    // refusal both answers 422 and retires the lease, so a venue is not locked
+    // out of re-uploading by a document it was told to fix.
+    assert.match(block, /return release\(NextResponse\.json\(/)
     assert.match(block, /status: 422/)
   })
 

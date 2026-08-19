@@ -7,6 +7,7 @@ import {
   chunkMenuText,
   chunksCoverSource,
   detectSection,
+  menuCharacterCount,
   splitIntoBlocks,
 } from '../lib/menu-chunking.ts'
 import { normalizeMenuText } from '../lib/menu-ocr-normalize.ts'
@@ -345,6 +346,49 @@ describe('chunking is actually source-aware', () => {
     for (const source of ['pdf_text', 'pdf_ocr'] as const) {
       const out = chunkMenuText(OCR_LIKE, { source })
       assert.equal(chunksCoverSource(OCR_LIKE, out), true, source)
+    }
+  })
+})
+
+describe('characters are counted the way PostgreSQL counts them', () => {
+  /*
+   * `String.length` counts UTF-16 code units and `char_length()` counts
+   * characters, so the two disagree the moment a menu leaves the basic plane.
+   * Not hypothetical: the validated pub menu transcribes its pizza prices as
+   * "🍕22 🍕16", which JavaScript measures as 9 and PostgreSQL as 7 — and
+   * activation compares the two, so a correctly indexed menu was rejected.
+   */
+
+  it('agrees with String.length wherever they can agree', () => {
+    for (const text of ['', 'abc', 'SOUP $12', 'café', 'Привет', '—Soup & Salads—']) {
+      assert.equal(menuCharacterCount(text), text.length, JSON.stringify(text))
+    }
+  })
+
+  it('counts an emoji as one character, not two', () => {
+    assert.equal(menuCharacterCount('🍕'), 1)
+    assert.notEqual(menuCharacterCount('🍕'), '🍕'.length)
+  })
+
+  it('counts the real Garage pizza line correctly', () => {
+    const line = '🍕22 🍕16'
+    assert.equal(line.length, 9, 'UTF-16 code units')
+    assert.equal(menuCharacterCount(line), 7, 'characters, as char_length() sees them')
+  })
+
+  it('handles a run of emoji', () => {
+    assert.equal(menuCharacterCount('🍕🍕🍕'), 3)
+  })
+
+  it('handles a mixed menu block', () => {
+    const block = 'FIRST PIZZA\nTomato, basil, mozzarella\n🍕22 🍕16'
+    assert.equal(menuCharacterCount(block), Array.from(block).length)
+    assert.ok(menuCharacterCount(block) < block.length, 'shorter than the code-unit count')
+  })
+
+  it('is never longer than String.length', () => {
+    for (const t of ['abc', '🍕', 'é🍕Привет']) {
+      assert.ok(menuCharacterCount(t) <= t.length)
     }
   })
 })

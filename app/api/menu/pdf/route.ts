@@ -28,7 +28,7 @@ import {
   embedMenuChunks,
   menuIndexRateLimitKey,
 } from '@/lib/menu-indexing'
-import { chunkMenuText, chunksCoverSource } from '@/lib/menu-chunking'
+import { chunkMenuText, chunksCoverSource, menuCharacterCount } from '@/lib/menu-chunking'
 import { normalizeMenuText } from '@/lib/menu-ocr-normalize'
 import { checkRateLimit } from '@/lib/rate-limit'
 import { businessIdFromUrl, declaredBodyTooLarge } from '@/lib/upload-guard'
@@ -164,15 +164,77 @@ export async function POST(request: Request) {
     )
   }
 
+  /*
+   * Indexing admission, before anything expensive. Cheap to refuse, and it
+   * keeps a venue from spending its own OCR and embedding budget in a loop.
+   */
+  const indexBudget = await checkRateLimit(
+    menuIndexRateLimitKey(business_id),
+    MENU_INDEX_LIMIT_PER_HOUR,
+    MENU_INDEX_WINDOW_MS,
+  )
+  if (!indexBudget.allowed) {
+    return NextResponse.json(
+      { error: MENU_INDEX_BUSY_MESSAGE, code: 'menu_index_rate_limited' },
+      { status: 429, headers: { 'Retry-After': String(indexBudget.retryAfterSec ?? 600) } },
+    )
+  }
+
+  /*
+   * Take the upload lease here — before the body is buffered, before extraction,
+   * before OCR — and not after the text is in hand.
+   *
+   * Created later, there was a window minutes wide in which no record of the
+   * upload existed: the owner could delete their menu while OCR was still
+   * running, the delete would succeed because it saw no indexing job, and the
+   * upload would then finish and activate — putting back the menu they had just
+   * removed. The lease is what makes DELETE answer 409 for the whole time an
+   * upload is in flight.
+   *
+   * Authorization is already done: this is only reached for a verified owner of
+   * an existing venue, so no lease is ever taken on someone else's behalf.
+   */
+  const { data: documentId, error: beginError } = await supabaseAdmin.rpc('begin_menu_indexing', {
+    p_business_id: business_id,
+  })
+  if (beginError || typeof documentId !== 'string') {
+    const busy = /menu_processing/.test(beginError?.message ?? '')
+    console.error('[menu-index] lease failed:', beginError?.message ?? 'no document id')
+    return NextResponse.json(
+      {
+        error: busy ? MENU_INDEX_BUSY_MESSAGE : MENU_INDEX_FAILED_MESSAGE,
+        code: busy ? 'menu_processing' : 'index_begin_failed',
+      },
+      { status: busy ? 409 : 500 },
+    )
+  }
+
+  /*
+   * Every exit from here on goes through `release`, which retires the lease
+   * before answering. Scattering the cleanup across a dozen branches is how one
+   * of them gets forgotten and a venue is locked out for the stale window over
+   * a bad PDF header.
+   */
+  const release = async (response: NextResponse): Promise<NextResponse> => {
+    const { error } = await supabaseAdmin.rpc('fail_menu_document', {
+      p_document_id: documentId,
+      p_business_id: business_id,
+    })
+    if (error) console.error('[menu-index] could not retire the lease:', error.message)
+    return response
+  }
+
   // A malformed multipart body threw straight out of the handler, so a truncated
   // upload came back as a 500 with a stack trace instead of "try again".
   let formData: FormData
   try {
     formData = await request.formData()
   } catch {
-    return NextResponse.json(
-      { error: 'Could not read the upload. Please choose the file again.' },
-      { status: 400 },
+    return release(
+      NextResponse.json(
+        { error: 'Could not read the upload. Please choose the file again.' },
+        { status: 400 },
+      ),
     )
   }
 
@@ -180,19 +242,19 @@ export async function POST(request: Request) {
   const forceOcr = formData.get('force_ocr') === '1' || formData.get('force_ocr') === 'true'
 
   if (!(file instanceof Blob))
-    return NextResponse.json({ error: 'file required' }, { status: 400 })
+    return release(NextResponse.json({ error: 'file required' }, { status: 400 }))
 
   if (file.size > MENU_PDF_MAX_BYTES) {
     const mb = (file.size / (1024 * 1024)).toFixed(1)
-    return NextResponse.json(
+    return release(NextResponse.json(
       {
         error: `That PDF is ${mb} MB — the limit is ${MENU_PDF_MAX_MB} MB. Export it at a lower resolution, or upload the food and drink menus separately.`,
       },
       { status: 413 },
-    )
+    ))
   }
   if (file.size === 0) {
-    return NextResponse.json({ error: 'That file is empty.' }, { status: 400 })
+    return release(NextResponse.json({ error: 'That file is empty.' }, { status: 400 }))
   }
 
   const buffer = Buffer.from(await file.arrayBuffer())
@@ -203,10 +265,10 @@ export async function POST(request: Request) {
    * failing with something unhelpful about rendering.
    */
   if (buffer.subarray(0, 5).toString('latin1') !== '%PDF-') {
-    return NextResponse.json(
+    return release(NextResponse.json(
       { error: 'That does not look like a PDF. Export the menu as a PDF and try again.' },
       { status: 415 },
-    )
+    ))
   }
 
   // Try text extraction first (fast, free) — pdf.js with Node canvas polyfills.
@@ -222,7 +284,7 @@ export async function POST(request: Request) {
     pages = result.pages
   } catch (err) {
     if (isInvalidPdfError(err)) {
-      return NextResponse.json({ error: INVALID_PDF_MESSAGE }, { status: 422 })
+      return release(NextResponse.json({ error: INVALID_PDF_MESSAGE }, { status: 422 }))
     }
     // Unexpected open failure: still attempt OCR below only if we have no text.
     console.error('[pdf] text-layer extract failed:', err instanceof Error ? err.message : err)
@@ -281,7 +343,7 @@ export async function POST(request: Request) {
       // Nothing is written on this path, so whatever menu the venue already had
       // is still theirs. The file is not called invalid — it is longer than one
       // OCR pass can honestly read.
-      return NextResponse.json(
+      return release(NextResponse.json(
         {
           error: ocrCoverageMessage(coverage),
           code: coverage.reason,
@@ -289,7 +351,7 @@ export async function POST(request: Request) {
           maxOcrPages: MENU_OCR_MAX_PAGES,
         },
         { status: 422 },
-      )
+      ))
     }
     ocrPageCount = coverage.ocrPages
     /*
@@ -318,7 +380,7 @@ export async function POST(request: Request) {
       if (textLayerUnusable) {
         // Nothing readable and nothing safe to fall back on. Refuse and leave
         // whatever menu the venue already had in place.
-        return NextResponse.json(
+        return release(NextResponse.json(
           {
             error: OCR_UNAVAILABLE_MESSAGE,
             code: 'ocr_unavailable',
@@ -328,7 +390,7 @@ export async function POST(request: Request) {
             status: 429,
             headers: { 'Retry-After': String(ocrBudget.retryAfterSec ?? 600) },
           },
-        )
+        ))
       }
       // Only `force_ocr` asked for this, and the text layer already looks
       // complete — handing that back is a real menu, not a partial one.
@@ -349,25 +411,25 @@ export async function POST(request: Request) {
       } else if (!textBeforeOcr) {
         text = ''
       } else if (parsedPdfLikelyIncomplete(textBeforeOcr, pageCount)) {
-        return NextResponse.json(
+        return release(NextResponse.json(
           {
             error:
               'Vision OCR returned no text for this PDF. Try exporting the menu as images or a different PDF.',
           },
           { status: 422 },
-        )
+        ))
       }
     } catch (err) {
       const msg = pdfReadErrorMessage(err)
       console.error('[pdf] OCR error:', err instanceof Error ? err.message : err)
       if (isInvalidPdfError(err)) {
-        return NextResponse.json({ error: INVALID_PDF_MESSAGE }, { status: 422 })
+        return release(NextResponse.json({ error: INVALID_PDF_MESSAGE }, { status: 422 }))
       }
       if (!textBeforeOcr) {
-        return NextResponse.json({ error: msg }, { status: 422 })
+        return release(NextResponse.json({ error: msg }, { status: 422 }))
       }
       if (parsedPdfLikelyIncomplete(textBeforeOcr, pageCount)) {
-        return NextResponse.json({ error: msg }, { status: 422 })
+        return release(NextResponse.json({ error: msg }, { status: 422 }))
       }
       console.warn('[pdf] Keeping text-layer extraction after OCR failure (parse looked complete)')
       text = textBeforeOcr
@@ -375,10 +437,10 @@ export async function POST(request: Request) {
   }
 
   if (!text) {
-    return NextResponse.json(
+    return release(NextResponse.json(
       { error: 'No text found in this PDF even after OCR.' },
       { status: 422 },
-    )
+    ))
   }
 
   /*
@@ -396,10 +458,10 @@ export async function POST(request: Request) {
    */
   const menuText = normalizeMenuText(text)
   if (!menuText) {
-    return NextResponse.json(
+    return release(NextResponse.json(
       { error: 'No text found in this PDF even after OCR.' },
       { status: 422 },
-    )
+    ))
   }
 
   let chunks
@@ -407,81 +469,49 @@ export async function POST(request: Request) {
     chunks = chunkMenuText(menuText, { source: usedOcr ? 'pdf_ocr' : 'pdf_text' })
   } catch (err) {
     console.error('[menu-index] chunking failed:', err instanceof Error ? err.message : err)
-    return NextResponse.json(
+    return release(NextResponse.json(
       { error: MENU_INDEX_FAILED_MESSAGE, code: 'chunking_failed' },
       { status: 422 },
-    )
+    ))
   }
 
   if (chunks.length === 0 || !chunksCoverSource(menuText, chunks)) {
     // A chunker that silently drops a page is the failure this design exists to
     // avoid; cheap to prove it did not, and fatal if it did.
     console.error('[menu-index] chunk coverage check failed for', business_id)
-    return NextResponse.json(
+    return release(NextResponse.json(
       { error: MENU_INDEX_FAILED_MESSAGE, code: 'chunking_failed' },
       { status: 422 },
-    )
+    ))
   }
 
   // Before embeddings, before any document row: an oversized menu costs nothing.
   if (chunks.length > MENU_MAX_CHUNKS_SYNC) {
-    return NextResponse.json(
+    return release(NextResponse.json(
       {
         error: MENU_TOO_LARGE_MESSAGE,
         code: 'menu_too_large',
-        chunks: chunks.length,
-        maxChunks: MENU_MAX_CHUNKS_SYNC,
       },
       { status: 422 },
-    )
+    ))
   }
 
-  const indexBudget = await checkRateLimit(
-    menuIndexRateLimitKey(business_id),
-    MENU_INDEX_LIMIT_PER_HOUR,
-    MENU_INDEX_WINDOW_MS,
-  )
-  if (!indexBudget.allowed) {
-    return NextResponse.json(
-      { error: MENU_INDEX_BUSY_MESSAGE, code: 'menu_index_rate_limited' },
-      { status: 429, headers: { 'Retry-After': String(indexBudget.retryAfterSec ?? 600) } },
-    )
-  }
-
-  // Opens the job under a row lock, or refuses because one is already running.
-  const { data: documentId, error: beginError } = await supabaseAdmin.rpc('begin_menu_indexing', {
+  await supabaseAdmin.rpc('prepare_menu_document', {
+    p_document_id: documentId,
     p_business_id: business_id,
     p_source: usedOcr ? 'pdf_ocr' : 'pdf_text',
-    p_char_count: menuText.length,
+    // Characters, as PostgreSQL counts them. String.length would report 9 for
+    // the pizza line "🍕22 🍕16" that PostgreSQL calls 7, and activation's
+    // length check would reject a perfectly good menu.
+    p_char_count: menuCharacterCount(menuText),
   })
-  if (beginError || typeof documentId !== 'string') {
-    const busy = /menu_processing/.test(beginError?.message ?? '')
-    console.error('[menu-index] begin failed:', beginError?.message ?? 'no document id')
-    return NextResponse.json(
-      {
-        error: busy ? MENU_INDEX_BUSY_MESSAGE : MENU_INDEX_FAILED_MESSAGE,
-        code: busy ? 'menu_processing' : 'index_begin_failed',
-      },
-      { status: busy ? 409 : 500 },
-    )
-  }
-
-  /** Retire the half-built document so the venue is not locked out. */
-  const abandon = async () => {
-    const { error } = await supabaseAdmin.rpc('fail_menu_document', {
-      p_document_id: documentId,
-      p_business_id: business_id,
-    })
-    if (error) console.error('[menu-index] could not mark document failed:', error.message)
-  }
 
   const embedded = await embedMenuChunks(openai, chunks)
   if (!embedded.ok) {
-    await abandon()
-    return NextResponse.json(
+    return release(NextResponse.json(
       { error: MENU_INDEX_FAILED_MESSAGE, code: `embedding_${embedded.reason}` },
       { status: embedded.reason === 'timeout' ? 504 : 502 },
-    )
+    ))
   }
 
   const rows = buildChunkRows(chunks, embedded.embeddings, business_id, documentId)
@@ -491,11 +521,10 @@ export async function POST(request: Request) {
       .insert(rows.slice(i, i + MENU_CHUNK_INSERT_BATCH))
     if (error) {
       console.error('[menu-index] chunk insert failed:', error.message)
-      await abandon()
-      return NextResponse.json(
+      return release(NextResponse.json(
         { error: MENU_INDEX_FAILED_MESSAGE, code: 'chunk_insert_failed' },
         { status: 500 },
-      )
+      ))
     }
   }
 
@@ -512,11 +541,10 @@ export async function POST(request: Request) {
   })
   if (activateError) {
     console.error('[menu-index] activation failed:', activateError.message)
-    await abandon()
-    return NextResponse.json(
+    return release(NextResponse.json(
       { error: MENU_INDEX_FAILED_MESSAGE, code: 'activation_failed' },
       { status: 500 },
-    )
+    ))
   }
 
   return NextResponse.json({
@@ -526,7 +554,6 @@ export async function POST(request: Request) {
     // Present only when OCR ran, and equal to `pages` by construction: the
     // coverage gate above refuses anything it cannot read end to end.
     ...(usedOcr ? { ocrPages: ocrPageCount } : {}),
-    indexedChunks: chunks.length,
   })
 }
 

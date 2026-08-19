@@ -21,14 +21,33 @@ create table if not exists public.menu_documents (
   id uuid primary key default gen_random_uuid(),
   business_id uuid not null references public.businesses (id) on delete cascade,
   status text not null check (status in ('indexing', 'active', 'failed', 'superseded')),
-  source text not null check (source in ('pdf_text', 'pdf_ocr', 'legacy_backfill')),
-  char_count integer not null check (char_count >= 0),
+  /*
+   * Null until the upload knows them.
+   *
+   * The row is created before extraction runs, because it is the lease that
+   * stops a DELETE landing mid-upload — and at that moment nobody knows yet
+   * whether the text will come from the PDF's own layer or from OCR, nor how
+   * long it will be. A document that failed before extraction finished keeps
+   * them null forever, which is the honest record of what happened.
+   */
+  source text check (source in ('pdf_text', 'pdf_ocr', 'legacy_backfill')),
+  char_count integer check (char_count >= 0),
   created_at timestamptz not null default now(),
   activated_at timestamptz,
   superseded_at timestamptz,
   -- Target for the composite foreign key below. It lets a chunk name the
   -- (document, business) pair rather than the document alone.
-  unique (id, business_id)
+  unique (id, business_id),
+  /*
+   * A published menu must know what it is. `indexing` and `failed` may be
+   * incomplete — one has not finished, the other never will — but an active or
+   * superseded document described a real upload, and the database says so
+   * rather than trusting activation to have checked.
+   */
+  constraint menu_documents_published_metadata check (
+    status in ('indexing', 'failed')
+    or (source is not null and char_count is not null)
+  )
 );
 
 create index if not exists menu_documents_business_status_idx
@@ -127,14 +146,18 @@ immutable
 set search_path = public, extensions
 as $$ select interval '10 minutes' $$;
 
--- Open an indexing job, or refuse because one is already open.
+-- Take the upload lease, or refuse because one is already held.
+--
+-- Called before extraction and OCR rather than after, which is the whole point:
+-- with the row created only once the text was in hand, an owner could delete
+-- their menu while an upload was still running its OCR, and the upload would
+-- then finish and activate — putting back a menu they had just removed, with
+-- nothing in the system having recorded that a job was in flight.
 --
 -- Returns the new document id. Raises 'menu_processing' when a live job exists,
 -- which the route turns into a 409 rather than a generic failure.
 create or replace function public.begin_menu_indexing(
-  p_business_id uuid,
-  p_source text,
-  p_char_count integer
+  p_business_id uuid
 )
 returns uuid
 language plpgsql
@@ -168,11 +191,55 @@ begin
      where id = v_existing.id;
   end if;
 
-  insert into public.menu_documents (business_id, status, source, char_count)
-  values (p_business_id, 'indexing', p_source, p_char_count)
+  -- Metadata arrives later, via prepare_menu_document; this row exists now so
+  -- that a DELETE arriving during extraction sees a live job and refuses.
+  insert into public.menu_documents (business_id, status)
+  values (p_business_id, 'indexing')
   returning id into v_id;
 
   return v_id;
+end;
+$$;
+
+-- Record what the upload turned out to be, exactly once.
+--
+-- Split from begin_menu_indexing because the lease has to be taken before the
+-- work that discovers these values. Writes only into a document that is still
+-- indexing and still belongs to the caller's venue.
+create or replace function public.prepare_menu_document(
+  p_document_id uuid,
+  p_business_id uuid,
+  p_source text,
+  p_char_count integer
+)
+returns void
+language plpgsql
+set search_path = public, extensions
+as $$
+declare
+  v_status text;
+begin
+  if p_source is null or p_source not in ('pdf_text', 'pdf_ocr', 'legacy_backfill') then
+    raise exception 'invalid_source' using errcode = 'P0001';
+  end if;
+  if p_char_count is null or p_char_count < 0 then
+    raise exception 'invalid_char_count' using errcode = 'P0001';
+  end if;
+
+  select status into v_status
+    from public.menu_documents
+   where id = p_document_id and business_id = p_business_id;
+
+  if v_status is null then
+    raise exception 'document_not_found' using errcode = 'P0002';
+  end if;
+  if v_status <> 'indexing' then
+    raise exception 'document_not_indexing' using errcode = 'P0001';
+  end if;
+
+  update public.menu_documents
+     set source = p_source, char_count = p_char_count
+   where id = p_document_id and business_id = p_business_id and status = 'indexing';
 end;
 $$;
 
@@ -195,6 +262,7 @@ as $$
 declare
   v_lock uuid;
   v_status text;
+  v_source text;
   v_char_count integer;
   v_total integer;
   v_missing integer;
@@ -204,7 +272,7 @@ begin
     raise exception 'business_not_found' using errcode = 'P0002';
   end if;
 
-  select status, char_count into v_status, v_char_count
+  select status, source, char_count into v_status, v_source, v_char_count
     from public.menu_documents
    where id = p_document_id and business_id = p_business_id;
 
@@ -233,10 +301,19 @@ begin
     raise exception 'chunk_missing_embedding' using errcode = 'P0001';
   end if;
 
+  -- A document that never got past extraction has no business going live.
+  if v_source is null then
+    raise exception 'missing_source' using errcode = 'P0001';
+  end if;
+  if v_char_count is null then
+    raise exception 'missing_char_count' using errcode = 'P0001';
+  end if;
+
   -- One more proof that the legacy text being published is the same upload the
   -- document describes. Without it, a caller could activate document A while
   -- writing the text of upload B, and the two representations would disagree
-  -- from the moment they went live.
+  -- from the moment they went live. Both sides count characters, not UTF-16
+  -- code units — see menuCharacterCount.
   if p_menu_text is null or length(btrim(p_menu_text)) = 0 then
     raise exception 'empty_menu_text' using errcode = 'P0001';
   end if;
@@ -326,7 +403,8 @@ declare
   fn text;
 begin
   foreach fn in array array[
-    'public.begin_menu_indexing(uuid, text, integer)',
+    'public.begin_menu_indexing(uuid)',
+    'public.prepare_menu_document(uuid, uuid, text, integer)',
     'public.activate_menu_document(uuid, uuid, integer, text)',
     'public.delete_active_menu(uuid)',
     'public.fail_menu_document(uuid, uuid)',
