@@ -327,33 +327,126 @@ describe('the lease is taken before the work, not after it', () => {
   })
 })
 
-describe('DELETE cannot land in the middle of an upload', () => {
+describe('DELETE moves each document to the state it actually reached', () => {
   /*
-   * Modelled rather than executed — no local Supabase was available — but the
-   * ordering it depends on is pinned in both files: the lease exists from before
-   * extraction until the document is retired or activated, and delete_active_menu
-   * refuses whenever a live indexing document is present.
+   * Modelled from the SQL rather than executed — no local Supabase was
+   * available — but these transitions are exactly where the lifecycle went
+   * wrong, so the statements are read individually.
+   *
+   * The bug this pins: DELETE used to sweep `indexing` into `superseded`
+   * alongside the active document. A lease is created before extraction, so a
+   * crashed request leaves status='indexing' with source and char_count null,
+   * and menu_documents_published_metadata requires both for a superseded row.
+   * The whole transaction failed the constraint and the venue could never
+   * delete its menu again. The constraint is right; the transition was wrong.
    */
   const del = SQL.slice(
     SQL.indexOf('function public.delete_active_menu'),
     SQL.indexOf('-- Abandon an indexing job'),
   )
+  const code = del
+    .split('\n')
+    .filter((l) => !l.trim().startsWith('--') && !l.trim().startsWith('*') && !l.trim().startsWith('/*'))
+    .join('\n')
 
-  it('a held lease makes DELETE conflict', () => {
-    assert.match(del, /where business_id = p_business_id and status = 'indexing'/)
-    assert.match(del, /raise exception 'menu_processing'/)
+  it('CASE 1 — an active document becomes superseded, and the text is cleared', () => {
+    assert.match(
+      code.replace(/\s+/g, ' '),
+      /set status = 'superseded', superseded_at = now\(\) where business_id = p_business_id and status = 'active'/,
+    )
+    assert.match(code, /set menu_pdf_text = null/)
   })
 
-  it('a retired lease lets DELETE through', () => {
-    // fail_menu_document moves 'indexing' → 'failed', which delete_active_menu
-    // no longer sees, so a failed upload does not block the owner.
+  it('CASE 2 — a live lease refuses the delete outright', () => {
+    assert.match(code, /where business_id = p_business_id and status = 'indexing'/)
+    assert.match(code, /v_indexing > now\(\) - public\.menu_indexing_stale_after\(\)/)
+    assert.match(code, /raise exception 'menu_processing'/)
+    // The refusal happens before any update, so nothing is touched.
+    const refuse = code.indexOf("raise exception 'menu_processing'")
+    const firstUpdate = code.indexOf('update public.menu_documents')
+    assert.ok(refuse < firstUpdate, 'refuse before mutating anything')
+  })
+
+  it('CASE 3/4 — a stale lease becomes failed, prepared or not', () => {
+    /*
+     * Failed, because a stale unfinished upload was never a published menu.
+     * `failed` is the one published-state exemption the CHECK allows, so this
+     * is also the only transition that works for an unprepared lease.
+     */
+    assert.match(
+      code.replace(/\s+/g, ' '),
+      /set status = 'failed' where business_id = p_business_id and status = 'indexing'/,
+    )
+    // No metadata predicate: prepared and unprepared leases take the same path.
+    assert.doesNotMatch(code, /status = 'failed'[\s\S]{0,120}source is/)
+  })
+
+  it('DELETE never turns an indexing document into superseded', () => {
+    const supersede = code.slice(code.indexOf("set status = 'superseded'"))
+    const clause = supersede.slice(0, supersede.indexOf(';'))
+    assert.equal(clause.includes("'indexing'"), false, 'superseded is for active documents only')
+    assert.doesNotMatch(code.replace(/\s+/g, ' '), /status in \('active', 'indexing'\)/)
+  })
+
+  it('CASE 5 — a failed document is left alone', () => {
+    // Neither update names it, so an earlier failure keeps its record.
+    for (const stmt of code.split('update public.menu_documents').slice(1)) {
+      const where = stmt.slice(0, stmt.indexOf(';'))
+      assert.equal(where.includes("'failed'") && where.includes('where'), where.includes("set status = 'failed'"))
+    }
+  })
+
+  it('the stale lease is retired before the active one is superseded', () => {
+    // Order matters only for legibility here, but a reader should see the
+    // unfinished job dealt with first.
+    const fail = code.indexOf("set status = 'failed'")
+    const supersede = code.indexOf("set status = 'superseded'")
+    assert.ok(fail >= 0 && supersede > fail)
+  })
+
+  it('all of it happens under the business row lock, in one transaction', () => {
+    assert.match(code, /for update/)
+    const lock = code.indexOf('for update')
+    assert.ok(lock < code.indexOf('update public.menu_documents'))
+  })
+
+  it('a retired lease lets a later DELETE through', () => {
+    // fail_menu_document moves 'indexing' → 'failed', which the live-lease
+    // check no longer sees.
     const fail = SQL.slice(SQL.indexOf('function public.fail_menu_document'))
     assert.match(fail, /set status = 'failed'/)
     assert.match(fail, /and status = 'indexing'/)
   })
+})
 
-  it('a stale lease does not block forever', () => {
-    assert.match(del, /v_indexing > now\(\) - public\.menu_indexing_stale_after\(\)/)
+describe('write-once survives two callers, not just one', () => {
+  const prepare = SQL.slice(
+    SQL.indexOf('function public.prepare_menu_document'),
+    SQL.indexOf('-- Publish an indexed document'),
+  )
+
+  it('claims the row only if it actually changed it', () => {
+    /*
+     * The pre-check reads and the UPDATE writes; between them another caller
+     * can win. Both would have seen null and both would think they were first,
+     * and the loser's guarded UPDATE matches nothing — returning success for
+     * metadata it did not write.
+     */
+    assert.match(prepare, /get diagnostics v_updated = row_count/)
+    assert.match(prepare, /if v_updated <> 1 then/)
+    assert.match(prepare, /raise exception 'metadata_already_prepared'/)
+  })
+
+  it('keeps the explicit pre-check as well', () => {
+    assert.match(prepare, /if v_source is not null or v_char_count is not null then/)
+  })
+
+  it('the UPDATE itself still guards on unwritten metadata and ownership', () => {
+    const flat = prepare.replace(/\s+/g, ' ')
+    assert.match(
+      flat,
+      /where id = p_document_id and business_id = p_business_id and status = 'indexing' and source is null and char_count is null/,
+    )
   })
 })
 

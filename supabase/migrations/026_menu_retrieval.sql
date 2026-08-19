@@ -220,6 +220,7 @@ declare
   v_status text;
   v_source text;
   v_char_count integer;
+  v_updated integer;
 begin
   if p_source is null or p_source not in ('pdf_text', 'pdf_ocr', 'legacy_backfill') then
     raise exception 'invalid_source' using errcode = 'P0001';
@@ -254,6 +255,18 @@ begin
      and status = 'indexing'
      and source is null
      and char_count is null;
+
+  /*
+   * The pre-check above reads, and this writes; between the two another caller
+   * can win. Both would have seen null, both would consider themselves the
+   * first, and the loser's UPDATE quietly matches nothing — returning success
+   * for metadata it did not write. Only a caller that actually changed the row
+   * may claim it.
+   */
+  get diagnostics v_updated = row_count;
+  if v_updated <> 1 then
+    raise exception 'metadata_already_prepared' using errcode = 'P0001';
+  end if;
 end;
 $$;
 
@@ -377,9 +390,24 @@ begin
     raise exception 'menu_processing' using errcode = 'P0001';
   end if;
 
+  /*
+   * A stale lease failed; it was never published, so it is not superseded.
+   *
+   * Sweeping it into 'superseded' along with the active document was not merely
+   * imprecise, it made the delete impossible: a lease is created before
+   * extraction, so a crashed request leaves status='indexing' with source and
+   * char_count still null, and menu_documents_published_metadata requires both
+   * for a superseded row. The whole transaction failed the constraint, and the
+   * venue could never delete its menu again. The constraint is right — a
+   * published document must know what it is — and the transition was wrong.
+   */
+  update public.menu_documents
+     set status = 'failed'
+   where business_id = p_business_id and status = 'indexing';
+
   update public.menu_documents
      set status = 'superseded', superseded_at = now()
-   where business_id = p_business_id and status in ('active', 'indexing');
+   where business_id = p_business_id and status = 'active';
 
   update public.businesses
      set menu_pdf_text = null
