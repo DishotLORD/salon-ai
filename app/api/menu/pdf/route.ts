@@ -18,6 +18,7 @@ import {
 } from '@/lib/menu-pdf-read'
 import {
   MENU_CHUNK_INSERT_BATCH,
+  MENU_EMBEDDING_TOTAL_BUDGET_MS,
   MENU_INDEX_BUSY_MESSAGE,
   MENU_INDEX_FAILED_MESSAGE,
   MENU_INDEX_LIMIT_PER_HOUR,
@@ -37,6 +38,32 @@ import { verifyBusinessOwner } from '@/lib/verify-business-owner'
 
 export const maxDuration = 120 // 2 minutes for OCR of large PDFs
 
+/**
+ * How long this route may spend on work, leaving the rest of `maxDuration` to
+ * finish cleanly.
+ *
+ * Every expensive step shares this one absolute deadline: rendering, Vision,
+ * embeddings. Giving each phase its own budget does not bound the request —
+ * OCR could take a minute and embeddings would still start a fresh seventy
+ * seconds, and the platform's own 120-second kill would arrive first.
+ *
+ * That kill is the outcome to avoid, not a fallback. It stops the function
+ * mid-flight, so `release()` never runs, the lease stays `indexing`, and the
+ * venue cannot upload again until the ten-minute stale window expires — over a
+ * request that merely ran long. The fifteen seconds held back here are for
+ * retiring the lease, serialising a response and runtime overhead.
+ */
+export const REQUEST_WORK_BUDGET_MS = 105_000
+
+/** Kept clear for cleanup after the deadline; never spent on model calls. */
+export const REQUEST_CLEANUP_RESERVE_MS = 5_000
+
+/**
+ * Below this there is no point starting an expensive call: it cannot finish,
+ * and starting it only guarantees an abort and a wasted request.
+ */
+export const MIN_PHASE_BUDGET_MS = 2_000
+
 
 /**
  * OCR renders pages at 2.5× and sends them to GPT-4o Vision with a 16k-token
@@ -54,7 +81,7 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
  * here is a ceiling that the document is already known to fit inside — not a
  * silent truncation point.
  */
-async function ocrPdf(buffer: Buffer): Promise<string> {
+async function ocrPdf(buffer: Buffer, budgetMs: number): Promise<string> {
   const pageImages = await renderPdfPagesToPngBase64(buffer, {
     maxPages: MENU_OCR_MAX_PAGES,
     scale: 2.5,
@@ -72,13 +99,29 @@ async function ocrPdf(buffer: Buffer): Promise<string> {
     })),
   ]
 
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o',
-    messages: [{ role: 'user', content }],
-    max_tokens: 16384,
-  })
-
-  return response.choices[0].message.content?.trim() ?? ''
+  /*
+   * Bounded by the route's own deadline rather than by the platform's.
+   * Unbounded, a slow Vision call runs until Vercel kills the function, which
+   * skips `release()` and leaves the venue locked out for the stale window.
+   */
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), budgetMs)
+  try {
+    const response = await openai.chat.completions.create(
+      {
+        model: 'gpt-4o',
+        messages: [{ role: 'user', content }],
+        max_tokens: 16384,
+      },
+      // One retry policy, and it is the caller's. The SDK retries twice by
+      // default, which would multiply this call's cost and its wall time
+      // against a deadline computed without it.
+      { signal: controller.signal, maxRetries: 0 },
+    )
+    return response.choices[0].message.content?.trim() ?? ''
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 /**
@@ -129,6 +172,12 @@ async function verifyOwner(business_id: string): Promise<true | NextResponse> {
 
 // ── POST /api/menu/pdf?business_id=… ─────────────────────────────────────────
 export async function POST(request: Request) {
+  /** One absolute deadline, shared by rendering, Vision and embeddings. */
+  const requestDeadline = Date.now() + REQUEST_WORK_BUDGET_MS
+  /** What is safely left for an expensive phase, cleanup already set aside. */
+  const remainingBudgetMs = () =>
+    requestDeadline - Date.now() - REQUEST_CLEANUP_RESERVE_MS
+
   /*
    * Everything down to the formData() call is deliberately body-free.
    *
@@ -403,7 +452,14 @@ export async function POST(request: Request) {
   if (shouldOcr && ocrAllowed) {
     const textBeforeOcr = text
     try {
-      const ocrText = await ocrPdf(buffer)
+      const ocrBudgetMs = remainingBudgetMs()
+      if (ocrBudgetMs < MIN_PHASE_BUDGET_MS) {
+        return release(NextResponse.json(
+          { error: MENU_INDEX_FAILED_MESSAGE, code: 'request_timeout' },
+          { status: 504 },
+        ))
+      }
+      const ocrText = await ocrPdf(buffer, ocrBudgetMs)
       const trimmed = ocrText.trim()
       if (trimmed) {
         text = trimmed
@@ -420,6 +476,15 @@ export async function POST(request: Request) {
         ))
       }
     } catch (err) {
+      // Our own deadline, not a fault in the file — say so, and never leak the
+      // library's text to the owner.
+      if (err instanceof Error && (err.name === 'AbortError' || err.name === 'APIUserAbortError')) {
+        console.error('[pdf] OCR aborted at the request deadline')
+        return release(NextResponse.json(
+          { error: MENU_INDEX_FAILED_MESSAGE, code: 'request_timeout' },
+          { status: 504 },
+        ))
+      }
       const msg = pdfReadErrorMessage(err)
       console.error('[pdf] OCR error:', err instanceof Error ? err.message : err)
       if (isInvalidPdfError(err)) {
@@ -496,7 +561,7 @@ export async function POST(request: Request) {
     ))
   }
 
-  await supabaseAdmin.rpc('prepare_menu_document', {
+  const { error: prepareError } = await supabaseAdmin.rpc('prepare_menu_document', {
     p_document_id: documentId,
     p_business_id: business_id,
     p_source: usedOcr ? 'pdf_ocr' : 'pdf_text',
@@ -505,8 +570,33 @@ export async function POST(request: Request) {
     // length check would reject a perfectly good menu.
     p_char_count: menuCharacterCount(menuText),
   })
+  if (prepareError) {
+    /*
+     * Ignoring this bought embeddings for a document that activation was
+     * always going to refuse — the venue paid for a model call whose result
+     * could never be published.
+     */
+    console.error('[menu-index] prepare failed:', prepareError.message)
+    return release(NextResponse.json(
+      { error: MENU_INDEX_FAILED_MESSAGE, code: 'prepare_failed' },
+      { status: 500 },
+    ))
+  }
 
-  const embedded = await embedMenuChunks(openai, chunks)
+  /*
+   * Whatever is left of the shared deadline, capped by the embedding phase's
+   * own ceiling. The 70 seconds is a maximum, not a fresh allowance handed out
+   * regardless of how long OCR already took.
+   */
+  const embeddingBudgetMs = Math.min(MENU_EMBEDDING_TOTAL_BUDGET_MS, remainingBudgetMs())
+  if (embeddingBudgetMs < MIN_PHASE_BUDGET_MS) {
+    return release(NextResponse.json(
+      { error: MENU_INDEX_FAILED_MESSAGE, code: 'request_timeout' },
+      { status: 504 },
+    ))
+  }
+
+  const embedded = await embedMenuChunks(openai, chunks, { totalBudgetMs: embeddingBudgetMs })
   if (!embedded.ok) {
     return release(NextResponse.json(
       { error: MENU_INDEX_FAILED_MESSAGE, code: `embedding_${embedded.reason}` },

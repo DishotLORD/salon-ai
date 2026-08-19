@@ -218,6 +218,8 @@ set search_path = public, extensions
 as $$
 declare
   v_status text;
+  v_source text;
+  v_char_count integer;
 begin
   if p_source is null or p_source not in ('pdf_text', 'pdf_ocr', 'legacy_backfill') then
     raise exception 'invalid_source' using errcode = 'P0001';
@@ -226,7 +228,7 @@ begin
     raise exception 'invalid_char_count' using errcode = 'P0001';
   end if;
 
-  select status into v_status
+  select status, source, char_count into v_status, v_source, v_char_count
     from public.menu_documents
    where id = p_document_id and business_id = p_business_id;
 
@@ -237,9 +239,21 @@ begin
     raise exception 'document_not_indexing' using errcode = 'P0001';
   end if;
 
+  -- Write-once, enforced rather than merely intended. A second prepare against
+  -- the same lease would mean two different extractions believed they owned it,
+  -- and whichever wrote last would decide what activation compares the menu
+  -- text against. Refusing is the only answer that keeps the pair honest.
+  if v_source is not null or v_char_count is not null then
+    raise exception 'metadata_already_prepared' using errcode = 'P0001';
+  end if;
+
   update public.menu_documents
      set source = p_source, char_count = p_char_count
-   where id = p_document_id and business_id = p_business_id and status = 'indexing';
+   where id = p_document_id
+     and business_id = p_business_id
+     and status = 'indexing'
+     and source is null
+     and char_count is null;
 end;
 $$;
 

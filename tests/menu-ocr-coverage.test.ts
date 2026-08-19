@@ -159,7 +159,7 @@ describe('the route cannot reach the write with partial OCR', () => {
   const coverageGate = at(/const coverage = decideOcrCoverage\(totalPages\)/)
   const refusal = at(/code: coverage\.reason/)
   const ocrBudget = at(/checkRateLimit\(`menu-ocr:/)
-  const ocrCall = at(/await ocrPdf\(buffer\)/)
+  const ocrCall = at(/await ocrPdf\(buffer, ocrBudgetMs\)/)
   /*
    * The menu is no longer published by a direct column write: it is published
    * inside activate_menu_document, which moves businesses.menu_pdf_text and the

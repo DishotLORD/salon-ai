@@ -392,7 +392,7 @@ describe('the upload route publishes only what it fully indexed', () => {
     for (const [name, pattern] of [
       ['formData', /await request\.formData\(\)/],
       ['extraction', /extractPdfTextLayer\(buffer\)/],
-      ['OCR', /await ocrPdf\(buffer\)/],
+      ['OCR', /await ocrPdf\(buffer, ocrBudgetMs\)/],
       ['chunking', /chunkMenuText\(menuText/],
       ['embeddings', /embedMenuChunks\(openai/],
       ['activation', /rpc\('activate_menu_document'/],
@@ -413,7 +413,7 @@ describe('the upload route publishes only what it fully indexed', () => {
   it('refuses on the rate limit before any lease or expensive work', () => {
     const limit = ROUTE.search(/menuIndexRateLimitKey\(business_id\)/)
     const lease = ROUTE.search(/rpc\('begin_menu_indexing'/)
-    const ocr = ROUTE.search(/await ocrPdf\(buffer\)/)
+    const ocr = ROUTE.search(/await ocrPdf\(buffer, ocrBudgetMs\)/)
     assert.ok(limit >= 0 && limit < lease && limit < ocr)
   })
 
@@ -516,6 +516,114 @@ describe('the upload route publishes only what it fully indexed', () => {
       }
     }
     assert.match(ROUTE, /p_expected_chunks: chunks\.length/, 'still passed to activation')
+  })
+})
+
+describe('one deadline is shared by every expensive phase', () => {
+  const ROUTE_CONSTS = ROUTE.slice(0, ROUTE.indexOf('async function ocrPdf'))
+
+  it('the route budget sits below the platform ceiling, with cleanup reserved', () => {
+    /*
+     * The platform's 120-second kill must never be the normal timeout: it stops
+     * the function mid-flight, so release() never runs, the lease stays
+     * 'indexing', and the venue cannot upload again until the ten-minute stale
+     * window expires — over a request that merely ran long.
+     */
+    assert.match(ROUTE_CONSTS, /maxDuration = 120/)
+    assert.match(ROUTE_CONSTS, /REQUEST_WORK_BUDGET_MS = 105_000/)
+    assert.match(ROUTE_CONSTS, /REQUEST_CLEANUP_RESERVE_MS = 5_000/)
+    assert.ok(105_000 < 120_000, 'work budget under maxDuration')
+    assert.ok(105_000 + 5_000 < 120_000, 'and cleanup still fits')
+  })
+
+  it('the deadline is absolute and set once, at the top of the request', () => {
+    const deadlineAt = ROUTE.search(/const requestDeadline = Date\.now\(\) \+ REQUEST_WORK_BUDGET_MS/)
+    const auth = ROUTE.search(/const check = await verifyOwner/)
+    assert.ok(deadlineAt >= 0 && deadlineAt < auth, 'the clock starts before any work')
+    assert.equal((ROUTE.match(/REQUEST_WORK_BUDGET_MS/g) ?? []).length, 2, 'one definition, one use')
+  })
+
+  it('OCR and embeddings draw from the same remaining budget', () => {
+    // Not two independent 70-second allowances.
+    assert.match(ROUTE, /const remainingBudgetMs = \(\) =>/)
+    assert.match(ROUTE, /const ocrBudgetMs = remainingBudgetMs\(\)/)
+    assert.match(
+      ROUTE,
+      /Math\.min\(MENU_EMBEDDING_TOTAL_BUDGET_MS, remainingBudgetMs\(\)\)/,
+    )
+  })
+
+  it('neither phase starts when too little time remains', () => {
+    const guards = ROUTE.match(/< MIN_PHASE_BUDGET_MS/g) ?? []
+    assert.equal(guards.length, 2, 'one guard before OCR, one before embeddings')
+    assert.match(ROUTE, /code: 'request_timeout'/)
+  })
+
+  it('the Vision call is cancelled at the deadline, not by the platform', () => {
+    const ocr = ROUTE.slice(ROUTE.indexOf('async function ocrPdf'), ROUTE.indexOf('function parsedPdfLikelyIncomplete'))
+    assert.match(ocr, /async function ocrPdf\(buffer: Buffer, budgetMs: number\)/)
+    assert.match(ocr, /new AbortController\(\)/)
+    assert.match(ocr, /setTimeout\(\(\) => controller\.abort\(\), budgetMs\)/)
+    assert.match(ocr, /signal: controller\.signal/)
+    assert.match(ocr, /clearTimeout\(timer\)/, 'no timer outlives the call')
+  })
+
+  it('the Vision request disables the SDK’s own retries', () => {
+    const ocr = ROUTE.slice(ROUTE.indexOf('async function ocrPdf'), ROUTE.indexOf('function parsedPdfLikelyIncomplete'))
+    assert.match(ocr, /maxRetries: 0/)
+    // No retry design was introduced for Vision in this change.
+    assert.doesNotMatch(ocr, /for \(let attempt/)
+  })
+
+  it('an aborted OCR releases the lease and says nothing internal', () => {
+    const branch = ROUTE.slice(ROUTE.indexOf("err.name === 'AbortError'"))
+    assert.match(branch.slice(0, 500), /return release\(NextResponse\.json\(/)
+    assert.match(branch.slice(0, 500), /code: 'request_timeout'/)
+    assert.match(branch.slice(0, 500), /status: 504/)
+    assert.match(branch.slice(0, 500), /MENU_INDEX_FAILED_MESSAGE/)
+  })
+})
+
+describe('metadata preparation is checked, and happens once', () => {
+  it('a failed prepare stops before any embedding is bought', () => {
+    /*
+     * The error used to be discarded, so a document activation was always going
+     * to refuse still had its embeddings paid for first.
+     */
+    const prepareAt = ROUTE.search(/const \{ error: prepareError \} = await supabaseAdmin\.rpc\('prepare_menu_document'/)
+    const guardAt = ROUTE.search(/if \(prepareError\) \{/)
+    const embedAt = ROUTE.search(/embedMenuChunks\(openai/)
+    assert.ok(prepareAt >= 0, 'the error is destructured at all')
+    assert.ok(guardAt > prepareAt && guardAt < embedAt, 'and checked before embedding')
+    const block = ROUTE.slice(guardAt, embedAt)
+    assert.match(block, /return release\(NextResponse\.json\(/)
+    assert.match(block, /code: 'prepare_failed'/)
+    assert.match(block, /status: 500/)
+  })
+
+  it('the database refuses a second prepare for the same lease', () => {
+    /*
+     * Two extractions believing they own one lease would let whichever wrote
+     * last decide what activation compares the menu text against.
+     */
+    const prepare = MIGRATION.slice(
+      MIGRATION.indexOf('function public.prepare_menu_document'),
+      MIGRATION.indexOf('-- Publish an indexed document'),
+    )
+    assert.match(prepare, /if v_source is not null or v_char_count is not null then/)
+    assert.match(prepare, /raise exception 'metadata_already_prepared'/)
+    // Belt and braces: the UPDATE itself only matches an unwritten row.
+    assert.match(prepare, /and source is null\s*\n\s*and char_count is null/)
+  })
+
+  it('prepare still refuses another venue’s document, or one not indexing', () => {
+    const prepare = MIGRATION.slice(
+      MIGRATION.indexOf('function public.prepare_menu_document'),
+      MIGRATION.indexOf('-- Publish an indexed document'),
+    )
+    assert.match(prepare, /where id = p_document_id and business_id = p_business_id/)
+    assert.match(prepare, /if v_status <> 'indexing' then/)
+    assert.match(prepare, /raise exception 'document_not_found'/)
   })
 })
 
