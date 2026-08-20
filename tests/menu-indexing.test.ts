@@ -627,12 +627,19 @@ describe('metadata preparation is checked, and happens once', () => {
   })
 })
 
-describe('chat is untouched by this change', () => {
-  it('the chat route still reads the legacy column and nothing new', () => {
+describe('chat consumes the indexed representation without changing the upload pipeline', () => {
+  it('keeps the legacy column as a retrieval failure fallback', () => {
     const chat = readFileSync(new URL('../app/api/chat/route.ts', import.meta.url), 'utf8')
     assert.match(chat, /menu_pdf_text/)
-    for (const forbidden of ['menu_chunks', 'menu_documents', 'match_menu_chunks', 'embedding']) {
-      assert.equal(chat.includes(forbidden), false, `chat must not reference ${forbidden} yet`)
-    }
+    assert.match(chat, /retrieveMenuContext/)
+    assert.match(chat, /match_menu_chunks/)
+    assert.match(chat, /selectMenuPromptSources/)
+  })
+
+  it('does not write menu documents, chunks or legacy menu text from chat', () => {
+    const chat = readFileSync(new URL('../app/api/chat/route.ts', import.meta.url), 'utf8')
+    assert.doesNotMatch(chat, /begin_menu_indexing|prepare_menu_document|activate_menu_document/)
+    assert.doesNotMatch(chat, /from\("menu_chunks"\)\s*\.insert/)
+    assert.doesNotMatch(chat, /update\(\{\s*menu_pdf_text:/)
   })
 })
