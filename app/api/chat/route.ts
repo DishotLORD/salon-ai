@@ -95,6 +95,12 @@ import {
 } from "@/lib/payment-settings";
 import { defaultSystemPrompt } from "@/lib/default-system-prompt";
 import {
+  menuEvidenceSafetyRules,
+  retrieveMenuContext,
+  selectMenuPromptSources,
+  type RetrievedMenuChunk,
+} from "@/lib/menu-retrieval";
+import {
   CHAT_BUSINESS_RATE_LIMIT,
   CHAT_GLOBAL_KEY,
   CHAT_GLOBAL_RATE_LIMIT,
@@ -648,6 +654,7 @@ function buildSystemPrompt(
   nowParts?: WallClockParts | null,
   slotIntervalMinutes?: number,
   maxAdvanceDays?: number,
+  retrievedMenuContext?: string | null,
 ): string {
   const custom = customPrompt?.trim();
   const identityLine = `IDENTITY: You are ${conciergeName}, the AI Concierge for ${restaurantName}. Always introduce and refer to yourself as ${conciergeName}.`;
@@ -707,6 +714,15 @@ function buildSystemPrompt(
   if (depositPerGuest != null && depositPerGuest > 0) {
     prompt += `\nDEPOSIT POLICY: this restaurant collects a $${depositPerGuest.toFixed(2)} CAD per-guest deposit to secure reservations. Mention this briefly BEFORE booking. When create_reservation succeeds and returns a payment_link, include that exact link in your confirmation and tell the guest the table is held and fully confirmed once the deposit is paid. Never invent a payment link.`;
   }
+  const hasRetrievedMenuContext = Boolean(retrievedMenuContext?.trim());
+  const hasLegacyMenuContext = Boolean(menuPdfText?.trim());
+  if (
+    (menuItems && menuItems.length > 0) ||
+    hasRetrievedMenuContext ||
+    hasLegacyMenuContext
+  ) {
+    prompt += `\n\n${menuEvidenceSafetyRules(hasRetrievedMenuContext)}`;
+  }
   if (menuItems && menuItems.length > 0) {
     const lines = menuItems.map((item) => {
       const cat = item.category ?? "Other";
@@ -721,7 +737,9 @@ function buildSystemPrompt(
     });
     prompt += `\n\nMENU:\n${lines.join("\n")}`;
   }
-  if (menuPdfText?.trim()) {
+  if (hasRetrievedMenuContext) {
+    prompt += `\n\nRETRIEVED MENU EXCERPTS (partial active-menu context):\n${retrievedMenuContext!.trim()}`;
+  } else if (menuPdfText?.trim()) {
     prompt += `\n\nMENU (from uploaded PDF):\n${menuPdfText.trim()}`;
   }
   const activeZones = (diningZones ?? []).filter((z) => z.is_active);
@@ -4682,6 +4700,69 @@ export async function POST(request: Request) {
       );
     }
 
+    /*
+     * Retrieval runs only after all three existing chat admission gates and
+     * only with the business id loaded above. No new retry or rate-limit path
+     * is introduced. Any missing migration, active document, embedding failure
+     * or RPC failure selects the legacy PDF text below.
+     */
+    const menuRetrieval = await retrieveMenuContext({
+      client: openai,
+      verifiedBusinessId: business.id,
+      query: lastUserContent,
+      findActiveDocument: async (verifiedBusinessId) => {
+        const { data, error } = await supabaseAdmin
+          .from("menu_documents")
+          .select("id")
+          .eq("business_id", verifiedBusinessId)
+          .eq("status", "active")
+          .maybeSingle();
+        if (error) throw new Error("active_menu_lookup_failed");
+        return data?.id ? { id: data.id } : null;
+      },
+      matchChunks: async ({
+        verifiedBusinessId,
+        queryEmbedding,
+        matchCount,
+      }) => {
+        const { data, error } = await supabaseAdmin.rpc("match_menu_chunks", {
+          p_business_id: verifiedBusinessId,
+          p_query_embedding: `[${queryEmbedding.join(",")}]`,
+          p_match_count: matchCount,
+        });
+        if (error) throw new Error("menu_match_failed");
+        if (!Array.isArray(data)) return [];
+
+        const rows: RetrievedMenuChunk[] = [];
+        for (const value of data) {
+          const row = value as Record<string, unknown>;
+          if (
+            typeof row.chunk_id !== "string" ||
+            typeof row.document_id !== "string" ||
+            typeof row.ordinal !== "number" ||
+            typeof row.content !== "string" ||
+            (row.section != null && typeof row.section !== "string") ||
+            typeof row.similarity !== "number"
+          ) {
+            continue;
+          }
+          rows.push({
+            id: row.chunk_id,
+            document_id: row.document_id,
+            ordinal: row.ordinal,
+            section: row.section as string | null,
+            content: row.content,
+            similarity: row.similarity,
+          });
+        }
+        return rows;
+      },
+    });
+    const menuPromptSources = selectMenuPromptSources(
+      (business as Record<string, unknown>).menu_pdf_text as string | null,
+      menuRetrieval,
+    );
+
     // ── Resolve (or create) conversation + customer ───────────────────────────
     /*
      * Resuming a conversation takes the id AND the session token minted with it
@@ -4857,7 +4938,7 @@ export async function POST(request: Request) {
       restaurantName,
       business.system_prompt,
       menuItems,
-      (business as Record<string, unknown>).menu_pdf_text as string | null,
+      menuPromptSources.legacyMenuText,
       todayLabel,
       wallClockDateKey(nowParts),
       bookingCtx.zones,
@@ -4874,6 +4955,7 @@ export async function POST(request: Request) {
       nowParts,
       bookingCtx.bookingSettings.slot_interval_minutes,
       bookingCtx.bookingSettings.max_advance_days,
+      menuPromptSources.retrievedMenuContext,
     );
     if (!readiness.bookingReady) {
       systemPrompt += `\n\nSETUP INCOMPLETE: online reservations are not available yet for this restaurant. If a guest asks to book, reschedule, check open times, or join a waitlist, tell them kindly to contact the restaurant directly — never invent hours, seating capacity, open times, or a booking confirmation. Do not call create_reservation, reschedule_reservation, check_availability, find_next_available, or join_waitlist as if the venue were ready.`;
