@@ -16,12 +16,53 @@ import {
   pdfReadErrorMessage,
   renderPdfPagesToPngBase64,
 } from '@/lib/menu-pdf-read'
+import {
+  MENU_CHUNK_INSERT_BATCH,
+  MENU_EMBEDDING_TOTAL_BUDGET_MS,
+  MENU_INDEX_BUSY_MESSAGE,
+  MENU_INDEX_FAILED_MESSAGE,
+  MENU_INDEX_LIMIT_PER_HOUR,
+  MENU_INDEX_WINDOW_MS,
+  MENU_MAX_CHUNKS_SYNC,
+  MENU_TOO_LARGE_MESSAGE,
+  buildChunkRows,
+  embedMenuChunks,
+  menuIndexRateLimitKey,
+} from '@/lib/menu-indexing'
+import { chunkMenuText, chunksCoverSource, menuCharacterCount } from '@/lib/menu-chunking'
+import { normalizeMenuText } from '@/lib/menu-ocr-normalize'
 import { checkRateLimit } from '@/lib/rate-limit'
 import { businessIdFromUrl, declaredBodyTooLarge } from '@/lib/upload-guard'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { verifyBusinessOwner } from '@/lib/verify-business-owner'
 
 export const maxDuration = 120 // 2 minutes for OCR of large PDFs
+
+/**
+ * How long this route may spend on work, leaving the rest of `maxDuration` to
+ * finish cleanly.
+ *
+ * Every expensive step shares this one absolute deadline: rendering, Vision,
+ * embeddings. Giving each phase its own budget does not bound the request —
+ * OCR could take a minute and embeddings would still start a fresh seventy
+ * seconds, and the platform's own 120-second kill would arrive first.
+ *
+ * That kill is the outcome to avoid, not a fallback. It stops the function
+ * mid-flight, so `release()` never runs, the lease stays `indexing`, and the
+ * venue cannot upload again until the ten-minute stale window expires — over a
+ * request that merely ran long. The fifteen seconds held back here are for
+ * retiring the lease, serialising a response and runtime overhead.
+ */
+export const REQUEST_WORK_BUDGET_MS = 105_000
+
+/** Kept clear for cleanup after the deadline; never spent on model calls. */
+export const REQUEST_CLEANUP_RESERVE_MS = 5_000
+
+/**
+ * Below this there is no point starting an expensive call: it cannot finish,
+ * and starting it only guarantees an abort and a wasted request.
+ */
+export const MIN_PHASE_BUDGET_MS = 2_000
 
 
 /**
@@ -40,7 +81,7 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
  * here is a ceiling that the document is already known to fit inside — not a
  * silent truncation point.
  */
-async function ocrPdf(buffer: Buffer): Promise<string> {
+async function ocrPdf(buffer: Buffer, budgetMs: number): Promise<string> {
   const pageImages = await renderPdfPagesToPngBase64(buffer, {
     maxPages: MENU_OCR_MAX_PAGES,
     scale: 2.5,
@@ -58,13 +99,29 @@ async function ocrPdf(buffer: Buffer): Promise<string> {
     })),
   ]
 
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o',
-    messages: [{ role: 'user', content }],
-    max_tokens: 16384,
-  })
-
-  return response.choices[0].message.content?.trim() ?? ''
+  /*
+   * Bounded by the route's own deadline rather than by the platform's.
+   * Unbounded, a slow Vision call runs until Vercel kills the function, which
+   * skips `release()` and leaves the venue locked out for the stale window.
+   */
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), budgetMs)
+  try {
+    const response = await openai.chat.completions.create(
+      {
+        model: 'gpt-4o',
+        messages: [{ role: 'user', content }],
+        max_tokens: 16384,
+      },
+      // One retry policy, and it is the caller's. The SDK retries twice by
+      // default, which would multiply this call's cost and its wall time
+      // against a deadline computed without it.
+      { signal: controller.signal, maxRetries: 0 },
+    )
+    return response.choices[0].message.content?.trim() ?? ''
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 /**
@@ -115,6 +172,12 @@ async function verifyOwner(business_id: string): Promise<true | NextResponse> {
 
 // ── POST /api/menu/pdf?business_id=… ─────────────────────────────────────────
 export async function POST(request: Request) {
+  /** One absolute deadline, shared by rendering, Vision and embeddings. */
+  const requestDeadline = Date.now() + REQUEST_WORK_BUDGET_MS
+  /** What is safely left for an expensive phase, cleanup already set aside. */
+  const remainingBudgetMs = () =>
+    requestDeadline - Date.now() - REQUEST_CLEANUP_RESERVE_MS
+
   /*
    * Everything down to the formData() call is deliberately body-free.
    *
@@ -150,15 +213,77 @@ export async function POST(request: Request) {
     )
   }
 
+  /*
+   * Indexing admission, before anything expensive. Cheap to refuse, and it
+   * keeps a venue from spending its own OCR and embedding budget in a loop.
+   */
+  const indexBudget = await checkRateLimit(
+    menuIndexRateLimitKey(business_id),
+    MENU_INDEX_LIMIT_PER_HOUR,
+    MENU_INDEX_WINDOW_MS,
+  )
+  if (!indexBudget.allowed) {
+    return NextResponse.json(
+      { error: MENU_INDEX_BUSY_MESSAGE, code: 'menu_index_rate_limited' },
+      { status: 429, headers: { 'Retry-After': String(indexBudget.retryAfterSec ?? 600) } },
+    )
+  }
+
+  /*
+   * Take the upload lease here — before the body is buffered, before extraction,
+   * before OCR — and not after the text is in hand.
+   *
+   * Created later, there was a window minutes wide in which no record of the
+   * upload existed: the owner could delete their menu while OCR was still
+   * running, the delete would succeed because it saw no indexing job, and the
+   * upload would then finish and activate — putting back the menu they had just
+   * removed. The lease is what makes DELETE answer 409 for the whole time an
+   * upload is in flight.
+   *
+   * Authorization is already done: this is only reached for a verified owner of
+   * an existing venue, so no lease is ever taken on someone else's behalf.
+   */
+  const { data: documentId, error: beginError } = await supabaseAdmin.rpc('begin_menu_indexing', {
+    p_business_id: business_id,
+  })
+  if (beginError || typeof documentId !== 'string') {
+    const busy = /menu_processing/.test(beginError?.message ?? '')
+    console.error('[menu-index] lease failed:', beginError?.message ?? 'no document id')
+    return NextResponse.json(
+      {
+        error: busy ? MENU_INDEX_BUSY_MESSAGE : MENU_INDEX_FAILED_MESSAGE,
+        code: busy ? 'menu_processing' : 'index_begin_failed',
+      },
+      { status: busy ? 409 : 500 },
+    )
+  }
+
+  /*
+   * Every exit from here on goes through `release`, which retires the lease
+   * before answering. Scattering the cleanup across a dozen branches is how one
+   * of them gets forgotten and a venue is locked out for the stale window over
+   * a bad PDF header.
+   */
+  const release = async (response: NextResponse): Promise<NextResponse> => {
+    const { error } = await supabaseAdmin.rpc('fail_menu_document', {
+      p_document_id: documentId,
+      p_business_id: business_id,
+    })
+    if (error) console.error('[menu-index] could not retire the lease:', error.message)
+    return response
+  }
+
   // A malformed multipart body threw straight out of the handler, so a truncated
   // upload came back as a 500 with a stack trace instead of "try again".
   let formData: FormData
   try {
     formData = await request.formData()
   } catch {
-    return NextResponse.json(
-      { error: 'Could not read the upload. Please choose the file again.' },
-      { status: 400 },
+    return release(
+      NextResponse.json(
+        { error: 'Could not read the upload. Please choose the file again.' },
+        { status: 400 },
+      ),
     )
   }
 
@@ -166,19 +291,19 @@ export async function POST(request: Request) {
   const forceOcr = formData.get('force_ocr') === '1' || formData.get('force_ocr') === 'true'
 
   if (!(file instanceof Blob))
-    return NextResponse.json({ error: 'file required' }, { status: 400 })
+    return release(NextResponse.json({ error: 'file required' }, { status: 400 }))
 
   if (file.size > MENU_PDF_MAX_BYTES) {
     const mb = (file.size / (1024 * 1024)).toFixed(1)
-    return NextResponse.json(
+    return release(NextResponse.json(
       {
         error: `That PDF is ${mb} MB — the limit is ${MENU_PDF_MAX_MB} MB. Export it at a lower resolution, or upload the food and drink menus separately.`,
       },
       { status: 413 },
-    )
+    ))
   }
   if (file.size === 0) {
-    return NextResponse.json({ error: 'That file is empty.' }, { status: 400 })
+    return release(NextResponse.json({ error: 'That file is empty.' }, { status: 400 }))
   }
 
   const buffer = Buffer.from(await file.arrayBuffer())
@@ -189,10 +314,10 @@ export async function POST(request: Request) {
    * failing with something unhelpful about rendering.
    */
   if (buffer.subarray(0, 5).toString('latin1') !== '%PDF-') {
-    return NextResponse.json(
+    return release(NextResponse.json(
       { error: 'That does not look like a PDF. Export the menu as a PDF and try again.' },
       { status: 415 },
-    )
+    ))
   }
 
   // Try text extraction first (fast, free) — pdf.js with Node canvas polyfills.
@@ -208,7 +333,7 @@ export async function POST(request: Request) {
     pages = result.pages
   } catch (err) {
     if (isInvalidPdfError(err)) {
-      return NextResponse.json({ error: INVALID_PDF_MESSAGE }, { status: 422 })
+      return release(NextResponse.json({ error: INVALID_PDF_MESSAGE }, { status: 422 }))
     }
     // Unexpected open failure: still attempt OCR below only if we have no text.
     console.error('[pdf] text-layer extract failed:', err instanceof Error ? err.message : err)
@@ -267,7 +392,7 @@ export async function POST(request: Request) {
       // Nothing is written on this path, so whatever menu the venue already had
       // is still theirs. The file is not called invalid — it is longer than one
       // OCR pass can honestly read.
-      return NextResponse.json(
+      return release(NextResponse.json(
         {
           error: ocrCoverageMessage(coverage),
           code: coverage.reason,
@@ -275,7 +400,7 @@ export async function POST(request: Request) {
           maxOcrPages: MENU_OCR_MAX_PAGES,
         },
         { status: 422 },
-      )
+      ))
     }
     ocrPageCount = coverage.ocrPages
     /*
@@ -304,7 +429,7 @@ export async function POST(request: Request) {
       if (textLayerUnusable) {
         // Nothing readable and nothing safe to fall back on. Refuse and leave
         // whatever menu the venue already had in place.
-        return NextResponse.json(
+        return release(NextResponse.json(
           {
             error: OCR_UNAVAILABLE_MESSAGE,
             code: 'ocr_unavailable',
@@ -314,7 +439,7 @@ export async function POST(request: Request) {
             status: 429,
             headers: { 'Retry-After': String(ocrBudget.retryAfterSec ?? 600) },
           },
-        )
+        ))
       }
       // Only `force_ocr` asked for this, and the text layer already looks
       // complete — handing that back is a real menu, not a partial one.
@@ -327,7 +452,14 @@ export async function POST(request: Request) {
   if (shouldOcr && ocrAllowed) {
     const textBeforeOcr = text
     try {
-      const ocrText = await ocrPdf(buffer)
+      const ocrBudgetMs = remainingBudgetMs()
+      if (ocrBudgetMs < MIN_PHASE_BUDGET_MS) {
+        return release(NextResponse.json(
+          { error: MENU_INDEX_FAILED_MESSAGE, code: 'request_timeout' },
+          { status: 504 },
+        ))
+      }
+      const ocrText = await ocrPdf(buffer, ocrBudgetMs)
       const trimmed = ocrText.trim()
       if (trimmed) {
         text = trimmed
@@ -335,25 +467,34 @@ export async function POST(request: Request) {
       } else if (!textBeforeOcr) {
         text = ''
       } else if (parsedPdfLikelyIncomplete(textBeforeOcr, pageCount)) {
-        return NextResponse.json(
+        return release(NextResponse.json(
           {
             error:
               'Vision OCR returned no text for this PDF. Try exporting the menu as images or a different PDF.',
           },
           { status: 422 },
-        )
+        ))
       }
     } catch (err) {
+      // Our own deadline, not a fault in the file — say so, and never leak the
+      // library's text to the owner.
+      if (err instanceof Error && (err.name === 'AbortError' || err.name === 'APIUserAbortError')) {
+        console.error('[pdf] OCR aborted at the request deadline')
+        return release(NextResponse.json(
+          { error: MENU_INDEX_FAILED_MESSAGE, code: 'request_timeout' },
+          { status: 504 },
+        ))
+      }
       const msg = pdfReadErrorMessage(err)
       console.error('[pdf] OCR error:', err instanceof Error ? err.message : err)
       if (isInvalidPdfError(err)) {
-        return NextResponse.json({ error: INVALID_PDF_MESSAGE }, { status: 422 })
+        return release(NextResponse.json({ error: INVALID_PDF_MESSAGE }, { status: 422 }))
       }
       if (!textBeforeOcr) {
-        return NextResponse.json({ error: msg }, { status: 422 })
+        return release(NextResponse.json({ error: msg }, { status: 422 }))
       }
       if (parsedPdfLikelyIncomplete(textBeforeOcr, pageCount)) {
-        return NextResponse.json({ error: msg }, { status: 422 })
+        return release(NextResponse.json({ error: msg }, { status: 422 }))
       }
       console.warn('[pdf] Keeping text-layer extraction after OCR failure (parse looked complete)')
       text = textBeforeOcr
@@ -361,21 +502,143 @@ export async function POST(request: Request) {
   }
 
   if (!text) {
-    return NextResponse.json(
+    return release(NextResponse.json(
       { error: 'No text found in this PDF even after OCR.' },
       { status: 422 },
-    )
+    ))
   }
 
-  const { error } = await supabaseAdmin
-    .from('businesses')
-    .update({ menu_pdf_text: text })
-    .eq('id', business_id)
+  /*
+   * From here the menu is indexed before it is published.
+   *
+   * `businesses.menu_pdf_text` used to be written the moment text existed. It
+   * is now written only inside activate_menu_document, in the same transaction
+   * that flips the new document to active — so the stored text and the indexed
+   * document are always the same upload. Writing them apart is how a venue ends
+   * up with two current menus: the owner reads the new one in Settings while
+   * retrieval still serves the old, or the reverse, and neither is a menu
+   * anybody chose.
+   *
+   * Every refusal below therefore leaves the previous menu exactly as it was.
+   */
+  const menuText = normalizeMenuText(text)
+  if (!menuText) {
+    return release(NextResponse.json(
+      { error: 'No text found in this PDF even after OCR.' },
+      { status: 422 },
+    ))
+  }
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  let chunks
+  try {
+    chunks = chunkMenuText(menuText, { source: usedOcr ? 'pdf_ocr' : 'pdf_text' })
+  } catch (err) {
+    console.error('[menu-index] chunking failed:', err instanceof Error ? err.message : err)
+    return release(NextResponse.json(
+      { error: MENU_INDEX_FAILED_MESSAGE, code: 'chunking_failed' },
+      { status: 422 },
+    ))
+  }
+
+  if (chunks.length === 0 || !chunksCoverSource(menuText, chunks)) {
+    // A chunker that silently drops a page is the failure this design exists to
+    // avoid; cheap to prove it did not, and fatal if it did.
+    console.error('[menu-index] chunk coverage check failed for', business_id)
+    return release(NextResponse.json(
+      { error: MENU_INDEX_FAILED_MESSAGE, code: 'chunking_failed' },
+      { status: 422 },
+    ))
+  }
+
+  // Before embeddings, before any document row: an oversized menu costs nothing.
+  if (chunks.length > MENU_MAX_CHUNKS_SYNC) {
+    return release(NextResponse.json(
+      {
+        error: MENU_TOO_LARGE_MESSAGE,
+        code: 'menu_too_large',
+      },
+      { status: 422 },
+    ))
+  }
+
+  const { error: prepareError } = await supabaseAdmin.rpc('prepare_menu_document', {
+    p_document_id: documentId,
+    p_business_id: business_id,
+    p_source: usedOcr ? 'pdf_ocr' : 'pdf_text',
+    // Characters, as PostgreSQL counts them. String.length would report 9 for
+    // the pizza line "🍕22 🍕16" that PostgreSQL calls 7, and activation's
+    // length check would reject a perfectly good menu.
+    p_char_count: menuCharacterCount(menuText),
+  })
+  if (prepareError) {
+    /*
+     * Ignoring this bought embeddings for a document that activation was
+     * always going to refuse — the venue paid for a model call whose result
+     * could never be published.
+     */
+    console.error('[menu-index] prepare failed:', prepareError.message)
+    return release(NextResponse.json(
+      { error: MENU_INDEX_FAILED_MESSAGE, code: 'prepare_failed' },
+      { status: 500 },
+    ))
+  }
+
+  /*
+   * Whatever is left of the shared deadline, capped by the embedding phase's
+   * own ceiling. The 70 seconds is a maximum, not a fresh allowance handed out
+   * regardless of how long OCR already took.
+   */
+  const embeddingBudgetMs = Math.min(MENU_EMBEDDING_TOTAL_BUDGET_MS, remainingBudgetMs())
+  if (embeddingBudgetMs < MIN_PHASE_BUDGET_MS) {
+    return release(NextResponse.json(
+      { error: MENU_INDEX_FAILED_MESSAGE, code: 'request_timeout' },
+      { status: 504 },
+    ))
+  }
+
+  const embedded = await embedMenuChunks(openai, chunks, { totalBudgetMs: embeddingBudgetMs })
+  if (!embedded.ok) {
+    return release(NextResponse.json(
+      { error: MENU_INDEX_FAILED_MESSAGE, code: `embedding_${embedded.reason}` },
+      { status: embedded.reason === 'timeout' ? 504 : 502 },
+    ))
+  }
+
+  const rows = buildChunkRows(chunks, embedded.embeddings, business_id, documentId)
+  for (let i = 0; i < rows.length; i += MENU_CHUNK_INSERT_BATCH) {
+    const { error } = await supabaseAdmin
+      .from('menu_chunks')
+      .insert(rows.slice(i, i + MENU_CHUNK_INSERT_BATCH))
+    if (error) {
+      console.error('[menu-index] chunk insert failed:', error.message)
+      return release(NextResponse.json(
+        { error: MENU_INDEX_FAILED_MESSAGE, code: 'chunk_insert_failed' },
+        { status: 500 },
+      ))
+    }
+  }
+
+  /*
+   * Activation counts the rows itself and refuses a document that is short,
+   * miscounted or missing an embedding, then moves the active flag and the
+   * legacy text together. Until this returns, the venue's menu is the old one.
+   */
+  const { error: activateError } = await supabaseAdmin.rpc('activate_menu_document', {
+    p_document_id: documentId,
+    p_business_id: business_id,
+    p_expected_chunks: chunks.length,
+    p_menu_text: menuText,
+  })
+  if (activateError) {
+    console.error('[menu-index] activation failed:', activateError.message)
+    return release(NextResponse.json(
+      { error: MENU_INDEX_FAILED_MESSAGE, code: 'activation_failed' },
+      { status: 500 },
+    ))
+  }
 
   return NextResponse.json({
-    text,
+    text: menuText,
     pages,
     usedOcr,
     // Present only when OCR ran, and equal to `pages` by construction: the
@@ -395,9 +658,25 @@ export async function DELETE(request: Request) {
   const check = await verifyOwner(business_id)
   if (check instanceof NextResponse) return check
 
-  const { error } = await supabaseAdmin
-    .from('businesses').update({ menu_pdf_text: null }).eq('id', business_id)
-
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  /*
+   * One transaction, under the same row lock the upload takes. Clearing the
+   * text on its own would let an upload that is mid-flight finish afterwards
+   * and activate — bringing back the menu the owner just deleted, with nobody
+   * having asked for it. The function refuses while a live job exists instead.
+   */
+  const { error } = await supabaseAdmin.rpc('delete_active_menu', {
+    p_business_id: business_id,
+  })
+  if (error) {
+    const busy = /menu_processing/.test(error.message)
+    console.error('[menu-index] delete failed:', error.message)
+    return NextResponse.json(
+      {
+        error: busy ? MENU_INDEX_BUSY_MESSAGE : MENU_INDEX_FAILED_MESSAGE,
+        code: busy ? 'menu_processing' : 'delete_failed',
+      },
+      { status: busy ? 409 : 500 },
+    )
+  }
   return NextResponse.json({ ok: true })
 }

@@ -159,8 +159,14 @@ describe('the route cannot reach the write with partial OCR', () => {
   const coverageGate = at(/const coverage = decideOcrCoverage\(totalPages\)/)
   const refusal = at(/code: coverage\.reason/)
   const ocrBudget = at(/checkRateLimit\(`menu-ocr:/)
-  const ocrCall = at(/await ocrPdf\(buffer\)/)
-  const dbUpdate = at(/\.update\(\{ menu_pdf_text: text \}\)/)
+  const ocrCall = at(/await ocrPdf\(buffer, ocrBudgetMs\)/)
+  /*
+   * The menu is no longer published by a direct column write: it is published
+   * inside activate_menu_document, which moves businesses.menu_pdf_text and the
+   * indexed document in one transaction. This is the landmark the coverage gate
+   * must still precede — the guarantee is unchanged, only its location moved.
+   */
+  const dbUpdate = at(/rpc\('activate_menu_document'/)
 
   it('every landmark is present', () => {
     for (const [name, i] of Object.entries({
@@ -183,8 +189,10 @@ describe('the route cannot reach the write with partial OCR', () => {
     // The only `menu_pdf_text` write in the route, and it sits downstream of
     // the gate — so a refused document cannot reach it.
     assert.ok(coverageGate < dbUpdate)
-    const writes = ROUTE.match(/\.update\(\{ menu_pdf_text: text \}\)/g) ?? []
-    assert.equal(writes.length, 1, 'exactly one write path to guard')
+    const publishes = ROUTE.match(/rpc\('activate_menu_document'/g) ?? []
+    assert.equal(publishes.length, 1, 'exactly one publish path to guard')
+    // And no route-level write can bypass it.
+    assert.doesNotMatch(ROUTE, /update\(\{\s*menu_pdf_text:/)
   })
 
   it('coverage is decided before the venue spends its OCR budget', () => {
@@ -195,7 +203,10 @@ describe('the route cannot reach the write with partial OCR', () => {
 
   it('the refusal returns 422 and returns, rather than falling through', () => {
     const block = ROUTE.slice(refusal - 400, refusal + 400)
-    assert.match(block, /return NextResponse\.json\(/)
+    // Wrapped in release() since the upload lease is now taken before OCR: the
+    // refusal both answers 422 and retires the lease, so a venue is not locked
+    // out of re-uploading by a document it was told to fix.
+    assert.match(block, /return release\(NextResponse\.json\(/)
     assert.match(block, /status: 422/)
   })
 
