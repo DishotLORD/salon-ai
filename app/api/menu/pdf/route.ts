@@ -30,6 +30,13 @@ import {
   menuIndexRateLimitKey,
 } from '@/lib/menu-indexing'
 import { chunkMenuText, chunksCoverSource, menuCharacterCount } from '@/lib/menu-chunking'
+import {
+  MENU_PDF_MIME_TYPE,
+  MENU_RETENTION_FAILED_MESSAGE,
+  removeOrphanedOriginal,
+  retainOriginalPdf,
+  safeOriginalFilename,
+} from '@/lib/menu-pdf-retention'
 import { normalizeMenuText } from '@/lib/menu-ocr-normalize'
 import { checkRateLimit } from '@/lib/rate-limit'
 import { businessIdFromUrl, declaredBodyTooLarge } from '@/lib/upload-guard'
@@ -317,6 +324,53 @@ export async function POST(request: Request) {
     return release(NextResponse.json(
       { error: 'That does not look like a PDF. Export the menu as a PDF and try again.' },
       { status: 415 },
+    ))
+  }
+
+  /*
+   * Retain the original before a single byte of it is interpreted.
+   *
+   * Deliberately after every cheap rejection — ownership, size, and the %PDF-
+   * signature — so Storage is never called for a file we already know we will
+   * refuse. And deliberately before extraction, because the point of keeping
+   * the original is that it survives whatever the pipeline makes of it: a
+   * version that fails at OCR still has the file its owner uploaded, which is
+   * exactly the case where someone will want to look at it.
+   *
+   * The bytes go up exactly as received. Re-rendering or normalising them would
+   * make the retained file evidence of our edit rather than of their upload,
+   * and the digest beside it would attest to the wrong thing.
+   */
+  const retained = await retainOriginalPdf(supabaseAdmin, buffer, business_id, documentId)
+  if (!retained.ok) {
+    return release(NextResponse.json(
+      { error: MENU_RETENTION_FAILED_MESSAGE, code: 'original_upload_failed' },
+      { status: 502 },
+    ))
+  }
+
+  const { error: attachError } = await supabaseAdmin.rpc('attach_menu_document_original', {
+    p_document_id: documentId,
+    p_business_id: business_id,
+    p_storage_path: retained.path,
+    p_filename: safeOriginalFilename((file as File).name),
+    p_mime_type: MENU_PDF_MIME_TYPE,
+    p_size_bytes: retained.size,
+    p_sha256: retained.sha256,
+  })
+  if (attachError) {
+    /*
+     * The object exists but nothing points at it, so it is unreachable and
+     * would sit in the bucket forever. This is the one case where deleting is
+     * right — the file was written by this request, moments ago, and was never
+     * recorded. An original that *was* attached is never removed, not even when
+     * its document later fails.
+     */
+    console.error('[menu-retention] attach failed:', attachError.message)
+    await removeOrphanedOriginal(supabaseAdmin, retained.path)
+    return release(NextResponse.json(
+      { error: MENU_RETENTION_FAILED_MESSAGE, code: 'original_attach_failed' },
+      { status: 500 },
     ))
   }
 
